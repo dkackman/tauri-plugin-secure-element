@@ -1,3 +1,7 @@
 [default]
 description = "Default permissions for the plugin"
-permissions = ["allow-ping"]
+permissions = [
+  "allow-ping",
+  "allow-generate-secure-key",
+  "allow-sign-data"
+]

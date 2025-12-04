@@ -8,6 +8,7 @@
     "build": "tauri build"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
     "tauri-plugin-secure-element": "file:../tauri-plugin-secure-element/guest-js"
   },
   "devDependencies": {

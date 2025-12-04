@@ -1,0 +1,50 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Test App (Debug)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/test-app/src-tauri/target/debug/test-app",
+      "args": [],
+      "cwd": "${workspaceFolder}/test-app/src-tauri",
+      "preLaunchTask": "build-test-app",
+      "console": "externalTerminal",
+      "stopOnEntry": false,
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Attach to Test App",
+      "type": "lldb",
+      "request": "attach",
+      "pid": "${command:pickProcess}",
+      "sourceLanguages": ["rust"],
+      "sourceMap": {
+        "/rustc/*": "${env:HOME}/.rustup/toolchains/*/lib/rustlib/src/rust/library"
+      }
+    },
+    {
+      "name": "Launch Test App (Tauri Dev)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev"],
+      "cwd": "${workspaceFolder}/test-app",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Launch Test App (Full Debug)",
+      "configurations": [
+        "Launch Test App (Tauri Dev)",
+        "Attach to Test App"
+      ],
+      "stopAll": true,
+      "preLaunchTask": "build-test-app"
+    }
+  ]
+}
+

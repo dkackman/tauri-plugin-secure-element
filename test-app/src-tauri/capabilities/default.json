@@ -5,6 +5,10 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "secure-element:default",
+    "secure-element:allow-ping",
+    "secure-element:allow-generate-secure-key",
+    "secure-element:allow-sign-data"
   ]
 }
