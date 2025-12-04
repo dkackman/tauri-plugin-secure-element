@@ -1,0 +1,14 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-sign-with-key"
+description = "Enables the sign_with_key command without any pre-configured scope."
+commands.allow = ["sign_with_key"]
+
+[[permission]]
+identifier = "deny-sign-with-key"
+description = "Denies the sign_with_key command without any pre-configured scope."
+commands.deny = ["sign_with_key"]
+

@@ -2145,10 +2145,16 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-sign-with-key`",
           "type": "string",
           "const": "secure-element:default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-sign-with-key`"
+        },
+        {
+          "description": "Enables the generate_secure_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "secure-element:allow-generate-secure-key",
+          "markdownDescription": "Enables the generate_secure_key command without any pre-configured scope."
         },
         {
           "description": "Enables the ping command without any pre-configured scope.",
@@ -2157,10 +2163,28 @@
           "markdownDescription": "Enables the ping command without any pre-configured scope."
         },
         {
+          "description": "Enables the sign_with_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "secure-element:allow-sign-with-key",
+          "markdownDescription": "Enables the sign_with_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_secure_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "secure-element:deny-generate-secure-key",
+          "markdownDescription": "Denies the generate_secure_key command without any pre-configured scope."
+        },
+        {
           "description": "Denies the ping command without any pre-configured scope.",
           "type": "string",
           "const": "secure-element:deny-ping",
           "markdownDescription": "Denies the ping command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sign_with_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "secure-element:deny-sign-with-key",
+          "markdownDescription": "Denies the sign_with_key command without any pre-configured scope."
         }
       ]
     },

@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the generate_secure_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-generate-secure-key",
+          "markdownDescription": "Enables the generate_secure_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_secure_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-generate-secure-key",
+          "markdownDescription": "Denies the generate_secure_key command without any pre-configured scope."
+        },
+        {
           "description": "Enables the ping command without any pre-configured scope.",
           "type": "string",
           "const": "allow-ping",
@@ -307,10 +319,22 @@
           "markdownDescription": "Denies the ping command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`",
+          "description": "Enables the sign_with_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sign-with-key",
+          "markdownDescription": "Enables the sign_with_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sign_with_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sign-with-key",
+          "markdownDescription": "Denies the sign_with_key command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-sign-with-key`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-sign-with-key`"
         }
       ]
     }

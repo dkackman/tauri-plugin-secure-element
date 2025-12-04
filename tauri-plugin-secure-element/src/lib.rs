@@ -35,7 +35,7 @@ impl<R: Runtime, T: Manager<R>> crate::SecureElementExt<R> for T {
 /// Initializes the plugin.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
   Builder::new("secure-element")
-    .invoke_handler(tauri::generate_handler![commands::ping])
+    .invoke_handler(tauri::generate_handler![commands::ping, commands::generate_secure_key, commands::sign_with_key])
     .setup(|app, api| {
       #[cfg(mobile)]
       let secure_element = mobile::init(app, api)?;

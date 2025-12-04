@@ -31,4 +31,18 @@ impl<R: Runtime> SecureElement<R> {
       .run_mobile_plugin("ping", payload)
       .map_err(Into::into)
   }
+
+  pub fn generate_secure_key(&self, payload: GenerateSecureKeyRequest) -> crate::Result<GenerateSecureKeyResponse> {
+    self
+      .0
+      .run_mobile_plugin("generateSecureKey", payload)
+      .map_err(Into::into)
+  }
+
+  pub fn sign_with_key(&self, payload: SignWithKeyRequest) -> crate::Result<SignWithKeyResponse> {
+    self
+      .0
+      .run_mobile_plugin("signWithKey", payload)
+      .map_err(Into::into)
+  }
 }
