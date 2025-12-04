@@ -2,13 +2,13 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build-tauri-app",
+      "label": "build-test-app",
       "type": "shell",
       "command": "cargo",
       "args": [
         "build",
         "--manifest-path",
-        "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app/src-tauri/Cargo.toml"
+        "${workspaceFolder}/test-app/src-tauri/Cargo.toml"
       ],
       "group": {
         "kind": "build",
@@ -81,7 +81,7 @@
         "build-plugin-js",
         "build-plugin-bundle",
         "build-plugin",
-        "build-tauri-app"
+        "build-test-app"
       ],
       "group": "build",
       "problemMatcher": []

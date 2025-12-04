@@ -1,5 +1,5 @@
 {
-  "productName": "tauri-app",
+  "productName": "test-app",
   "version": "0.1.0",
   "identifier": "com.tauri.secureelement.example",
   "build": {
@@ -18,7 +18,7 @@
         "fullscreen": false,
         "height": 600,
         "resizable": true,
-        "title": "tauri-app",
+        "title": "test-app",
         "width": 800
       }
     ]

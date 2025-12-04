@@ -38,7 +38,7 @@ This will:
 Build the example Tauri application:
 
 ```bash
-cd tauri-plugin-secure-element/examples/tauri-app
+cd test-app
 pnpm build
 ```
 
@@ -51,7 +51,7 @@ From the plugin root directory:
 ```bash
 cd tauri-plugin-secure-element
 pnpm build
-cd examples/tauri-app
+cd test-app
 pnpm build
 ```
 
@@ -62,7 +62,7 @@ Or use the VS Code task "build-all" to build everything in sequence.
 ### Run the Example App in Development Mode
 
 ```bash
-cd tauri-plugin-secure-element/examples/tauri-app
+cd test-app
 pnpm tauri dev
 ```
 
@@ -75,7 +75,7 @@ This will:
 ### Run the Example App (Production Build)
 
 ```bash
-cd tauri-plugin-secure-element/examples/tauri-app
+cd test-app
 pnpm tauri build
 ```
 
@@ -89,7 +89,7 @@ tauri-plugin-secure-element/
 ├── guest-js/         # TypeScript guest JavaScript code
 ├── dist-js/          # Built JavaScript files (generated)
 ├── examples/
-│   └── tauri-app/    # Example Tauri application
+│   └── test-app/     # Test Tauri application
 │       ├── src/      # Frontend source (Svelte)
 │       └── src-tauri/ # Tauri Rust application
 └── package.json      # Plugin package configuration
@@ -100,7 +100,7 @@ tauri-plugin-secure-element/
 This project uses a pnpm workspace. The plugin and example app are both part of the workspace:
 
 - **Plugin**: `tauri-plugin-secure-element/`
-- **Example App**: `tauri-plugin-secure-element/examples/tauri-app/`
+- **Test App**: `test-app/`
 
 ### Making Changes
 
