@@ -18,7 +18,7 @@ Default permissions for the plugin
 <tr>
 <td>
 
-`tauri-plugin-secure-element:allow-ping`
+`secure-element:allow-ping`
 
 </td>
 <td>
@@ -31,7 +31,7 @@ Enables the ping command without any pre-configured scope.
 <tr>
 <td>
 
-`tauri-plugin-secure-element:deny-ping`
+`secure-element:deny-ping`
 
 </td>
 <td>

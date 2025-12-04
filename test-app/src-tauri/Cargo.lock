@@ -3693,6 +3693,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-secure-element"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "tauri-runtime"
 version = "2.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3826,6 +3836,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "tauri-plugin-secure-element",
 ]
 
 [[package]]
