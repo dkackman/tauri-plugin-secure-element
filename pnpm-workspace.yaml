@@ -1,5 +1,4 @@
 packages:
   - 'tauri-plugin-secure-element'
   - 'tauri-plugin-secure-element/guest-js'
-  - 'tauri-plugin-secure-element/examples/tauri-app'
   - 'test-app'
