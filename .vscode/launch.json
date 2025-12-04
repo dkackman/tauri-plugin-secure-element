@@ -2,49 +2,57 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Launch Test App (Debug)",
+      "name": "Launch Tauri App (Debug)",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/test-app/src-tauri/target/debug/test-app",
+      "program": "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app/src-tauri/target/debug/tauri-app",
       "args": [],
-      "cwd": "${workspaceFolder}/test-app/src-tauri",
-      "preLaunchTask": "build-test-app",
+      "cwd": "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app/src-tauri",
+      "preLaunchTask": "build-tauri-app",
       "console": "externalTerminal",
       "stopOnEntry": false,
-      "sourceLanguages": ["rust"]
+      "sourceLanguages": [
+        "rust"
+      ]
     },
     {
-      "name": "Attach to Test App",
+      "name": "Attach to Tauri App",
       "type": "lldb",
       "request": "attach",
       "pid": "${command:pickProcess}",
-      "sourceLanguages": ["rust"],
+      "sourceLanguages": [
+        "rust"
+      ],
       "sourceMap": {
         "/rustc/*": "${env:HOME}/.rustup/toolchains/*/lib/rustlib/src/rust/library"
       }
     },
     {
-      "name": "Launch Test App (Tauri Dev)",
+      "name": "Launch Tauri App (Tauri Dev)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev"],
-      "cwd": "${workspaceFolder}/test-app",
+      "runtimeArgs": [
+        "tauri",
+        "dev"
+      ],
+      "cwd": "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
-      "skipFiles": ["<node_internals>/**"]
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
     }
   ],
   "compounds": [
     {
-      "name": "Launch Test App (Full Debug)",
+      "name": "Launch Tauri App (Full Debug)",
       "configurations": [
-        "Launch Test App (Tauri Dev)",
-        "Attach to Test App"
+        "Launch Tauri App (Tauri Dev)",
+        "Attach to Tauri App"
       ],
       "stopAll": true,
-      "preLaunchTask": "build-test-app"
+      "preLaunchTask": "build-tauri-app"
     }
   ]
 }
-

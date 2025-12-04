@@ -2,13 +2,13 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build-test-app",
+      "label": "build-tauri-app",
       "type": "shell",
       "command": "cargo",
       "args": [
         "build",
         "--manifest-path",
-        "${workspaceFolder}/test-app/src-tauri/Cargo.toml"
+        "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app/src-tauri/Cargo.toml"
       ],
       "group": {
         "kind": "build",
@@ -48,7 +48,7 @@
         "build"
       ],
       "options": {
-        "cwd": "${workspaceFolder}/tauri-plugin-secure-element/guest-js"
+        "cwd": "${workspaceFolder}/tauri-plugin-secure-element"
       },
       "group": "build",
       "problemMatcher": [],
@@ -81,7 +81,7 @@
         "build-plugin-js",
         "build-plugin-bundle",
         "build-plugin",
-        "build-test-app"
+        "build-tauri-app"
       ],
       "group": "build",
       "problemMatcher": []
