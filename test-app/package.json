@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "tauri-plugin-secure-element": "file:../tauri-plugin-secure-element/guest-js"
+  }
+}
