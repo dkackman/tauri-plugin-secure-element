@@ -7,24 +7,24 @@ use tauri::{
 use crate::models::*;
 
 #[cfg(target_os = "ios")]
-tauri::ios_plugin_binding!(init_plugin_tauri_plugin_secure_element);
+tauri::ios_plugin_binding!(init_plugin_secure_element);
 
 // initializes the Kotlin or Swift plugin classes
 pub fn init<R: Runtime, C: DeserializeOwned>(
   _app: &AppHandle<R>,
   api: PluginApi<R, C>,
-) -> crate::Result<TauriPluginSecureElement<R>> {
+) -> crate::Result<SecureElement<R>> {
   #[cfg(target_os = "android")]
   let handle = api.register_android_plugin("app.tauri.plugin.secureelement", "ExamplePlugin")?;
   #[cfg(target_os = "ios")]
-  let handle = api.register_ios_plugin(init_plugin_tauri_plugin_secure_element)?;
-  Ok(TauriPluginSecureElement(handle))
+  let handle = api.register_ios_plugin(init_plugin_secure_element)?;
+  Ok(SecureElement(handle))
 }
 
-/// Access to the tauri-plugin-secure-element APIs.
-pub struct TauriPluginSecureElement<R: Runtime>(PluginHandle<R>);
+/// Access to the secure-element APIs.
+pub struct SecureElement<R: Runtime>(PluginHandle<R>);
 
-impl<R: Runtime> TauriPluginSecureElement<R> {
+impl<R: Runtime> SecureElement<R> {
   pub fn ping(&self, payload: PingRequest) -> crate::Result<PingResponse> {
     self
       .0

@@ -5,8 +5,6 @@ Default permissions for the plugin
 #### This default permission set includes the following:
 
 - `allow-ping`
-- `allow-generate-secure-key`
-- `allow-sign-data`
 
 ## Permission Table
 
@@ -16,32 +14,6 @@ Default permissions for the plugin
 <th>Description</th>
 </tr>
 
-
-<tr>
-<td>
-
-`secure-element:allow-generate-secure-key`
-
-</td>
-<td>
-
-Enables the generate_secure_key command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`secure-element:deny-generate-secure-key`
-
-</td>
-<td>
-
-Denies the generate_secure_key command without any pre-configured scope.
-
-</td>
-</tr>
 
 <tr>
 <td>
@@ -65,32 +37,6 @@ Enables the ping command without any pre-configured scope.
 <td>
 
 Denies the ping command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`secure-element:allow-sign-data`
-
-</td>
-<td>
-
-Enables the sign_data command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`secure-element:deny-sign-data`
-
-</td>
-<td>
-
-Denies the sign_data command without any pre-configured scope.
 
 </td>
 </tr>

@@ -6,14 +6,14 @@ use crate::models::*;
 pub fn init<R: Runtime, C: DeserializeOwned>(
   app: &AppHandle<R>,
   _api: PluginApi<R, C>,
-) -> crate::Result<TauriPluginSecureElement<R>> {
-  Ok(TauriPluginSecureElement(app.clone()))
+) -> crate::Result<SecureElement<R>> {
+  Ok(SecureElement(app.clone()))
 }
 
-/// Access to the tauri-plugin-secure-element APIs.
-pub struct TauriPluginSecureElement<R: Runtime>(AppHandle<R>);
+/// Access to the secure-element APIs.
+pub struct SecureElement<R: Runtime>(AppHandle<R>);
 
-impl<R: Runtime> TauriPluginSecureElement<R> {
+impl<R: Runtime> SecureElement<R> {
   pub fn ping(&self, payload: PingRequest) -> crate::Result<PingResponse> {
     Ok(PingResponse {
       value: payload.value,

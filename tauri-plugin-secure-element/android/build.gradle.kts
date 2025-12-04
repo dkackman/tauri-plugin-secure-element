@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "app.tauri.plugin.secureelement"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 21

@@ -1,3 +1,3 @@
-# Tauri Plugin tauri-plugin-secure-element
+# Tauri Plugin secure-element
 
 A description of this package.

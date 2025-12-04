@@ -14,7 +14,7 @@ class ExamplePlugin: Plugin {
   }
 }
 
-@_cdecl("init_plugin_tauri_plugin_secure_element")
+@_cdecl("init_plugin_secure_element")
 func initPlugin() -> Plugin {
   return ExamplePlugin()
 }
