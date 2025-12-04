@@ -19,5 +19,5 @@ tauri-build = { version = "2.5.3", default-features = false , features = [] }
 
 [dependencies]
 tauri = { version = "2.9.4", features = [] }
-tauri-plugin-secure-element = { path = "../../../" }
+tauri-plugin-secure-element = { path = "../../tauri-plugin-secure-element" }
 

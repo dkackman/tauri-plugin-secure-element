@@ -12,7 +12,7 @@ export default defineConfig({
     alias: {
       "tauri-plugin-secure-element-api": resolve(
         __dirname,
-        "../../dist-js/index.js"
+        "../tauri-plugin-secure-element/dist-js/index.js"
       ),
     },
   },

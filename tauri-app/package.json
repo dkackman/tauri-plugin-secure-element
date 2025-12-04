@@ -6,13 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "prebuild": "cd ../.. && pnpm build",
+    "prebuild": "cd ../tauri-plugin-secure-element && pnpm build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "tauri-plugin-secure-element-api": "file:../../"
+    "tauri-plugin-secure-element-api": "file:../tauri-plugin-secure-element"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.0.0",
