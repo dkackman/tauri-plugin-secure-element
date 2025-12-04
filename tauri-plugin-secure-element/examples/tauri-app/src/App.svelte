@@ -13,7 +13,15 @@
 	}
 
 	function _generateSecureKey() {
-		generateSecureKey(32).then(updateResponse).catch(updateResponse)
+		generateSecureKey(32)
+			.then((key) => {
+				if (key) {
+					updateResponse(`Key id: ${key}`)
+				} else {
+					updateResponse('Error: No key generated')
+				}
+			})
+			.catch(updateResponse)
 	}
 
 	function _signWithKey() {
