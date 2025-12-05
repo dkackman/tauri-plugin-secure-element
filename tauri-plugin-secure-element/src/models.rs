@@ -76,6 +76,28 @@ pub struct SignWithKeyResponse {
     pub signature: Vec<u8>,
 }
 
+/// Request to verify a signature
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureRequest {
+    /// The original data that was signed
+    pub data: Vec<u8>,
+    /// The signature to verify
+    pub signature: Vec<u8>,
+    /// Optional: The name of the key to use for verification (will look up public key)
+    pub key_name: Option<String>,
+    /// Optional: The public key to use for verification (base64 encoded)
+    pub public_key: Option<String>,
+}
+
+/// Response containing verification result
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifySignatureResponse {
+    /// Whether the signature is valid
+    pub valid: bool,
+}
+
 /// Request to delete a key
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

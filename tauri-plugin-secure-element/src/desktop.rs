@@ -47,6 +47,16 @@ impl<R: Runtime> SecureElement<R> {
         )))
     }
 
+    pub fn verify_signature(
+        &self,
+        _payload: VerifySignatureRequest,
+    ) -> crate::Result<VerifySignatureResponse> {
+        Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Desktop Secure Enclave not implemented",
+        )))
+    }
+
     pub fn delete_key(&self, _payload: DeleteKeyRequest) -> crate::Result<DeleteKeyResponse> {
         Err(crate::Error::Io(std::io::Error::new(
             std::io::ErrorKind::Unsupported,

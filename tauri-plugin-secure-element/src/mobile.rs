@@ -52,6 +52,12 @@ impl<R: Runtime> SecureElement<R> {
             .map_err(Into::into)
     }
 
+    pub fn verify_signature(&self, payload: VerifySignatureRequest) -> crate::Result<VerifySignatureResponse> {
+        self.0
+            .run_mobile_plugin("verifySignature", payload)
+            .map_err(Into::into)
+    }
+
     pub fn delete_key(&self, payload: DeleteKeyRequest) -> crate::Result<DeleteKeyResponse> {
         self.0
             .run_mobile_plugin("deleteKey", payload)

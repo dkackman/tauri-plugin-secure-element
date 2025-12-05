@@ -11,10 +11,12 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import app.tauri.plugin.Invoke
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
+import java.security.spec.X509EncodedKeySpec
 import java.util.ArrayList
 import java.util.HashMap
 import org.json.JSONArray
@@ -40,6 +42,14 @@ class ListKeysArgs {
 class SignWithKeyArgs {
     var keyName: String = ""
     var data: ByteArray = byteArrayOf()
+}
+
+@InvokeArg
+class VerifySignatureArgs {
+    var data: ByteArray = byteArrayOf()
+    var signature: ByteArray = byteArrayOf()
+    var keyName: String? = null
+    var publicKey: String? = null
 }
 
 @InvokeArg
@@ -315,6 +325,81 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve(ret)
         } catch (e: Exception) {
             invoke.reject("Failed to sign: ${e.message}")
+        }
+    }
+
+    @Command
+    fun verifySignature(invoke: Invoke) {
+        try {
+            val args = invoke.parseArgs(VerifySignatureArgs::class.java)
+
+            // Validate that either keyName or publicKey is provided
+            if (args.keyName == null && args.publicKey == null) {
+                invoke.reject("Either keyName or publicKey must be provided")
+                return
+            }
+
+            // Get the public key - either from keystore or from provided base64
+            val publicKey: java.security.PublicKey
+
+            if (args.keyName != null) {
+                // Look up the key by name
+                if (args.keyName!!.isBlank()) {
+                    invoke.reject("Key name cannot be empty")
+                    return
+                }
+
+                val alias = getKeyAlias(args.keyName!!)
+
+                // Check if key exists
+                if (!keyStore.containsAlias(alias)) {
+                    invoke.reject("Key not found: ${args.keyName}")
+                    return
+                }
+
+                // Get the public key from the keystore
+                val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+                    ?: throw Exception("Failed to get key entry")
+
+                publicKey = entry.certificate.publicKey
+            } else if (args.publicKey != null) {
+                // Import the public key from base64
+                try {
+                    val publicKeyBytes = Base64.decode(args.publicKey, Base64.NO_WRAP)
+                    val keySpec = X509EncodedKeySpec(publicKeyBytes)
+                    val keyFactory = KeyFactory.getInstance("EC")
+                    publicKey = keyFactory.generatePublic(keySpec)
+                } catch (e: Exception) {
+                    invoke.reject("Failed to import public key: ${e.message}")
+                    return
+                }
+            } else {
+                invoke.reject("Either keyName or publicKey must be provided")
+                return
+            }
+
+            // Verify the signature using ECDSA with SHA-256
+            // This uses the same algorithm as signing, which hashes the data internally
+            val signature = Signature.getInstance("SHA256withECDSA")
+            signature.initVerify(publicKey)
+            signature.update(args.data)
+            val isValid = signature.verify(args.signature)
+
+            val ret = JSObject()
+            ret.put("valid", isValid)
+            invoke.resolve(ret)
+        } catch (e: Exception) {
+            // Verification failures can occur due to invalid signatures, which is not necessarily an error
+            // However, other exceptions (like algorithm not found) should be rejected
+            // For now, we'll catch all exceptions and return valid: false for invalid signatures
+            // and reject for other errors
+            if (e.message?.contains("Signature") == true || e is java.security.SignatureException) {
+                val ret = JSObject()
+                ret.put("valid", false)
+                invoke.resolve(ret)
+            } else {
+                invoke.reject("Failed to verify signature: ${e.message}")
+            }
         }
     }
 

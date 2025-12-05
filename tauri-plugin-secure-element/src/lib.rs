@@ -40,6 +40,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::generate_secure_key,
             commands::list_keys,
             commands::sign_with_key,
+            commands::verify_signature,
             commands::delete_key
         ])
         .setup(|app, api| {

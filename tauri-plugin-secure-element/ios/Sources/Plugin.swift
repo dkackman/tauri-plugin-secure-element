@@ -26,6 +26,13 @@ class SignWithKeyArgs: Decodable {
     let data: [UInt8]
 }
 
+class VerifySignatureArgs: Decodable {
+    let data: [UInt8]
+    let signature: [UInt8]
+    let keyName: String?
+    let publicKey: String?
+}
+
 class DeleteKeyArgs: Decodable {
     let keyName: String
 }
@@ -242,6 +249,116 @@ class SecureEnclavePlugin: Plugin {
         }
 
         invoke.resolve(["signature": [UInt8](signature)])
+    }
+
+    // MARK: - Verify Signature
+
+    @objc func verifySignature(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(VerifySignatureArgs.self)
+
+        // Validate that either keyName or publicKey is provided
+        guard args.keyName != nil || args.publicKey != nil else {
+            invoke.reject("Either keyName or publicKey must be provided")
+            return
+        }
+
+        // Get the public key - either from keychain or from provided base64
+        let publicKey: SecKey
+
+        if let keyName = args.keyName {
+            // Look up the key by name
+            guard let keyNameData = keyName.data(using: .utf8) else {
+                invoke.reject("Invalid key name")
+                return
+            }
+
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: keyNameData,
+                kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+                kSecReturnRef as String: true,
+            ]
+
+            var keyRef: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
+
+            guard status == errSecSuccess, let keyRef = keyRef else {
+                invoke.reject("Key not found: \(keyName)")
+                return
+            }
+
+            // Force cast is safe here: we've verified errSecSuccess and the query returns SecKey
+            // swiftlint:disable:next force_cast
+            let privateKey = (keyRef as! SecKey) // swiftlint:disable:this force_cast
+
+            guard let pubKey = SecKeyCopyPublicKey(privateKey) else {
+                invoke.reject("Failed to extract public key from private key")
+                return
+            }
+
+            publicKey = pubKey
+        } else if let publicKeyBase64 = args.publicKey {
+            // Import the public key from base64
+            guard let publicKeyData = Data(base64Encoded: publicKeyBase64) else {
+                invoke.reject("Invalid base64 public key")
+                return
+            }
+
+            // Create key attributes for importing
+            let attributes: [String: Any] = [
+                kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+                kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
+                kSecAttrKeySizeInBits as String: 256,
+            ]
+
+            var importError: Unmanaged<CFError>?
+            guard let pubKey = SecKeyCreateWithData(
+                publicKeyData as CFData,
+                attributes as CFDictionary,
+                &importError
+            ) else {
+                if let error = importError {
+                    let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+                    invoke.reject("Failed to import public key: \(errorDescription)")
+                    return
+                }
+                invoke.reject("Failed to import public key: Unknown error")
+                return
+            }
+
+            publicKey = pubKey
+        } else {
+            invoke.reject("Either keyName or publicKey must be provided")
+            return
+        }
+
+        // Convert data to Data type
+        let dataToVerify = Data(args.data)
+        let signatureData = Data(args.signature)
+
+        // Create SHA256 digest using CryptoKit (same as signing)
+        let digest = SHA256.hash(data: dataToVerify)
+        let digestData = Data(digest)
+
+        // Verify the signature using ECDSA
+        var verifyError: Unmanaged<CFError>?
+        let isValid = SecKeyVerifySignature(
+            publicKey,
+            .ecdsaSignatureDigestX962SHA256,
+            digestData as CFData,
+            signatureData as CFData,
+            &verifyError
+        )
+
+        if let error = verifyError {
+            let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+            // Verification can fail due to invalid signature, which is not necessarily an error condition
+            // We return valid: false instead of rejecting
+            invoke.resolve(["valid": false])
+            return
+        }
+
+        invoke.resolve(["valid": isValid])
     }
 
     // MARK: - Delete Key

@@ -57,6 +57,37 @@ export async function signWithKey(
   ).then((r) => new Uint8Array(r.signature));
 }
 
+export async function verifySignature(
+  data: string,
+  signature: Uint8Array | number[],
+  options: { keyName?: string; publicKey?: string }
+): Promise<boolean> {
+  // Validate that either keyName or publicKey is provided
+  if (!options.keyName && !options.publicKey) {
+    throw new Error("Either keyName or publicKey must be provided");
+  }
+
+  // Convert string to byte array
+  const encoder = new TextEncoder();
+  const dataBytes = encoder.encode(data);
+
+  // Convert signature to array if it's Uint8Array
+  const signatureArray =
+    signature instanceof Uint8Array ? Array.from(signature) : signature;
+
+  return await invoke<{ valid: boolean }>(
+    "plugin:secure-element|verify_signature",
+    {
+      payload: {
+        data: Array.from(dataBytes),
+        signature: signatureArray,
+        keyName: options.keyName || null,
+        publicKey: options.publicKey || null,
+      },
+    }
+  ).then((r) => r.valid);
+}
+
 export async function deleteKey(keyName: string): Promise<boolean> {
   return await invoke<{ success: boolean }>(
     "plugin:secure-element|delete_key",

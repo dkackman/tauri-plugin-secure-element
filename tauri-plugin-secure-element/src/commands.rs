@@ -51,6 +51,14 @@ pub(crate) async fn sign_with_key<R: Runtime>(
 }
 
 #[command]
+pub(crate) async fn verify_signature<R: Runtime>(
+    app: AppHandle<R>,
+    payload: VerifySignatureRequest,
+) -> Result<VerifySignatureResponse> {
+    app.secure_element().verify_signature(payload)
+}
+
+#[command]
 pub(crate) async fn delete_key<R: Runtime>(
     app: AppHandle<R>,
     payload: DeleteKeyRequest,

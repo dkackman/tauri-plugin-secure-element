@@ -3,6 +3,7 @@
     generateSecureKey,
     listKeys,
     signWithKey,
+    verifySignature,
     deleteKey,
   } from "tauri-plugin-secure-element-api";
 
@@ -22,6 +23,14 @@
   let messageToSign = $state("");
   let signature = $state(null);
   let signError = $state("");
+
+  // Verify Signature Section
+  let verifyKeyName = $state("");
+  let verifyPublicKey = $state("");
+  let verifyMessage = $state("");
+  let verifySignatureHex = $state("");
+  let verificationResult = $state(null);
+  let verifyError = $state("");
 
   // Delete Key Section
   let deleteKeyName = $state("");
@@ -77,6 +86,64 @@
       .catch((err) => {
         signError = err.toString();
       });
+  }
+
+  function _verifySignatureAction() {
+    // Validate inputs
+    if (!verifyKeyName.trim() && !verifyPublicKey.trim()) {
+      verifyError = "Please enter either a key name or public key";
+      return;
+    }
+    if (!verifyMessage.trim()) {
+      verifyError = "Please enter a message to verify";
+      return;
+    }
+    if (!verifySignatureHex.trim()) {
+      verifyError = "Please enter a signature to verify";
+      return;
+    }
+
+    verifyError = "";
+    verificationResult = null;
+
+    // Convert hex signature string to Uint8Array
+    let signatureBytes;
+    try {
+      const hexString = verifySignatureHex.trim().replace(/\s/g, "");
+      if (hexString.length % 2 !== 0) {
+        throw new Error("Invalid hex string length");
+      }
+      signatureBytes = new Uint8Array(
+        hexString.match(/.{1,2}/g).map((byte) => parseInt(byte, 16))
+      );
+    } catch (err) {
+      verifyError = "Invalid signature format. Please enter a valid hex string.";
+      return;
+    }
+
+    const options = {};
+    if (verifyKeyName.trim()) {
+      options.keyName = verifyKeyName.trim();
+    }
+    if (verifyPublicKey.trim()) {
+      options.publicKey = verifyPublicKey.trim();
+    }
+
+    verifySignature(verifyMessage, signatureBytes, options)
+      .then((isValid) => {
+        verificationResult = isValid;
+      })
+      .catch((err) => {
+        verifyError = err.toString();
+      });
+  }
+
+  function _useLastSignature() {
+    if (signature) {
+      verifySignatureHex = formatSignature(signature);
+      verifyMessage = messageToSign;
+      verifyKeyName = signKeyName;
+    }
   }
 
   function _deleteKey() {
@@ -218,6 +285,63 @@
         <strong>Signature Generated:</strong><br />
         <code class="signature">{formatSignature(signature)}</code>
       </div>
+    {/if}
+  </section>
+
+  <!-- Verify Signature Section -->
+  <section class="section">
+    <h2>Verify Signature</h2>
+    <div class="form-group">
+      <label for="verifyKeyName">Key Name (optional if using public key):</label>
+      <input
+        id="verifyKeyName"
+        type="text"
+        bind:value={verifyKeyName}
+        placeholder="Enter key name (for local verification)"
+      />
+      <label for="verifyPublicKey">Public Key (optional if using key name):</label>
+      <input
+        id="verifyPublicKey"
+        type="text"
+        bind:value={verifyPublicKey}
+        placeholder="Enter base64 public key (for external verification)"
+      />
+      <label for="verifyMessage">Message:</label>
+      <textarea
+        id="verifyMessage"
+        bind:value={verifyMessage}
+        placeholder="Enter the original message"
+        rows="3"
+      ></textarea>
+      <label for="verifySignatureHex">Signature (hex):</label>
+      <textarea
+        id="verifySignatureHex"
+        bind:value={verifySignatureHex}
+        placeholder="Enter signature in hexadecimal format"
+        rows="2"
+      ></textarea>
+      <div style="display: flex; gap: 10px;">
+        <button onclick={_verifySignatureAction} class="primary">Verify Signature</button>
+        {#if signature}
+          <button onclick={_useLastSignature}>Use Last Signature</button>
+        {/if}
+      </div>
+    </div>
+    {#if verifyError}
+      <div class="error">Error: {verifyError}</div>
+    {/if}
+    {#if verificationResult !== null}
+      {#if verificationResult}
+        <div class="success">
+          <strong>✓ Signature is VALID</strong><br />
+          The signature matches the message and key.
+        </div>
+      {:else}
+        <div class="error">
+          <strong>✗ Signature is INVALID</strong><br />
+          The signature does not match the message and/or key.
+        </div>
+      {/if}
     {/if}
   </section>
 
