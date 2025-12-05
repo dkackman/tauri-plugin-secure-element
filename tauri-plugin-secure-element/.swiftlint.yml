@@ -1,0 +1,18 @@
+# SwiftLint configuration
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+  - trailing_comma  # Trailing commas are actually good practice in Swift
+
+# Allow longer function bodies for complex functions
+function_body_length:
+  warning: 60
+  error: 100
+
+included:
+  - ios/Sources
+  - ios/Tests
+
+excluded:
+  - ios/Package.swift
+

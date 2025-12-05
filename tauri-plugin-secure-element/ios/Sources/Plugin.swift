@@ -157,7 +157,7 @@ class SecureEnclavePlugin: Plugin {
                 var keyRef: CFTypeRef?
                 let keyStatus = SecItemCopyMatching(keyQuery as CFDictionary, &keyRef)
 
-                if keyStatus == errSecSuccess, let privateKey = keyRef as! SecKey? {
+                if keyStatus == errSecSuccess, let privateKey = keyRef as? SecKey {
                     if let publicKey = SecKeyCopyPublicKey(privateKey) {
                         var exportError: Unmanaged<CFError>?
                         if let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? {
@@ -205,7 +205,7 @@ class SecureEnclavePlugin: Plugin {
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
-        guard status == errSecSuccess, let privateKey = keyRef as! SecKey? else {
+        guard status == errSecSuccess, let privateKey = keyRef as? SecKey else {
             invoke.reject("Key not found: \(args.keyName)")
             return
         }

@@ -10,7 +10,11 @@
     "format:check": "pnpm --filter '*' format:check",
     "format:js": "pnpm --filter '*' format:js",
     "format:rust": "pnpm --filter '*' format:rust",
-    "format:swift": "pnpm --filter '*' format:swift"
+    "format:swift": "pnpm --filter '*' format:swift",
+    "lint": "pnpm --filter '*' lint",
+    "lint:js": "pnpm --filter '*' lint:js",
+    "lint:rust": "pnpm --filter '*' lint:rust",
+    "lint:swift": "pnpm --filter '*' lint:swift"
   }
 }
 

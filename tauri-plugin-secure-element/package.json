@@ -24,7 +24,10 @@
     "format:check": "prettier --check . && cargo fmt --check && (swiftformat --lint ios/ 2>/dev/null || echo 'Note: swiftformat not installed')",
     "format:js": "prettier --write .",
     "format:rust": "cargo fmt",
-    "format:swift": "swiftformat ios/ || echo 'Note: swiftformat not installed. Install with: brew install swiftformat'"
+    "format:swift": "swiftformat ios/ || echo 'Note: swiftformat not installed. Install with: brew install swiftformat'",
+    "lint": "cargo clippy -- -D warnings && (swiftlint lint ios/ 2>/dev/null || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint'))",
+    "lint:rust": "cargo clippy -- -D warnings",
+    "lint:swift": "swiftlint lint ios/ || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0"

@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+target/
+
+# Generated files
+src-tauri/gen/
+
+# Config files
+*.config.js
+vite.config.js
+
