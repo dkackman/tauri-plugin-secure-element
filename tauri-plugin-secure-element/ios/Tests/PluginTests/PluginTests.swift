@@ -1,8 +1,8 @@
-@testable import ExamplePlugin
+@testable import SecureKeysPlugin
 import XCTest
 
 final class ExamplePluginTests: XCTestCase {
     func testExample() throws {
-        let plugin = ExamplePlugin()
+        let plugin = SecureKeysPlugin()
     }
 }

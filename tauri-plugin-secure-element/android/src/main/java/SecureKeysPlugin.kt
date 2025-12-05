@@ -44,7 +44,7 @@ class DeleteKeyArgs {
 }
 
 @TauriPlugin
-class ExamplePlugin(private val activity: Activity) : Plugin(activity) {
+class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
     private val keyStoreAliasPrefix = "secure_element_"
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply {
         load(null)
