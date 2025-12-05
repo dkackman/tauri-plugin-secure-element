@@ -157,7 +157,10 @@ class SecureEnclavePlugin: Plugin {
                 var keyRef: CFTypeRef?
                 let keyStatus = SecItemCopyMatching(keyQuery as CFDictionary, &keyRef)
 
-                if keyStatus == errSecSuccess, let privateKey = keyRef as? SecKey {
+                if keyStatus == errSecSuccess, let keyRef = keyRef {
+                    // Force cast is safe here: we've verified errSecSuccess and the query returns SecKey
+                    // swiftlint:disable:next force_cast
+                    let privateKey = (keyRef as! SecKey) // swiftlint:disable:this force_cast
                     if let publicKey = SecKeyCopyPublicKey(privateKey) {
                         var exportError: Unmanaged<CFError>?
                         if let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? {
@@ -205,10 +208,14 @@ class SecureEnclavePlugin: Plugin {
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
-        guard status == errSecSuccess, let privateKey = keyRef as? SecKey else {
+        guard status == errSecSuccess, let keyRef = keyRef else {
             invoke.reject("Key not found: \(args.keyName)")
             return
         }
+        
+        // Force cast is safe here: we've verified errSecSuccess and the query returns SecKey
+        // swiftlint:disable:next force_cast
+        let privateKey = (keyRef as! SecKey) // swiftlint:disable:this force_cast
 
         // Convert data to Data type
         let dataToSign = Data(args.data)
