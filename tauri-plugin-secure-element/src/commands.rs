@@ -21,9 +21,25 @@ pub(crate) async fn generate_secure_key<R: Runtime>(
 }
 
 #[command]
+pub(crate) async fn list_keys<R: Runtime>(
+    app: AppHandle<R>,
+    payload: ListKeysRequest,
+) -> Result<ListKeysResponse> {
+    app.secure_element().list_keys(payload)
+}
+
+#[command]
 pub(crate) async fn sign_with_key<R: Runtime>(
     app: AppHandle<R>,
     payload: SignWithKeyRequest,
 ) -> Result<SignWithKeyResponse> {
     app.secure_element().sign_with_key(payload)
+}
+
+#[command]
+pub(crate) async fn delete_key<R: Runtime>(
+    app: AppHandle<R>,
+    payload: DeleteKeyRequest,
+) -> Result<DeleteKeyResponse> {
+    app.secure_element().delete_key(payload)
 }

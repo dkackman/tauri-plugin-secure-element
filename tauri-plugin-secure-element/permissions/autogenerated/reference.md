@@ -6,7 +6,9 @@ Default permissions for the plugin
 
 - `allow-ping`
 - `allow-generate-secure-key`
+- `allow-list-keys`
 - `allow-sign-with-key`
+- `allow-delete-key`
 
 ## Permission Table
 
@@ -16,6 +18,32 @@ Default permissions for the plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`secure-element:allow-delete-key`
+
+</td>
+<td>
+
+Enables the delete_key command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`secure-element:deny-delete-key`
+
+</td>
+<td>
+
+Denies the delete_key command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -39,6 +67,32 @@ Enables the generate_secure_key command without any pre-configured scope.
 <td>
 
 Denies the generate_secure_key command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`secure-element:allow-list-keys`
+
+</td>
+<td>
+
+Enables the list_keys command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`secure-element:deny-list-keys`
+
+</td>
+<td>
+
+Denies the list_keys command without any pre-configured scope.
 
 </td>
 </tr>

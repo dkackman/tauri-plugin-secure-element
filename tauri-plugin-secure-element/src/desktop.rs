@@ -22,23 +22,32 @@ impl<R: Runtime> SecureElement<R> {
 
     pub fn generate_secure_key(
         &self,
-        payload: GenerateSecureKeyRequest,
+        _payload: GenerateSecureKeyRequest,
     ) -> crate::Result<GenerateSecureKeyResponse> {
-        use rand::RngCore;
-
-        let key_size = payload.key_size.unwrap_or(32); // Default to 32 bytes (256 bits)
-        let mut key = vec![0u8; key_size as usize];
-        rand::thread_rng().fill_bytes(&mut key);
-
-        Ok(GenerateSecureKeyResponse {
-            key: Some(hex::encode(key)),
-        })
+        Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Desktop Secure Enclave not implemented",
+        )))
     }
 
-    pub fn sign_with_key(&self, payload: SignWithKeyRequest) -> crate::Result<SignWithKeyResponse> {
-        // Pass-through implementation for now
-        Ok(SignWithKeyResponse {
-            signature: payload.data,
-        })
+    pub fn list_keys(&self, _payload: ListKeysRequest) -> crate::Result<ListKeysResponse> {
+        Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Desktop Secure Enclave not implemented",
+        )))
+    }
+
+    pub fn sign_with_key(&self, _payload: SignWithKeyRequest) -> crate::Result<SignWithKeyResponse> {
+        Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Desktop Secure Enclave not implemented",
+        )))
+    }
+
+    pub fn delete_key(&self, _payload: DeleteKeyRequest) -> crate::Result<DeleteKeyResponse> {
+        Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Desktop Secure Enclave not implemented",
+        )))
     }
 }

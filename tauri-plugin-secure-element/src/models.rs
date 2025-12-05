@@ -3,35 +3,91 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PingRequest {
-  pub value: Option<String>,
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PingResponse {
-  pub value: Option<String>,
+    pub value: Option<String>,
 }
 
+/// Request to generate a new non-ephemeral key in the Secure Enclave
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateSecureKeyRequest {
-  pub key_size: Option<u32>,
+    /// The name/identifier for this key. Must be unique.
+    pub key_name: String,
 }
 
+/// Response containing the public key for the newly created key
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateSecureKeyResponse {
-  pub key: Option<String>,
+    /// The public key in base64 encoding
+    pub public_key: String,
+    /// The key name that was used
+    pub key_name: String,
 }
 
+/// Request to list all available keys
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListKeysRequest {
+    /// Optional filter by key name
+    pub key_name: Option<String>,
+    /// Optional filter by public key (base64)
+    pub public_key: Option<String>,
+}
+
+/// Information about a key
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyInfo {
+    /// The key name/identifier
+    pub key_name: String,
+    /// The public key in base64 encoding
+    pub public_key: String,
+}
+
+/// Response containing list of keys
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListKeysResponse {
+    /// List of keys matching the filter
+    pub keys: Vec<KeyInfo>,
+}
+
+/// Request to sign data with a specific key
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SignWithKeyRequest {
-  pub data: Vec<u8>,
+    /// The name of the key to use for signing
+    pub key_name: String,
+    /// The data to sign
+    pub data: Vec<u8>,
 }
 
+/// Response containing the signature
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SignWithKeyResponse {
-  pub signature: Vec<u8>,
+    /// The signature in bytes
+    pub signature: Vec<u8>,
+}
+
+/// Request to delete a key
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteKeyRequest {
+    /// The name of the key to delete
+    pub key_name: String,
+}
+
+/// Response for key deletion
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteKeyResponse {
+    /// Whether the deletion was successful
+    pub success: bool,
 }

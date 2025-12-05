@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the delete_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-key",
+          "markdownDescription": "Enables the delete_key command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_key command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-key",
+          "markdownDescription": "Denies the delete_key command without any pre-configured scope."
+        },
+        {
           "description": "Enables the generate_secure_key command without any pre-configured scope.",
           "type": "string",
           "const": "allow-generate-secure-key",
@@ -305,6 +317,18 @@
           "type": "string",
           "const": "deny-generate-secure-key",
           "markdownDescription": "Denies the generate_secure_key command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_keys command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-keys",
+          "markdownDescription": "Enables the list_keys command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_keys command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-keys",
+          "markdownDescription": "Denies the list_keys command without any pre-configured scope."
         },
         {
           "description": "Enables the ping command without any pre-configured scope.",
@@ -331,10 +355,10 @@
           "markdownDescription": "Denies the sign_with_key command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-sign-with-key`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-list-keys`\n- `allow-sign-with-key`\n- `allow-delete-key`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-sign-with-key`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-generate-secure-key`\n- `allow-list-keys`\n- `allow-sign-with-key`\n- `allow-delete-key`"
         }
       ]
     }
