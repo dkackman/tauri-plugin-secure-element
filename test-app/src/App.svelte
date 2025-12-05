@@ -1,115 +1,120 @@
 <script>
-  import { generateSecureKey, listKeys, signWithKey, deleteKey } from 'tauri-plugin-secure-element-api';
+  import {
+    generateSecureKey,
+    listKeys,
+    signWithKey,
+    deleteKey,
+  } from "tauri-plugin-secure-element-api";
 
-	// Create Key Section
-	let newKeyName = $state('')
-	let createdKey = $state(null)
-	let createKeyError = $state('')
+  // Create Key Section
+  let newKeyName = $state("");
+  let createdKey = $state(null);
+  let createKeyError = $state("");
 
-	// List Keys Section
-	let filterKeyName = $state('')
-	let filterPublicKey = $state('')
-	let keysList = $state([])
-	let listKeysError = $state('')
+  // List Keys Section
+  let filterKeyName = $state("");
+  let filterPublicKey = $state("");
+  let keysList = $state([]);
+  let listKeysError = $state("");
 
-	// Sign Message Section
-	let signKeyName = $state('')
-	let messageToSign = $state('')
-	let signature = $state(null)
-	let signError = $state('')
+  // Sign Message Section
+  let signKeyName = $state("");
+  let messageToSign = $state("");
+  let signature = $state(null);
+  let signError = $state("");
 
-	// Delete Key Section
-	let deleteKeyName = $state('')
-	let deleteError = $state('')
-	let deleteSuccess = $state(false)
+  // Delete Key Section
+  let deleteKeyName = $state("");
+  let deleteError = $state("");
+  let deleteSuccess = $state(false);
 
-	function _createKey() {
-		if (!newKeyName.trim()) {
-			createKeyError = 'Please enter a key name'
-			return
-		}
-		createKeyError = ''
-		createdKey = null
-		generateSecureKey(newKeyName.trim())
-			.then((result) => {
-				createdKey = result
-				newKeyName = ''
-				_refreshKeysList()
-			})
-			.catch((err) => {
-				createKeyError = err.toString()
-			})
-	}
+  function _createKey() {
+    if (!newKeyName.trim()) {
+      createKeyError = "Please enter a key name";
+      return;
+    }
+    createKeyError = "";
+    createdKey = null;
+    generateSecureKey(newKeyName.trim())
+      .then((result) => {
+        createdKey = result;
+        newKeyName = "";
+        _refreshKeysList();
+      })
+      .catch((err) => {
+        createKeyError = err.toString();
+      });
+  }
 
-	function _refreshKeysList() {
-		listKeysError = ''
-		const keyNameFilter = filterKeyName.trim() || undefined
-		const publicKeyFilter = filterPublicKey.trim() || undefined
-		listKeys(keyNameFilter, publicKeyFilter)
-			.then((keys) => {
-				keysList = keys
-			})
-			.catch((err) => {
-				listKeysError = err.toString()
-			})
-	}
+  function _refreshKeysList() {
+    listKeysError = "";
+    const keyNameFilter = filterKeyName.trim() || undefined;
+    const publicKeyFilter = filterPublicKey.trim() || undefined;
+    listKeys(keyNameFilter, publicKeyFilter)
+      .then((keys) => {
+        keysList = keys;
+      })
+      .catch((err) => {
+        listKeysError = err.toString();
+      });
+  }
 
-	function _signMessage() {
-		if (!signKeyName.trim()) {
-			signError = 'Please enter a key name'
-			return
-		}
-		if (!messageToSign.trim()) {
-			signError = 'Please enter a message to sign'
-			return
-		}
-		signError = ''
-		signature = null
-		signWithKey(signKeyName.trim(), messageToSign)
-			.then((sig) => {
-				signature = sig
-			})
-			.catch((err) => {
-				signError = err.toString()
-			})
-	}
+  function _signMessage() {
+    if (!signKeyName.trim()) {
+      signError = "Please enter a key name";
+      return;
+    }
+    if (!messageToSign.trim()) {
+      signError = "Please enter a message to sign";
+      return;
+    }
+    signError = "";
+    signature = null;
+    signWithKey(signKeyName.trim(), messageToSign)
+      .then((sig) => {
+        signature = sig;
+      })
+      .catch((err) => {
+        signError = err.toString();
+      });
+  }
 
-	function _deleteKey() {
-		if (!deleteKeyName.trim()) {
-			deleteError = 'Please enter a key name'
-			return
-		}
-		deleteError = ''
-		deleteSuccess = false
-		deleteKey(deleteKeyName.trim())
-			.then((success) => {
-				deleteSuccess = success
-				if (success) {
-					deleteKeyName = ''
-					_refreshKeysList()
-				}
-			})
-			.catch((err) => {
-				deleteError = err.toString()
-			})
-	}
+  function _deleteKey() {
+    if (!deleteKeyName.trim()) {
+      deleteError = "Please enter a key name";
+      return;
+    }
+    deleteError = "";
+    deleteSuccess = false;
+    deleteKey(deleteKeyName.trim())
+      .then((success) => {
+        deleteSuccess = success;
+        if (success) {
+          deleteKeyName = "";
+          _refreshKeysList();
+        }
+      })
+      .catch((err) => {
+        deleteError = err.toString();
+      });
+  }
 
-	function formatPublicKey(pubKey) {
-		// Show first 20 and last 20 characters for readability
-		if (pubKey.length > 40) {
-			return `${pubKey.substring(0, 20)}...${pubKey.substring(pubKey.length - 20)}`
-		}
-		return pubKey
-	}
+  function formatPublicKey(pubKey) {
+    // Show first 20 and last 20 characters for readability
+    if (pubKey.length > 40) {
+      return `${pubKey.substring(0, 20)}...${pubKey.substring(pubKey.length - 20)}`;
+    }
+    return pubKey;
+  }
 
-	function formatSignature(sig) {
-		return Array.from(sig)
-					.map(b => b.toString(16).padStart(2, '0'))
-					.join('')
-	}
+  function formatSignature(sig) {
+    return Array.from(sig)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
 
-	// Load keys on mount
-	_refreshKeysList()
+  // Load keys on mount
+  _refreshKeysList();
 </script>
 
 <main class="container">
@@ -120,12 +125,12 @@
     <h2>Create New Key</h2>
     <div class="form-group">
       <label for="newKeyName">Key Name:</label>
-      <input 
+      <input
         id="newKeyName"
-        type="text" 
-        bind:value={newKeyName} 
+        type="text"
+        bind:value={newKeyName}
         placeholder="Enter unique key name"
-        onkeydown={(e) => e.key === 'Enter' && _createKey()}
+        onkeydown={(e) => e.key === "Enter" && _createKey()}
       />
       <button onclick={_createKey} class="primary">Create Key</button>
     </div>
@@ -134,9 +139,11 @@
     {/if}
     {#if createdKey}
       <div class="success">
-        <strong>Key Created Successfully!</strong><br/>
-        <strong>Key Name:</strong> {createdKey.keyName}<br/>
-        <strong>Public Key:</strong> <code class="public-key">{createdKey.publicKey}</code>
+        <strong>Key Created Successfully!</strong><br />
+        <strong>Key Name:</strong>
+        {createdKey.keyName}<br />
+        <strong>Public Key:</strong>
+        <code class="public-key">{createdKey.publicKey}</code>
       </div>
     {/if}
   </section>
@@ -146,17 +153,17 @@
     <h2>List Keys</h2>
     <div class="form-group">
       <label for="filterKeyName">Filter by Key Name (optional):</label>
-      <input 
+      <input
         id="filterKeyName"
-        type="text" 
-        bind:value={filterKeyName} 
+        type="text"
+        bind:value={filterKeyName}
         placeholder="Key name filter"
       />
       <label for="filterPublicKey">Filter by Public Key (optional):</label>
-      <input 
+      <input
         id="filterPublicKey"
-        type="text" 
-        bind:value={filterPublicKey} 
+        type="text"
+        bind:value={filterPublicKey}
         placeholder="Public key filter"
       />
       <button onclick={_refreshKeysList}>Refresh List</button>
@@ -170,11 +177,14 @@
         {#each keysList as key}
           <div class="key-item">
             <div><strong>Name:</strong> {key.keyName}</div>
-            <div><strong>Public Key:</strong> <code class="public-key">{formatPublicKey(key.publicKey)}</code></div>
+            <div>
+              <strong>Public Key:</strong>
+              <code class="public-key">{formatPublicKey(key.publicKey)}</code>
+            </div>
             <div class="full-key"><code>{key.publicKey}</code></div>
           </div>
         {/each}
-  </div>
+      </div>
     {:else if !listKeysError}
       <div class="info">No keys found</div>
     {/if}
@@ -185,29 +195,29 @@
     <h2>Sign Message</h2>
     <div class="form-group">
       <label for="signKeyName">Key Name:</label>
-      <input 
+      <input
         id="signKeyName"
-        type="text" 
-        bind:value={signKeyName} 
+        type="text"
+        bind:value={signKeyName}
         placeholder="Enter key name to use"
       />
       <label for="messageToSign">Message to Sign:</label>
-      <textarea 
+      <textarea
         id="messageToSign"
-        bind:value={messageToSign} 
+        bind:value={messageToSign}
         placeholder="Enter message to sign"
         rows="3"
       ></textarea>
       <button onclick={_signMessage} class="primary">Sign Message</button>
-  </div>
+    </div>
     {#if signError}
       <div class="error">Error: {signError}</div>
     {/if}
     {#if signature}
       <div class="success">
-        <strong>Signature Generated:</strong><br/>
+        <strong>Signature Generated:</strong><br />
         <code class="signature">{formatSignature(signature)}</code>
-  </div>
+      </div>
     {/if}
   </section>
 
@@ -216,15 +226,15 @@
     <h2>Delete Key</h2>
     <div class="form-group">
       <label for="deleteKeyName">Key Name:</label>
-      <input 
+      <input
         id="deleteKeyName"
-        type="text" 
-        bind:value={deleteKeyName} 
+        type="text"
+        bind:value={deleteKeyName}
         placeholder="Enter key name to delete"
-        onkeydown={(e) => e.key === 'Enter' && _deleteKey()}
+        onkeydown={(e) => e.key === "Enter" && _deleteKey()}
       />
       <button onclick={_deleteKey} class="danger">Delete Key</button>
-  </div>
+    </div>
     {#if deleteError}
       <div class="error">Error: {deleteError}</div>
     {/if}
@@ -232,7 +242,6 @@
       <div class="success">Key deleted successfully!</div>
     {/if}
   </section>
-
 </main>
 
 <style>
@@ -240,12 +249,14 @@
     max-width: 900px;
     margin: 0 auto;
     padding: 20px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+      Cantarell, sans-serif;
   }
 
   h1 {
     color: #333;
-    border-bottom: 2px solid #4CAF50;
+    border-bottom: 2px solid #4caf50;
     padding-bottom: 10px;
   }
 
@@ -286,7 +297,8 @@
     margin-top: 0;
   }
 
-  input, textarea {
+  input,
+  textarea {
     padding: 10px;
     border: 1px solid #ccc;
     border-radius: 4px;
@@ -311,7 +323,7 @@
   }
 
   button.primary {
-    background-color: #4CAF50;
+    background-color: #4caf50;
     color: white;
   }
 
@@ -329,7 +341,7 @@
   }
 
   button:not(.primary):not(.danger) {
-    background-color: #2196F3;
+    background-color: #2196f3;
     color: white;
   }
 
@@ -397,7 +409,7 @@
     background-color: #f5f5f5;
     padding: 2px 6px;
     border-radius: 3px;
-    font-family: 'Monaco', 'Courier New', monospace;
+    font-family: "Monaco", "Courier New", monospace;
     font-size: 12px;
     word-break: break-all;
   }
