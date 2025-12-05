@@ -118,7 +118,7 @@
 </script>
 
 <main class="container">
-  <h1>Secure Enclave Key Manager</h1>
+  <h1>Secure Key Manager</h1>
 
   <!-- Create Key Section -->
   <section class="section">
