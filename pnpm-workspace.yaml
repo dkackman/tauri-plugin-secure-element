@@ -1,0 +1,4 @@
+packages:
+  - 'tauri-plugin-secure-element'
+  - 'test-app'
+

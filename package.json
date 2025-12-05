@@ -1,0 +1,11 @@
+{
+  "name": "tauri-plugin-secure-element-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tauri Plugin Secure Element - Monorepo",
+  "scripts": {
+    "build": "pnpm --filter '*' build",
+    "install:all": "pnpm install"
+  }
+}
+
