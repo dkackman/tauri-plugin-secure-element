@@ -14,10 +14,11 @@ let package = Package(
         .library(
             name: "tauri-plugin-secure-element",
             type: .static,
-            targets: ["tauri-plugin-secure-element"]),
+            targets: ["tauri-plugin-secure-element"]
+        ),
     ],
     dependencies: [
-        .package(name: "Tauri", path: "../.tauri/tauri-api")
+        .package(name: "Tauri", path: "../.tauri/tauri-api"),
     ],
     targets: [
         // Targets are the basic building blocks of a package. A target can define a module or a test suite.
@@ -25,8 +26,9 @@ let package = Package(
         .target(
             name: "tauri-plugin-secure-element",
             dependencies: [
-                .byName(name: "Tauri")
+                .byName(name: "Tauri"),
             ],
-            path: "Sources")
+            path: "Sources"
+        ),
     ]
 )

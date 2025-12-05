@@ -37,7 +37,10 @@ impl<R: Runtime> SecureElement<R> {
         )))
     }
 
-    pub fn sign_with_key(&self, _payload: SignWithKeyRequest) -> crate::Result<SignWithKeyResponse> {
+    pub fn sign_with_key(
+        &self,
+        _payload: SignWithKeyRequest,
+    ) -> crate::Result<SignWithKeyResponse> {
         Err(crate::Error::Io(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "Desktop Secure Enclave not implemented",

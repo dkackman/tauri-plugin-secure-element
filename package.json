@@ -5,7 +5,12 @@
   "description": "Tauri Plugin Secure Element - Monorepo",
   "scripts": {
     "build": "pnpm --filter '*' build",
-    "install:all": "pnpm install"
+    "install:all": "pnpm install",
+    "format": "pnpm --filter '*' format",
+    "format:check": "pnpm --filter '*' format:check",
+    "format:js": "pnpm --filter '*' format:js",
+    "format:rust": "pnpm --filter '*' format:rust",
+    "format:swift": "pnpm --filter '*' format:swift"
   }
 }
 
