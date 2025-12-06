@@ -40,18 +40,14 @@ export async function listKeys(
 
 export async function signWithKey(
   keyName: string,
-  data: string
+  data: Uint8Array
 ): Promise<Uint8Array> {
-  // Convert string to byte array
-  const encoder = new TextEncoder();
-  const dataBytes = encoder.encode(data);
-
   return await invoke<{ signature: number[] }>(
     "plugin:secure-element|sign_with_key",
     {
       payload: {
         keyName,
-        data: Array.from(dataBytes),
+        data: Array.from(data),
       },
     }
   ).then((r) => new Uint8Array(r.signature));

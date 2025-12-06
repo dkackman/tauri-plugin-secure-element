@@ -76,7 +76,10 @@
     }
     signError = "";
     signature = null;
-    signWithKey(signKeyName.trim(), messageToSign)
+    // Convert string to Uint8Array for signing
+    const encoder = new TextEncoder();
+    const dataBytes = encoder.encode(messageToSign);
+    signWithKey(signKeyName.trim(), dataBytes)
       .then((sig) => {
         signature = sig;
       })
