@@ -67,3 +67,22 @@ export async function deleteKey(keyName: string): Promise<boolean> {
     }
   ).then((r) => r.success);
 }
+
+export interface SecureElementSupport {
+  secureElementSupported: boolean;
+  teeSupported: boolean;
+}
+
+export async function checkSecureElementSupport(): Promise<SecureElementSupport> {
+  console.log("[SecureElement] checkSecureElementSupport called");
+  try {
+    const result = await invoke<SecureElementSupport>(
+      "plugin:secure-element|check_secure_element_support"
+    );
+    console.log("[SecureElement] checkSecureElementSupport result:", result);
+    return result;
+  } catch (error) {
+    console.error("[SecureElement] checkSecureElementSupport error:", error);
+    throw error;
+  }
+}

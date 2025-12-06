@@ -4,6 +4,7 @@
     listKeys,
     signWithKey,
     deleteKey,
+    checkSecureElementSupport,
   } from "tauri-plugin-secure-element-api";
 
   // Create Key Section
@@ -27,6 +28,11 @@
   let deleteKeyName = $state("");
   let deleteError = $state("");
   let deleteSuccess = $state(false);
+
+  // Secure Element Support
+  let secureElementSupported = $state(null);
+  let teeSupported = $state(null);
+  let secureElementCheckError = $state("");
 
   function _createKey() {
     if (!newKeyName.trim()) {
@@ -113,12 +119,58 @@
       .join("");
   }
 
-  // Load keys on mount
+  function _checkSecureElementSupport() {
+    console.log("[App] _checkSecureElementSupport called");
+    secureElementCheckError = "";
+    checkSecureElementSupport()
+      .then((result) => {
+        console.log("[App] checkSecureElementSupport success:", result);
+        secureElementSupported = result.secureElementSupported;
+        teeSupported = result.teeSupported;
+      })
+      .catch((err) => {
+        console.error("[App] checkSecureElementSupport error:", err);
+        secureElementCheckError = err.toString();
+        secureElementSupported = false;
+        teeSupported = false;
+      });
+  }
+
+  // Load keys and check secure element support on mount
   _refreshKeysList();
+  _checkSecureElementSupport();
 </script>
 
 <main class="container">
   <h1>Secure Key Manager</h1>
+  
+  <!-- Secure Element Status -->
+  <div class="secure-element-status">
+    {#if secureElementCheckError}
+      <div class="status-item error">
+        <span class="status-label">Hardware Security:</span>
+        <span class="status-value">Error checking support</span>
+      </div>
+    {:else if secureElementSupported !== null}
+      <div class="status-item {secureElementSupported ? 'success' : 'warning'}">
+        <span class="status-label">Secure Element:</span>
+        <span class="status-value">
+          {secureElementSupported ? "✓ Supported" : "✗ Not Supported"}
+        </span>
+      </div>
+      <div class="status-item {teeSupported ? 'success' : 'warning'}">
+        <span class="status-label">TEE:</span>
+        <span class="status-value">
+          {teeSupported ? "✓ Supported" : "✗ Not Supported"}
+        </span>
+      </div>
+    {:else}
+      <div class="status-item info">
+        <span class="status-label">Hardware Security:</span>
+        <span class="status-value">Checking...</span>
+      </div>
+    {/if}
+  </div>
 
   <!-- Create Key Section -->
   <section class="section">
@@ -258,6 +310,56 @@
     color: #333;
     border-bottom: 2px solid #4caf50;
     padding-bottom: 10px;
+    margin-bottom: 15px;
+  }
+
+  .secure-element-status {
+    margin-bottom: 20px;
+    padding: 12px;
+    background: #f5f5f5;
+    border-radius: 6px;
+    border-left: 4px solid #2196f3;
+  }
+
+  .status-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  .status-item.success {
+    color: #2e7d32;
+    border-left-color: #4caf50;
+  }
+
+  .status-item.warning {
+    color: #f57c00;
+    border-left-color: #ff9800;
+  }
+
+  .status-item.error {
+    color: #c62828;
+    border-left-color: #f44336;
+  }
+
+  .status-item.info {
+    color: #1565c0;
+    border-left-color: #2196f3;
+  }
+
+  .status-label {
+    font-weight: 600;
+  }
+
+  .status-value {
+    font-weight: 500;
+  }
+
+  .status-detail {
+    color: #666;
+    font-size: 12px;
+    margin-left: 4px;
   }
 
   h2 {

@@ -1,0 +1,14 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-check-secure-element-support"
+description = "Enables the check_secure_element_support command without any pre-configured scope."
+commands.allow = ["check_secure_element_support"]
+
+[[permission]]
+identifier = "deny-check-secure-element-support"
+description = "Denies the check_secure_element_support command without any pre-configured scope."
+commands.deny = ["check_secure_element_support"]
+

@@ -15,7 +15,8 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
     api: PluginApi<R, C>,
 ) -> crate::Result<SecureElement<R>> {
     #[cfg(target_os = "android")]
-    let handle = api.register_android_plugin("app.tauri.plugin.secureelement", "SecureKeysPlugin")?;
+    let handle =
+        api.register_android_plugin("app.tauri.plugin.secureelement", "SecureKeysPlugin")?;
     #[cfg(target_os = "ios")]
     let handle = api.register_ios_plugin(init_plugin_secure_element)?;
     Ok(SecureElement(handle))
@@ -56,5 +57,25 @@ impl<R: Runtime> SecureElement<R> {
         self.0
             .run_mobile_plugin("deleteKey", payload)
             .map_err(Into::into)
+    }
+
+    pub fn check_secure_element_support(&self) -> crate::Result<CheckSecureElementSupportResponse> {
+        eprintln!("[SecureElement] mobile::check_secure_element_support called");
+        match self.0.run_mobile_plugin("checkSecureElementSupport", ()) {
+            Ok(result) => {
+                eprintln!(
+                    "[SecureElement] mobile::check_secure_element_support success: {:?}",
+                    result
+                );
+                Ok(result)
+            }
+            Err(e) => {
+                eprintln!(
+                    "[SecureElement] mobile::check_secure_element_support error: {:?}",
+                    e
+                );
+                Err(e.into())
+            }
+        }
     }
 }

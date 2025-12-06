@@ -40,7 +40,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::generate_secure_key,
             commands::list_keys,
             commands::sign_with_key,
-            commands::delete_key
+            commands::delete_key,
+            commands::check_secure_element_support
         ])
         .setup(|app, api| {
             #[cfg(mobile)]

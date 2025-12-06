@@ -91,3 +91,13 @@ pub struct DeleteKeyResponse {
     /// Whether the deletion was successful
     pub success: bool,
 }
+
+/// Response for Secure Element support check
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckSecureElementSupportResponse {
+    /// Whether Secure Element (StrongBox on Android, Secure Enclave on iOS) is supported
+    pub secure_element_supported: bool,
+    /// Whether Trusted Execution Environment (TEE) / hardware-backed keystore is supported
+    pub tee_supported: bool,
+}

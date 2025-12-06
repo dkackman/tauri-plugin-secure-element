@@ -268,6 +268,67 @@ class SecureEnclavePlugin: Plugin {
             invoke.reject("Failed to delete key: \(status)")
         }
     }
+
+    // MARK: - Check Secure Element Support
+
+    @objc func checkSecureElementSupport(_ invoke: Invoke) throws {
+        // Check if we're running on a simulator
+        #if targetEnvironment(simulator)
+        // iOS Simulator does not have Secure Enclave hardware
+        // Secure Enclave IS the TEE on iOS, so both are false on simulator
+        invoke.resolve([
+            "secureElementSupported": false,
+            "teeSupported": false,
+        ])
+        return
+        #endif
+        
+        // On physical devices, check if Secure Enclave is available
+        // by attempting to create a test key with Secure Enclave token ID
+        // On iOS, Secure Enclave IS the TEE (Trusted Execution Environment)
+        var accessError: Unmanaged<CFError>?
+        guard let accessControl = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            [],
+            &accessError
+        ) else {
+            // If we can't create access control, Secure Enclave/TEE is not available
+            invoke.resolve([
+                "secureElementSupported": false,
+                "teeSupported": false,
+            ])
+            return
+        }
+        
+        // Try to create a test key with Secure Enclave token ID
+        let testAttributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits as String: 256,
+            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+            kSecAttrIsPermanent as String: false, // Temporary key for testing
+        ]
+        
+        var testError: Unmanaged<CFError>?
+        let testKey = SecKeyCreateRandomKey(testAttributes as CFDictionary, &testError)
+        
+        if testKey != nil {
+            // Successfully created a key, Secure Enclave is available
+            // On iOS, Secure Enclave IS the TEE, so both are true
+            // Clean up the test key
+            SecKeyDelete(testKey!)
+            invoke.resolve([
+                "secureElementSupported": true,
+                "teeSupported": true, // Secure Enclave is iOS's TEE
+            ])
+        } else {
+            // Failed to create key, Secure Enclave/TEE is not available
+            invoke.resolve([
+                "secureElementSupported": false,
+                "teeSupported": false,
+            ])
+        }
+    }
 }
 
 @_cdecl("init_plugin_secure_element")

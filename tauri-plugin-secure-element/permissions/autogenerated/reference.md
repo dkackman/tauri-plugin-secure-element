@@ -9,6 +9,7 @@ Default permissions for the plugin
 - `allow-list-keys`
 - `allow-sign-with-key`
 - `allow-delete-key`
+- `allow-check-secure-element-support`
 
 ## Permission Table
 
@@ -18,6 +19,32 @@ Default permissions for the plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`secure-element:allow-check-secure-element-support`
+
+</td>
+<td>
+
+Enables the check_secure_element_support command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`secure-element:deny-check-secure-element-support`
+
+</td>
+<td>
+
+Denies the check_secure_element_support command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>

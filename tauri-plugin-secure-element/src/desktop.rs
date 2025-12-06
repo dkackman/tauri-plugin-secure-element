@@ -53,4 +53,11 @@ impl<R: Runtime> SecureElement<R> {
             "Desktop Secure Enclave not implemented",
         )))
     }
+
+    pub fn check_secure_element_support(&self) -> crate::Result<CheckSecureElementSupportResponse> {
+        Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Desktop Secure Element support check not implemented",
+        )))
+    }
 }

@@ -43,3 +43,26 @@ pub(crate) async fn delete_key<R: Runtime>(
 ) -> Result<DeleteKeyResponse> {
     app.secure_element().delete_key(payload)
 }
+
+#[command]
+pub(crate) async fn check_secure_element_support<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<CheckSecureElementSupportResponse> {
+    eprintln!("[SecureElement] check_secure_element_support command called");
+    match app.secure_element().check_secure_element_support() {
+        Ok(result) => {
+            eprintln!(
+                "[SecureElement] check_secure_element_support success: {:?}",
+                result
+            );
+            Ok(result)
+        }
+        Err(e) => {
+            eprintln!(
+                "[SecureElement] check_secure_element_support error: {:?}",
+                e
+            );
+            Err(e)
+        }
+    }
+}
