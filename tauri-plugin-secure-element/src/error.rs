@@ -9,6 +9,8 @@ pub enum Error {
     #[cfg(mobile)]
     #[error(transparent)]
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+    #[error("Validation error: {0}")]
+    Validation(String),
 }
 
 impl Serialize for Error {
