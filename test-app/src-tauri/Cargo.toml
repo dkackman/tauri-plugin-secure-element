@@ -1,10 +1,10 @@
 [package]
 name = "test-app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "Tauri Secure Element Plugin Example App"
+authors = ["dkackman"]
+license = "Apache-2.0"
+repository = "https://github.com/dkackman/tauri-plugin-secure-element"
 edition = "2021"
 rust-version = "1.77.2"
 

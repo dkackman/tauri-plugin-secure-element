@@ -25,14 +25,16 @@ pub(crate) async fn list_keys<R: Runtime>(
     app: AppHandle<R>,
     payload: ListKeysRequest,
 ) -> Result<ListKeysResponse> {
-    eprintln!("[RUST] list_keys: Called with payload: {:?}", payload);
     let result = app.secure_element().list_keys(payload);
     match &result {
         Ok(response) => {
-            eprintln!("[RUST] list_keys: Success - keys count: {}", response.keys.len());
             for (i, key) in response.keys.iter().enumerate() {
-                eprintln!("[RUST] list_keys: Key {}: name={}, public_key_len={}", 
-                    i, key.key_name, key.public_key.len());
+                eprintln!(
+                    "[RUST] list_keys: Key {}: name={}, public_key_len={}",
+                    i,
+                    key.key_name,
+                    key.public_key.len()
+                );
             }
         }
         Err(e) => {
