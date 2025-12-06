@@ -86,12 +86,18 @@ class SecureEnclavePlugin: Plugin {
         }
 
         // Create key attributes for Secure Enclave
+        // Safely convert key name to data
+        guard let keyNameData = args.keyName.data(using: .utf8) else {
+            invoke.reject("Invalid key name encoding")
+            return
+        }
+        
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecAttrIsPermanent as String: true, // Non-ephemeral key
-            kSecAttrApplicationTag as String: args.keyName.data(using: .utf8)!,
+            kSecAttrApplicationTag as String: keyNameData,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
                 kSecAttrAccessControl as String: accessControl,
@@ -189,9 +195,9 @@ class SecureEnclavePlugin: Plugin {
                 let keyStatus = SecItemCopyMatching(keyQuery as CFDictionary, &keyRef)
 
                 if keyStatus == errSecSuccess, let keyRef = keyRef {
-                    // Force cast is safe here: we've verified errSecSuccess and the query returns SecKey
-                    // swiftlint:disable:next force_cast
-                    let privateKey = (keyRef as! SecKey) // swiftlint:disable:this force_cast
+                    // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
+                    // No cast needed - SecKey is just a typealias for CFTypeRef
+                    let privateKey = (keyRef as! SecKey) // Safe: verified errSecSuccess
                     if let publicKey = SecKeyCopyPublicKey(privateKey) {
                         var exportError: Unmanaged<CFError>?
                         if let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? {
@@ -249,9 +255,9 @@ class SecureEnclavePlugin: Plugin {
             return
         }
 
-        // Force cast is safe here: we've verified errSecSuccess and the query returns SecKey
-        // swiftlint:disable:next force_cast
-        let privateKey = (keyRef as! SecKey) // swiftlint:disable:this force_cast
+        // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
+        // No cast needed - SecKey is just a typealias for CFTypeRef
+        let privateKey = (keyRef as! SecKey) // Safe: verified errSecSuccess
 
         // Convert data to Data type
         let dataToSign = Data(args.data)
@@ -331,12 +337,12 @@ class SecureEnclavePlugin: Plugin {
         // by attempting to create a test key with Secure Enclave token ID
         // On iOS, Secure Enclave IS the TEE (Trusted Execution Environment)
         var accessError: Unmanaged<CFError>?
-        guard let accessControl = SecAccessControlCreateWithFlags(
+        guard SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             .privateKeyUsage, // Required for Secure Enclave
             &accessError
-        ) else {
+        ) != nil else {
             // If we can't create access control, Secure Enclave/TEE is not available
             invoke.resolve([
                 "secureElementSupported": false,
