@@ -352,21 +352,35 @@ class SecureEnclavePlugin: Plugin {
         }
 
         // Try to create a test key with Secure Enclave token ID
+        // Use a unique tag to identify our test key for cleanup
+        let testTag = "secure_element_test_\(UUID().uuidString)".data(using: .utf8)!
         let testAttributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecAttrIsPermanent as String: false, // Temporary key for testing
+            kSecAttrApplicationTag as String: testTag,
         ]
 
         var testError: Unmanaged<CFError>?
         let testKey = SecKeyCreateRandomKey(testAttributes as CFDictionary, &testError)
 
+        // Always clean up the test key explicitly, even if ephemeral
+        // This prevents resource leakage if the function is called repeatedly
+        defer {
+            if testKey != nil {
+                let deleteQuery: [String: Any] = [
+                    kSecClass as String: kSecClassKey,
+                    kSecAttrApplicationTag as String: testTag,
+                    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+                ]
+                SecItemDelete(deleteQuery as CFDictionary)
+            }
+        }
+
         if testKey != nil {
             // Successfully created a key, Secure Enclave is available
             // On iOS, Secure Enclave IS the TEE, so both are true
-            // Note: Since kSecAttrIsPermanent is false, the test key is ephemeral
-            // and will be automatically cleaned up when the reference is released
             invoke.resolve([
                 "secureElementSupported": true,
                 "teeSupported": true, // Secure Enclave is iOS's TEE
