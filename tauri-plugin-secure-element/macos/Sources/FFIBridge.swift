@@ -66,12 +66,13 @@ func secure_element_generate_key(
     ]
     SecItemDelete(deleteQuery as CFDictionary)
 
-    // Create access control
+    // Create access control with proper flags for Secure Enclave
+    // Using .privateKeyUsage allows the key to be used for signing without additional auth
     var accessError: Unmanaged<CFError>?
     guard let accessControl = SecAccessControlCreateWithFlags(
         kCFAllocatorDefault,
         kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        [],
+        .privateKeyUsage,  // Changed from [] to .privateKeyUsage
         &accessError
     ) else {
         let errorMsg = accessError.map { CFErrorCopyDescription($0.takeRetainedValue()) as String? }
