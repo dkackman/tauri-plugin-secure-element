@@ -105,7 +105,8 @@ class SecureKeysPlugin(
 
     /**
      * Check if Trusted Execution Environment (TEE) / hardware-backed keystore is supported.
-     * This checks if keys can be stored in hardware-backed storage (TEE) even without StrongBox.
+     * This checks if keys can be stored in hardware-backed storage (TEE) even without 
+     * StrongBox, i.e. ARM TrustZone
      */
     private fun isTeeSupported(): Boolean {
         // TEE requires API level 18+ for hardware-backed keystore
@@ -200,7 +201,9 @@ class SecureKeysPlugin(
             val args = invoke.parseArgs(GenerateSecureKeyArgs::class.java)
 
             if (args.keyName.isBlank()) {
-                invoke.reject("Key name cannot be empty")
+                val message = "Key name cannot be empty"
+                Log.e(TAG, "generateSecureKey: $message")
+                invoke.reject(message)
                 return
             }
 
@@ -208,6 +211,7 @@ class SecureKeysPlugin(
 
             if (keyStore.containsAlias(alias)) {
                 val message = sanitizeErrorWithKeyName(args.keyName, "Key already exists")
+                Log.e(TAG, "generateSecureKey: Key already exists: ${args.keyName}")
                 invoke.reject(message)
                 return
             }
@@ -279,6 +283,7 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to create key")
+            Log.e(TAG, "generateSecureKey: $detailedMessage", e)
             invoke.reject(errorMessage)
         }
     }
@@ -334,6 +339,7 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to list keys: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to list keys")
+            Log.e(TAG, "listKeys: $detailedMessage", e)
             invoke.reject(errorMessage)
         }
     }
@@ -344,7 +350,9 @@ class SecureKeysPlugin(
             val args = invoke.parseArgs(SignWithKeyArgs::class.java)
 
             if (args.keyName.isBlank()) {
-                invoke.reject("Key name cannot be empty")
+                val message = "Key name cannot be empty"
+                Log.e(TAG, "signWithKey: $message")
+                invoke.reject(message)
                 return
             }
 
@@ -352,6 +360,7 @@ class SecureKeysPlugin(
 
             if (!keyStore.containsAlias(alias)) {
                 val message = sanitizeErrorWithKeyName(args.keyName, "Key not found")
+                Log.e(TAG, "signWithKey: Key not found: ${args.keyName}")
                 invoke.reject(message)
                 return
             }
@@ -359,7 +368,11 @@ class SecureKeysPlugin(
             // Get the private key entry
             val entry =
                 keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-                    ?: throw Exception("Failed to get key entry")
+                    ?: run {
+                        val message = "Failed to get key entry"
+                        Log.e(TAG, "signWithKey: $message")
+                        throw Exception(message)
+                    }
 
             // Sign the data using ECDSA with SHA-256
             // Note: Android's SHA256withECDSA hashes the data internally,
@@ -378,6 +391,7 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to sign: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+            Log.e(TAG, "signWithKey: $detailedMessage", e)
             invoke.reject(errorMessage)
         }
     }
@@ -388,7 +402,9 @@ class SecureKeysPlugin(
             val args = invoke.parseArgs(DeleteKeyArgs::class.java)
 
             if (args.keyName.isBlank()) {
-                invoke.reject("Key name cannot be empty")
+                val message = "Key name cannot be empty"
+                Log.e(TAG, "deleteKey: $message")
+                invoke.reject(message)
                 return
             }
 
@@ -412,6 +428,7 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to delete key: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
+            Log.e(TAG, "deleteKey: $detailedMessage", e)
             invoke.reject(errorMessage)
         }
     }
