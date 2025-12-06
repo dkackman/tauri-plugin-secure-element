@@ -1,5 +1,29 @@
 # macOS Secure Enclave Troubleshooting Guide
 
+## ⚠️ CRITICAL: Do NOT Use `tauri dev` for Secure Enclave Testing
+
+**Error -34018 will ALWAYS occur with `pnpm tauri dev` or `cargo run`** because:
+- Development mode doesn't create a proper .app bundle
+- Entitlements are NOT applied to non-bundled binaries
+- macOS Keychain requires proper code signing for Secure Enclave access
+
+### ✅ SOLUTION: Use the Proper Build Script
+
+```bash
+# From the repository root:
+./build-and-sign-dev.sh
+
+# Then run the app:
+open test-app/src-tauri/target/debug/bundle/macos/test-app.app
+```
+
+This script:
+1. Builds a proper .app bundle (even for debug builds)
+2. Code signs it with entitlements
+3. Allows Keychain access for Secure Enclave
+
+---
+
 ## Common Errors and Solutions
 
 ### Error -34018: errSecMissingEntitlement

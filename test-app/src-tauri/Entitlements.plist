@@ -2,13 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Enable Keychain access -->
+	<!-- Application Identifier - Required for Keychain access -->
+	<key>com.apple.application-identifier</key>
+	<string>$(AppIdentifierPrefix)com.tauri.secureelement.example</string>
+
+	<!-- Keychain Access Groups - Must match application identifier -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)com.tauri.secureelement.example</string>
 	</array>
 
-	<!-- Required for Secure Enclave operations -->
+	<!-- Team Identifier (optional but recommended) -->
+	<key>com.apple.developer.team-identifier</key>
+	<string>$(TeamIdentifierPrefix)</string>
+
+	<!-- Application Groups for Secure Enclave -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(TeamIdentifierPrefix)com.tauri.secureelement.example</string>
