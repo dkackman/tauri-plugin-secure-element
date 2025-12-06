@@ -106,6 +106,34 @@ class SecureEnclavePlugin: Plugin {
             return
         }
         
+        // Check if a key with this name already exists
+        // This prevents accidental overwrites and ensures consistent behavior with Android
+        let checkQuery: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: keyNameData,
+            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+            kSecReturnRef as String: false, // We only need to know if it exists
+        ]
+        
+        var checkResult: CFTypeRef?
+        let checkStatus = SecItemCopyMatching(checkQuery as CFDictionary, &checkResult)
+        
+        if checkStatus == errSecSuccess {
+            // Key already exists
+            let message = sanitizeErrorWithKeyName(args.keyName, operation: "Key already exists")
+            logError("generateSecureKey", error: message, detailedError: "Key already exists: \(args.keyName)")
+            invoke.reject(message)
+            return
+        } else if checkStatus != errSecItemNotFound {
+            // Unexpected error while checking
+            let detailedMessage = "Failed to check for existing key: \(checkStatus)"
+            let message = sanitizeError(detailedMessage, genericMessage: "Failed to check for existing key")
+            logError("generateSecureKey", error: message, detailedError: detailedMessage)
+            invoke.reject(message)
+            return
+        }
+        // errSecItemNotFound means key doesn't exist, which is what we want - continue
+        
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
