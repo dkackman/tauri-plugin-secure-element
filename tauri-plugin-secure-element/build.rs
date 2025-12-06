@@ -44,8 +44,7 @@ fn build_swift_library() {
     }
 
     // Add framework imports
-    cmd.arg("-import-objc-header")
-        .arg("-framework")
+    cmd.arg("-framework")
         .arg("Security")
         .arg("-framework")
         .arg("Foundation");
