@@ -15,5 +15,11 @@ thiserror = "2"
 rand = "0.8"
 hex = "0.4"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.11"
+core-foundation = "0.9"
+base64 = "0.22"
+sha2 = "0.10"
+
 [build-dependencies]
 tauri-plugin = { version = "2.5.2", features = ["build"] }
