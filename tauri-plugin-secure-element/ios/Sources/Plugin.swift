@@ -64,11 +64,12 @@ class SecureEnclavePlugin: Plugin {
         let args = try invoke.parseArgs(GenerateSecureKeyArgs.self)
 
         // Create access control - keys are only accessible when device is unlocked
+        // .privateKeyUsage flag is REQUIRED for Secure Enclave keys
         var accessError: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            [],
+            .privateKeyUsage, // Required for Secure Enclave
             &accessError
         ) else {
             if let error = accessError {
@@ -333,7 +334,7 @@ class SecureEnclavePlugin: Plugin {
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            [],
+            .privateKeyUsage, // Required for Secure Enclave
             &accessError
         ) else {
             // If we can't create access control, Secure Enclave/TEE is not available
