@@ -225,7 +225,6 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
             val signatureBytes = signature.sign()
 
             // Convert ByteArray to List<Int> (unsigned bytes 0-255) for proper JSON serialization
-            // This matches Swift's [UInt8] conversion and Rust's Vec<u8> expectation
             val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
             val ret = mapOf("signature" to signatureArray)
             invoke.resolveObject(ret)

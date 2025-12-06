@@ -25,23 +25,7 @@ pub(crate) async fn list_keys<R: Runtime>(
     app: AppHandle<R>,
     payload: ListKeysRequest,
 ) -> Result<ListKeysResponse> {
-    let result = app.secure_element().list_keys(payload);
-    match &result {
-        Ok(response) => {
-            for (i, key) in response.keys.iter().enumerate() {
-                eprintln!(
-                    "[RUST] list_keys: Key {}: name={}, public_key_len={}",
-                    i,
-                    key.key_name,
-                    key.public_key.len()
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!("[RUST] list_keys: Error - {}", e);
-        }
-    }
-    result
+    app.secure_element().list_keys(payload)
 }
 
 #[command]
