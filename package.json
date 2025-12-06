@@ -15,6 +15,7 @@
     "lint": "pnpm --filter '*' lint",
     "lint:js": "pnpm --filter '*' lint:js",
     "lint:rust": "pnpm --filter '*' lint:rust",
-    "lint:swift": "pnpm --filter '*' lint:swift"
+    "lint:swift": "pnpm --filter '*' lint:swift",
+    "lint:kotlin": "pnpm --filter '*' lint:kotlin"
   }
 }

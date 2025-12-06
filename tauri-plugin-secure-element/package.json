@@ -27,9 +27,10 @@
     "format:swift": "swiftformat ios/ || echo 'Note: swiftformat not installed. Install with: brew install swiftformat'",
     "format:kotlin": "ktlint -F 'android/src/**/*.kt'",
     "format:check:kotlin": "ktlint 'android/src/**/*.kt'",
-    "lint": "cargo clippy -- -D warnings && (swiftlint lint ios/ 2>/dev/null || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint'))",
+    "lint": "cargo clippy -- -D warnings && (swiftlint lint ios/ 2>/dev/null || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')) && pnpm lint:kotlin",
     "lint:rust": "cargo clippy -- -D warnings",
-    "lint:swift": "swiftlint lint ios/ || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')"
+    "lint:swift": "swiftlint lint ios/ || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')",
+    "lint:kotlin": "ktlint 'android/src/**/*.kt'"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0"

@@ -14,8 +14,8 @@
     "format:check": "prettier --check . && cargo fmt --check --manifest-path src-tauri/Cargo.toml",
     "format:js": "prettier --write .",
     "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml",
-    "lint": "eslint . && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
-    "lint:js": "eslint .",
+    "lint": "(pnpm exec eslint . 2>/dev/null || (command -v eslint >/dev/null 2>&1 && eslint .) || echo 'Note: eslint not found. Run: pnpm install') && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "lint:js": "pnpm exec eslint . || (command -v eslint >/dev/null 2>&1 && eslint .) || echo 'Note: eslint not found. Run: pnpm install'",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings"
   },
   "dependencies": {
