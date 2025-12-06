@@ -33,6 +33,24 @@ class DeleteKeyArgs: Decodable {
 // MARK: - SecureEnclavePlugin
 
 class SecureEnclavePlugin: Plugin {
+    /// Returns a detailed error message in debug builds, generic message in release builds
+    /// This prevents information disclosure in production while helping developers debug
+    private func sanitizeError(_ detailedMessage: String, genericMessage: String) -> String {
+        #if DEBUG
+        return detailedMessage
+        #else
+        return genericMessage
+        #endif
+    }
+    
+    /// Returns error message with key name in debug builds only
+    private func sanitizeErrorWithKeyName(_ keyName: String, operation: String) -> String {
+        #if DEBUG
+        return "\(operation): \(keyName)"
+        #else
+        return operation
+        #endif
+    }
     // MARK: - Ping (for testing)
 
     @objc func ping(_ invoke: Invoke) throws {
@@ -55,10 +73,14 @@ class SecureEnclavePlugin: Plugin {
         ) else {
             if let error = accessError {
                 let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
-                invoke.reject("Failed to create access control: \(errorDescription)")
+                let message = sanitizeError(
+                    "Failed to create access control: \(errorDescription)",
+                    genericMessage: "Failed to create access control"
+                )
+                invoke.reject(message)
                 return
             }
-            invoke.reject("Failed to create access control: Unknown error")
+            invoke.reject("Failed to create access control")
             return
         }
 
@@ -79,10 +101,14 @@ class SecureEnclavePlugin: Plugin {
         guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
             if let error = error {
                 let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
-                invoke.reject("Failed to create key: \(errorDescription)")
+                let message = sanitizeError(
+                    "Failed to create key: \(errorDescription)",
+                    genericMessage: "Failed to create key"
+                )
+                invoke.reject(message)
                 return
             }
-            invoke.reject("Failed to create key: Unknown error")
+            invoke.reject("Failed to create key")
             return
         }
 
@@ -97,10 +123,14 @@ class SecureEnclavePlugin: Plugin {
         guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? else {
             if let error = exportError {
                 let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
-                invoke.reject("Failed to export public key: \(errorDescription)")
+                let message = sanitizeError(
+                    "Failed to export public key: \(errorDescription)",
+                    genericMessage: "Failed to export public key"
+                )
+                invoke.reject(message)
                 return
             }
-            invoke.reject("Failed to export public key: Unknown error")
+            invoke.reject("Failed to export public key")
             return
         }
 
@@ -180,7 +210,11 @@ class SecureEnclavePlugin: Plugin {
                 }
             }
         } else if status != errSecItemNotFound {
-            invoke.reject("Failed to query keys: \(status)")
+            let message = sanitizeError(
+                "Failed to query keys: \(status)",
+                genericMessage: "Failed to query keys"
+            )
+            invoke.reject(message)
             return
         }
 
@@ -209,7 +243,8 @@ class SecureEnclavePlugin: Plugin {
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
         guard status == errSecSuccess, let keyRef = keyRef else {
-            invoke.reject("Key not found: \(args.keyName)")
+            let message = sanitizeErrorWithKeyName(args.keyName, operation: "Key not found")
+            invoke.reject(message)
             return
         }
 
@@ -234,10 +269,14 @@ class SecureEnclavePlugin: Plugin {
         ) as Data? else {
             if let error = signError {
                 let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
-                invoke.reject("Failed to sign: \(errorDescription)")
+                let message = sanitizeError(
+                    "Failed to sign: \(errorDescription)",
+                    genericMessage: "Failed to sign"
+                )
+                invoke.reject(message)
                 return
             }
-            invoke.reject("Failed to sign: Unknown error")
+            invoke.reject("Failed to sign")
             return
         }
 
@@ -265,7 +304,11 @@ class SecureEnclavePlugin: Plugin {
         if status == errSecSuccess || status == errSecItemNotFound {
             invoke.resolve(["success": true])
         } else {
-            invoke.reject("Failed to delete key: \(status)")
+            let message = sanitizeError(
+                "Failed to delete key: \(status)",
+                genericMessage: "Failed to delete key"
+            )
+            invoke.reject(message)
         }
     }
 

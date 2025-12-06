@@ -3,6 +3,7 @@ package app.tauri.plugin.secureelement
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
+import app.tauri.plugin.secureelement.BuildConfig
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
@@ -54,6 +55,29 @@ class SecureKeysPlugin(
 ) : Plugin(activity) {
     companion object {
         private const val TAG = "SecureKeysPlugin"
+    }
+    
+    /**
+     * Returns a detailed error message in debug builds, generic message in release builds.
+     * This prevents information disclosure in production while helping developers debug.
+     */
+    private fun sanitizeError(detailedMessage: String, genericMessage: String): String {
+        return if (BuildConfig.DEBUG) {
+            detailedMessage
+        } else {
+            genericMessage
+        }
+    }
+    
+    /**
+     * Returns error message with key name in debug builds only.
+     */
+    private fun sanitizeErrorWithKeyName(keyName: String, operation: String): String {
+        return if (BuildConfig.DEBUG) {
+            "$operation: $keyName"
+        } else {
+            operation
+        }
     }
 
     private val keyStoreAliasPrefix = "secure_element_"
@@ -164,7 +188,8 @@ class SecureKeysPlugin(
             invoke.resolve(ret)
         } catch (e: Exception) {
             Log.e(TAG, "Error in checkSecureElementSupport", e)
-            val errorMessage = "Failed to check Secure Element support: ${e.message ?: e.javaClass.simpleName}"
+            val detailedMessage = "Failed to check Secure Element support: ${e.message ?: e.javaClass.simpleName}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to check Secure Element support")
             invoke.reject(errorMessage)
         }
     }
@@ -182,7 +207,8 @@ class SecureKeysPlugin(
             val alias = getKeyAlias(args.keyName)
 
             if (keyStore.containsAlias(alias)) {
-                invoke.reject("Key with name '${args.keyName}' already exists")
+                val message = sanitizeErrorWithKeyName(args.keyName, "Key already exists")
+                invoke.reject(message)
                 return
             }
 
@@ -251,7 +277,9 @@ class SecureKeysPlugin(
             ret.put("keyName", args.keyName)
             invoke.resolve(ret)
         } catch (e: Exception) {
-            invoke.reject("Failed to create key: ${e.message ?: e.javaClass.simpleName}")
+            val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to create key")
+            invoke.reject(errorMessage)
         }
     }
 
@@ -304,7 +332,9 @@ class SecureKeysPlugin(
             val ret = mapOf("keys" to keys)
             invoke.resolveObject(ret)
         } catch (e: Exception) {
-            invoke.reject("Failed to list keys: ${e.message}")
+            val detailedMessage = "Failed to list keys: ${e.message}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to list keys")
+            invoke.reject(errorMessage)
         }
     }
 
@@ -321,7 +351,8 @@ class SecureKeysPlugin(
             val alias = getKeyAlias(args.keyName)
 
             if (!keyStore.containsAlias(alias)) {
-                invoke.reject("Key not found: ${args.keyName}")
+                val message = sanitizeErrorWithKeyName(args.keyName, "Key not found")
+                invoke.reject(message)
                 return
             }
 
@@ -345,7 +376,9 @@ class SecureKeysPlugin(
             val ret = mapOf("signature" to signatureArray)
             invoke.resolveObject(ret)
         } catch (e: Exception) {
-            invoke.reject("Failed to sign: ${e.message}")
+            val detailedMessage = "Failed to sign: ${e.message}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+            invoke.reject(errorMessage)
         }
     }
 
@@ -377,7 +410,9 @@ class SecureKeysPlugin(
             ret.put("success", true)
             invoke.resolve(ret)
         } catch (e: Exception) {
-            invoke.reject("Failed to delete key: ${e.message}")
+            val detailedMessage = "Failed to delete key: ${e.message}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
+            invoke.reject(errorMessage)
         }
     }
 }
