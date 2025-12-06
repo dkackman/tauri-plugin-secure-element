@@ -3,7 +3,7 @@ use tauri::{command, AppHandle, Runtime};
 use crate::models::*;
 use crate::Result;
 use crate::SecureElementExt;
-use crate::validation::validate_key_name;
+use crate::validation::{validate_key_name, validate_sign_data_size};
 
 #[command]
 pub(crate) async fn ping<R: Runtime>(
@@ -40,6 +40,7 @@ pub(crate) async fn sign_with_key<R: Runtime>(
     payload: SignWithKeyRequest,
 ) -> Result<SignWithKeyResponse> {
     validate_key_name(&payload.key_name)?;
+    validate_sign_data_size(&payload.data)?;
     app.secure_element().sign_with_key(payload)
 }
 
