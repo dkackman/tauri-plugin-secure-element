@@ -1,0 +1,11 @@
+root = true
+
+[*.{kt,kts}]
+ktlint_standard_no-wildcard-imports = disabled
+
+[**/test/**/*.kt]
+ktlint_standard_no-wildcard-imports = disabled
+
+[**/androidTest/**/*.kt]
+ktlint_standard_no-wildcard-imports = disabled
+

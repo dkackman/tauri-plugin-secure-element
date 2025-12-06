@@ -43,13 +43,13 @@ class DeleteKeyArgs {
 }
 
 @TauriPlugin
-class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
+class SecureKeysPlugin(
+    private val activity: Activity,
+) : Plugin(activity) {
     private val keyStoreAliasPrefix = "secure_element_"
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
-    private fun getKeyAlias(keyName: String): String {
-        return "$keyStoreAliasPrefix$keyName"
-    }
+    private fun getKeyAlias(keyName: String): String = "$keyStoreAliasPrefix$keyName"
 
     @Command
     fun ping(invoke: Invoke) {
@@ -78,20 +78,20 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
 
             // Try to use StrongBox if available, fall back to regular hardware-backed storage
             var keyPairGenerator =
-                    KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
+                KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
 
             // First try with StrongBox if available
             var keyGenParameterSpec =
-                    KeyGenParameterSpec.Builder(
-                                    alias,
-                                    KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-                            )
-                            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                            .setDigests(KeyProperties.DIGEST_SHA256)
-                            .setIsStrongBoxBacked(
-                                    true
-                            ) // <--- IMPORTANT: This is required for StrongBox
-                            .build()
+                KeyGenParameterSpec
+                    .Builder(
+                        alias,
+                        KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+                    ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                    .setDigests(KeyProperties.DIGEST_SHA256)
+                    .setIsStrongBoxBacked(
+                        true,
+                    ) // <--- IMPORTANT: This is required for StrongBox
+                    .build()
 
             try {
                 keyPairGenerator.initialize(keyGenParameterSpec)
@@ -100,19 +100,19 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
                 // StrongBox not available, fall back to regular hardware-backed storage
                 // Create a new KeyPairGenerator instance since it can't be reinitialized
                 keyPairGenerator =
-                        KeyPairGenerator.getInstance(
-                                KeyProperties.KEY_ALGORITHM_EC,
-                                "AndroidKeyStore"
-                        )
+                    KeyPairGenerator.getInstance(
+                        KeyProperties.KEY_ALGORITHM_EC,
+                        "AndroidKeyStore",
+                    )
 
                 keyGenParameterSpec =
-                        KeyGenParameterSpec.Builder(
-                                        alias,
-                                        KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-                                )
-                                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                                .setDigests(KeyProperties.DIGEST_SHA256)
-                                .build()
+                    KeyGenParameterSpec
+                        .Builder(
+                            alias,
+                            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+                        ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                        .setDigests(KeyProperties.DIGEST_SHA256)
+                        .build()
 
                 keyPairGenerator.initialize(keyGenParameterSpec)
                 keyPairGenerator.generateKeyPair()
@@ -121,8 +121,8 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
             // Get the public key
             val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
             val publicKey =
-                    entry?.certificate?.publicKey
-                            ?: throw Exception("Failed to get public key after key generation")
+                entry?.certificate?.publicKey
+                    ?: throw Exception("Failed to get public key after key generation")
 
             // Export public key in X.509 format (DER) and convert to base64
             val publicKeyBytes = publicKey.encoded
@@ -144,7 +144,6 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
 
             val keys = mutableListOf<Map<String, String>>()
 
-            // Iterate through all aliases in the keystore
             val aliases = keyStore.aliases()
 
             while (aliases.hasMoreElements()) {
@@ -203,7 +202,6 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
 
             val alias = getKeyAlias(args.keyName)
 
-            // Check if key exists
             if (!keyStore.containsAlias(alias)) {
                 invoke.reject("Key not found: ${args.keyName}")
                 return
@@ -211,8 +209,8 @@ class SecureKeysPlugin(private val activity: Activity) : Plugin(activity) {
 
             // Get the private key entry
             val entry =
-                    keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-                            ?: throw Exception("Failed to get key entry")
+                keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+                    ?: throw Exception("Failed to get key entry")
 
             // Sign the data using ECDSA with SHA-256
             // Note: Android's SHA256withECDSA hashes the data internally,

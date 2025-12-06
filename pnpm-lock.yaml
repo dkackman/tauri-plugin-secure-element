@@ -14,6 +14,9 @@ importers:
         specifier: ^2.0.0
         version: 2.9.1
     devDependencies:
+      '@naturalcycles/ktlint':
+        specifier: ^1.16.0
+        version: 1.16.0
       '@rollup/plugin-typescript':
         specifier: ^12.0.0
         version: 12.3.0(rollup@4.53.3)(tslib@2.8.1)(typescript@5.9.3)
@@ -268,6 +271,11 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@naturalcycles/ktlint@1.16.0':
+    resolution: {integrity: sha512-8MEeiiSA9ToWmlCRnM2NTWGJz4yDqG8biNBR7COAEzXO1FXHqxTX38kDNSbLO5r0SXf6i4pofVK9unWSOKdJEw==}
+    engines: {node: '>=20.13.0'}
+    hasBin: true
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -1238,6 +1246,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@naturalcycles/ktlint@1.16.0': {}
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:

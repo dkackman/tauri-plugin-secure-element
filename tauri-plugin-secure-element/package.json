@@ -20,11 +20,13 @@
     "build": "rollup -c",
     "prepublishOnly": "pnpm build",
     "pretest": "pnpm build",
-    "format": "prettier --write . && cargo fmt && swiftformat ios/ 2>/dev/null || echo 'Note: swiftformat not installed. Install with: brew install swiftformat'",
-    "format:check": "prettier --check . && cargo fmt --check && (swiftformat --lint ios/ 2>/dev/null || echo 'Note: swiftformat not installed')",
+    "format": "prettier --write . && cargo fmt && swiftformat ios/ 2>/dev/null || echo 'Note: swiftformat not installed. Install with: brew install swiftformat' && pnpm format:kotlin",
+    "format:check": "prettier --check . && cargo fmt --check && (swiftformat --lint ios/ 2>/dev/null || echo 'Note: swiftformat not installed') && pnpm format:check:kotlin",
     "format:js": "prettier --write .",
     "format:rust": "cargo fmt",
     "format:swift": "swiftformat ios/ || echo 'Note: swiftformat not installed. Install with: brew install swiftformat'",
+    "format:kotlin": "ktlint -F 'android/src/**/*.kt'",
+    "format:check:kotlin": "ktlint 'android/src/**/*.kt'",
     "lint": "cargo clippy -- -D warnings && (swiftlint lint ios/ 2>/dev/null || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint'))",
     "lint:rust": "cargo clippy -- -D warnings",
     "lint:swift": "swiftlint lint ios/ || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')"
@@ -34,6 +36,7 @@
   },
   "devDependencies": {
     "@rollup/plugin-typescript": "^12.0.0",
+    "@naturalcycles/ktlint": "^1.16.0",
     "prettier": "^3.7.4",
     "rollup": "^4.9.6",
     "typescript": "^5.3.3",
