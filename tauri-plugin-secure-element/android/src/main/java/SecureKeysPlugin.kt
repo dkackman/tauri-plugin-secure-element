@@ -200,13 +200,6 @@ class SecureKeysPlugin(
         try {
             val args = invoke.parseArgs(GenerateSecureKeyArgs::class.java)
 
-            if (args.keyName.isBlank()) {
-                val message = "Key name cannot be empty"
-                Log.e(TAG, "generateSecureKey: $message")
-                invoke.reject(message)
-                return
-            }
-
             val alias = getKeyAlias(args.keyName)
 
             if (keyStore.containsAlias(alias)) {
