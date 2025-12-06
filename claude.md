@@ -35,6 +35,7 @@ tauri-plugin-secure-element/          # Root monorepo
 ### Prerequisites
 
 Ensure these are installed before starting:
+
 - Rust (latest stable)
 - Node.js 20.19+ or 22.12+
 - pnpm
@@ -55,19 +56,23 @@ pnpm install
 The build order matters due to dependencies:
 
 1. **Build plugin JavaScript bindings**:
+
    ```bash
    cd tauri-plugin-secure-element
    pnpm build
    ```
+
    This compiles TypeScript to `dist-js/`
 
 2. **Build test app** (automatically builds plugin first):
+
    ```bash
    cd test-app
    pnpm build
    ```
 
 3. **Build everything** (from root):
+
    ```bash
    pnpm build
    ```
@@ -93,6 +98,7 @@ Note: The `predev` script automatically builds the plugin before running.
 All code quality scripts can be run from the root or individual packages:
 
 **Formatting**:
+
 ```bash
 pnpm format              # Format all code (Rust, JS, Swift, Kotlin)
 pnpm format:check        # Check formatting without changes
@@ -103,6 +109,7 @@ pnpm format:kotlin       # Format Kotlin only
 ```
 
 **Linting**:
+
 ```bash
 pnpm lint                # Lint all code
 pnpm lint:js             # Lint JavaScript/TypeScript only
@@ -124,6 +131,7 @@ pnpm lint:kotlin         # Lint Kotlin only
 ## Debugging
 
 Use the VS Code launch configurations defined in `.vscode/launch.json` for debugging:
+
 - Debug on iOS
 - Debug on Android
 - Debug test app
@@ -159,6 +167,7 @@ pnpm build               # Ensure everything builds
 ## Dependencies
 
 **Main plugin**:
+
 - `tauri` 2.9.4
 - `serde` 1.0
 - `thiserror` 2
@@ -166,9 +175,11 @@ pnpm build               # Ensure everything builds
 - `hex` 0.4
 
 **Guest JS**:
+
 - `@tauri-apps/api` ^2.0.0
 
 **Test app**:
+
 - Svelte 5
 - Vite 7
 - Tauri CLI 2
@@ -176,7 +187,7 @@ pnpm build               # Ensure everything builds
 ## Platform Support
 
 - iOS: Uses Secure Enclave via Swift
-- Android: Uses Android Keystore via Kotlin
+- Android: Uses Android StrongBox Keystore via Kotlin
 - Desktop: Currently stubbed (returns errors)
 
 ## Notes
@@ -186,3 +197,4 @@ pnpm build               # Ensure everything builds
 - Swift tooling (swiftformat, swiftlint) is optional but recommended for iOS development
 - Kotlin formatting uses ktlint (installed via pnpm)
 - All commands should be run from the appropriate directory (root, plugin, or test-app)
+- Security and correctness are paramount.
