@@ -3,7 +3,7 @@ use tauri::{command, AppHandle, Runtime};
 use crate::models::*;
 use crate::Result;
 use crate::SecureElementExt;
-use crate::validation::{validate_key_name, validate_sign_data_size};
+use crate::validation::{validate_key_name, validate_public_key_filter, validate_sign_data_size};
 
 #[command]
 pub(crate) async fn ping<R: Runtime>(
@@ -30,6 +30,10 @@ pub(crate) async fn list_keys<R: Runtime>(
     // Validate optional key name filter if provided
     if let Some(ref key_name) = payload.key_name {
         validate_key_name(key_name)?;
+    }
+    // Validate optional public key filter if provided
+    if let Some(ref public_key) = payload.public_key {
+        validate_public_key_filter(public_key)?;
     }
     app.secure_element().list_keys(payload)
 }
