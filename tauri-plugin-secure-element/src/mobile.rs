@@ -60,22 +60,8 @@ impl<R: Runtime> SecureElement<R> {
     }
 
     pub fn check_secure_element_support(&self) -> crate::Result<CheckSecureElementSupportResponse> {
-        eprintln!("[SecureElement] mobile::check_secure_element_support called");
-        match self.0.run_mobile_plugin("checkSecureElementSupport", ()) {
-            Ok(result) => {
-                eprintln!(
-                    "[SecureElement] mobile::check_secure_element_support success: {:?}",
-                    result
-                );
-                Ok(result)
-            }
-            Err(e) => {
-                eprintln!(
-                    "[SecureElement] mobile::check_secure_element_support error: {:?}",
-                    e
-                );
-                Err(e.into())
-            }
-        }
+        self.0
+            .run_mobile_plugin("checkSecureElementSupport", ())
+            .map_err(Into::into)
     }
 }

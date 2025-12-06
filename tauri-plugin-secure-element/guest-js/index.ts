@@ -74,15 +74,8 @@ export interface SecureElementSupport {
 }
 
 export async function checkSecureElementSupport(): Promise<SecureElementSupport> {
-  console.log("[SecureElement] checkSecureElementSupport called");
-  try {
-    const result = await invoke<SecureElementSupport>(
-      "plugin:secure-element|check_secure_element_support"
-    );
-    console.log("[SecureElement] checkSecureElementSupport result:", result);
-    return result;
-  } catch (error) {
-    console.error("[SecureElement] checkSecureElementSupport error:", error);
-    throw error;
-  }
+  const result = await invoke<SecureElementSupport>(
+    "plugin:secure-element|check_secure_element_support"
+  );
+  return result;
 }
