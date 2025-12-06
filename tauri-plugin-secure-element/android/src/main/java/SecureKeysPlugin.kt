@@ -8,17 +8,17 @@ import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
-import java.security.KeyFactory
-import java.security.interfaces.ECPrivateKey
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
+import java.security.interfaces.ECPrivateKey
 import java.security.spec.ECGenParameterSpec
 
 @InvokeArg
@@ -55,7 +55,7 @@ class SecureKeysPlugin(
     companion object {
         private const val TAG = "SecureKeysPlugin"
     }
-    
+
     private val keyStoreAliasPrefix = "secure_element_"
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
@@ -66,21 +66,13 @@ class SecureKeysPlugin(
      * StrongBox requires Android API level 28 (Android 9) or higher.
      */
     private fun isSecureElementSupported(): Boolean {
-        Log.d(TAG, "Checking Secure Element support...")
-        Log.d(TAG, "Android SDK version: ${Build.VERSION.SDK_INT}")
-        
         // StrongBox requires API level 28+
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            Log.d(TAG, "SDK version ${Build.VERSION.SDK_INT} is below required API 28 (P), Secure Element not supported")
             return false
         }
-        
-        Log.d(TAG, "SDK version meets requirement (>= API 28), checking for StrongBox feature...")
-        
+
         try {
-            val hasFeature = activity.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
-            Log.d(TAG, "PackageManager.hasSystemFeature(FEATURE_STRONGBOX_KEYSTORE) returned: $hasFeature")
-            return hasFeature
+            return activity.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
         } catch (e: Exception) {
             Log.e(TAG, "Error checking for StrongBox feature", e)
             throw e
@@ -92,34 +84,33 @@ class SecureKeysPlugin(
      * This checks if keys can be stored in hardware-backed storage (TEE) even without StrongBox.
      */
     private fun isTeeSupported(): Boolean {
-        Log.d(TAG, "Checking TEE support...")
-        
         // TEE requires API level 18+ for hardware-backed keystore
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            Log.d(TAG, "SDK version ${Build.VERSION.SDK_INT} is below API 18, TEE not supported")
             return false
         }
-        
+
         // Try to create a test key and check if it's hardware-backed
         val testAlias = "${keyStoreAliasPrefix}tee_test_${System.currentTimeMillis()}"
-        
+
         try {
-            val keyPairGenerator = KeyPairGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_EC,
-                "AndroidKeyStore"
-            )
-            
-            val keyGenParameterSpec = KeyGenParameterSpec.Builder(
-                testAlias,
-                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-            )
-                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                .setDigests(KeyProperties.DIGEST_SHA256)
-                .build()
-            
+            val keyPairGenerator =
+                KeyPairGenerator.getInstance(
+                    KeyProperties.KEY_ALGORITHM_EC,
+                    "AndroidKeyStore",
+                )
+
+            val keyGenParameterSpec =
+                KeyGenParameterSpec
+                    .Builder(
+                        testAlias,
+                        KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+                    ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                    .setDigests(KeyProperties.DIGEST_SHA256)
+                    .build()
+
             keyPairGenerator.initialize(keyGenParameterSpec)
             keyPairGenerator.generateKeyPair()
-            
+
             // Check if the key is hardware-backed
             val entry = keyStore.getEntry(testAlias, null) as? KeyStore.PrivateKeyEntry
             if (entry != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -128,21 +119,18 @@ class SecureKeysPlugin(
                     val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
                     val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
                     val isHardwareBacked = keyInfo.isInsideSecureHardware
-                    Log.d(TAG, "TEE check: key is hardware-backed: $isHardwareBacked")
-                    
+
                     // Clean up test key
                     keyStore.deleteEntry(testAlias)
-                    
+
                     return isHardwareBacked
                 }
             }
-            
+
             // If we can't check KeyInfo (API < 23), assume TEE is available if key creation succeeded
             // and we're on API 18+ (hardware-backed keystore was introduced)
-            Log.d(TAG, "TEE check: Key created successfully, assuming TEE available (API ${Build.VERSION.SDK_INT})")
             keyStore.deleteEntry(testAlias)
             return true
-            
         } catch (e: Exception) {
             Log.e(TAG, "TEE check failed", e)
             // Clean up test key if it was created
@@ -167,20 +155,16 @@ class SecureKeysPlugin(
 
     @Command
     fun checkSecureElementSupport(invoke: Invoke) {
-        Log.d(TAG, "checkSecureElementSupport called")
         try {
             val secureElementSupported = isSecureElementSupported()
             val teeSupported = isTeeSupported()
-            Log.d(TAG, "Secure Element support check completed: secureElement=$secureElementSupported, tee=$teeSupported")
             val ret = JSObject()
             ret.put("secureElementSupported", secureElementSupported)
             ret.put("teeSupported", teeSupported)
-            Log.d(TAG, "Resolving with result: secureElementSupported=$secureElementSupported, teeSupported=$teeSupported")
             invoke.resolve(ret)
         } catch (e: Exception) {
             Log.e(TAG, "Error in checkSecureElementSupport", e)
             val errorMessage = "Failed to check Secure Element support: ${e.message ?: e.javaClass.simpleName}"
-            Log.e(TAG, "Rejecting with error: $errorMessage")
             invoke.reject(errorMessage)
         }
     }
@@ -209,19 +193,18 @@ class SecureKeysPlugin(
                 KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
 
             var keyGenParameterSpec =
-                KeyGenParameterSpec.Builder(
-                    alias,
-                    KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-                )
-                    .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                KeyGenParameterSpec
+                    .Builder(
+                        alias,
+                        KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+                    ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                     .setDigests(KeyProperties.DIGEST_SHA256)
                     .apply {
                         // Only set StrongBox if Secure Element is supported
                         if (useSecureElement) {
                             setIsStrongBoxBacked(true)
                         }
-                    }
-                    .build()
+                    }.build()
 
             try {
                 keyPairGenerator.initialize(keyGenParameterSpec)
@@ -237,11 +220,11 @@ class SecureKeysPlugin(
                         )
 
                     keyGenParameterSpec =
-                        KeyGenParameterSpec.Builder(
-                            alias,
-                            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-                        )
-                            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                        KeyGenParameterSpec
+                            .Builder(
+                                alias,
+                                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+                            ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                             .setDigests(KeyProperties.DIGEST_SHA256)
                             .build()
 

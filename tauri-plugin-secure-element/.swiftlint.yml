@@ -2,7 +2,7 @@
 disabled_rules:
   - trailing_whitespace
   - line_length
-  - trailing_comma  # Trailing commas are actually good practice in Swift
+  - trailing_comma # Trailing commas are actually good practice in Swift
 
 # Allow longer function bodies for complex functions
 function_body_length:
@@ -15,4 +15,3 @@ included:
 
 excluded:
   - ios/Package.swift
-

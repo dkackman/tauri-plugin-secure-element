@@ -212,7 +212,7 @@ class SecureEnclavePlugin: Plugin {
             invoke.reject("Key not found: \(args.keyName)")
             return
         }
-        
+
         // Force cast is safe here: we've verified errSecSuccess and the query returns SecKey
         // swiftlint:disable:next force_cast
         let privateKey = (keyRef as! SecKey) // swiftlint:disable:this force_cast
@@ -274,15 +274,15 @@ class SecureEnclavePlugin: Plugin {
     @objc func checkSecureElementSupport(_ invoke: Invoke) throws {
         // Check if we're running on a simulator
         #if targetEnvironment(simulator)
-        // iOS Simulator does not have Secure Enclave hardware
-        // Secure Enclave IS the TEE on iOS, so both are false on simulator
-        invoke.resolve([
-            "secureElementSupported": false,
-            "teeSupported": false,
-        ])
-        return
+            // iOS Simulator does not have Secure Enclave hardware
+            // Secure Enclave IS the TEE on iOS, so both are false on simulator
+            invoke.resolve([
+                "secureElementSupported": false,
+                "teeSupported": false,
+            ])
+            return
         #endif
-        
+
         // On physical devices, check if Secure Enclave is available
         // by attempting to create a test key with Secure Enclave token ID
         // On iOS, Secure Enclave IS the TEE (Trusted Execution Environment)
@@ -300,7 +300,7 @@ class SecureEnclavePlugin: Plugin {
             ])
             return
         }
-        
+
         // Try to create a test key with Secure Enclave token ID
         let testAttributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
@@ -308,15 +308,15 @@ class SecureEnclavePlugin: Plugin {
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecAttrIsPermanent as String: false, // Temporary key for testing
         ]
-        
+
         var testError: Unmanaged<CFError>?
         let testKey = SecKeyCreateRandomKey(testAttributes as CFDictionary, &testError)
-        
+
         if testKey != nil {
             // Successfully created a key, Secure Enclave is available
             // On iOS, Secure Enclave IS the TEE, so both are true
-            // Clean up the test key
-            SecKeyDelete(testKey!)
+            // Note: Since kSecAttrIsPermanent is false, the test key is ephemeral
+            // and will be automatically cleaned up when the reference is released
             invoke.resolve([
                 "secureElementSupported": true,
                 "teeSupported": true, // Secure Enclave is iOS's TEE

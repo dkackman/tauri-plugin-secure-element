@@ -143,7 +143,7 @@
 
 <main class="container">
   <h1>Secure Key Manager</h1>
-  
+
   <!-- Secure Element Status -->
   <div class="secure-element-status">
     {#if secureElementCheckError}
