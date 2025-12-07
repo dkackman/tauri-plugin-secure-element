@@ -70,10 +70,10 @@ class SecureEnclavePlugin: Plugin {
     /// Converts authentication mode string to SecAccessControlCreateFlags
     private func getAccessControlFlags(authMode: String?) -> SecAccessControlCreateFlags {
         let mode = authMode ?? "pinOrBiometric"
-        
+
         // .privateKeyUsage is REQUIRED for Secure Enclave keys
         var flags: SecAccessControlCreateFlags = [.privateKeyUsage]
-        
+
         switch mode {
         case "none":
             // No authentication required, only .privateKeyUsage
@@ -85,46 +85,10 @@ class SecureEnclavePlugin: Plugin {
             // Allow PIN or biometric (default)
             flags.insert(.userPresence)
         }
-        
+
         return flags
     }
-    
-    /// Authenticates the user using LocalAuthentication based on auth mode
-    private func authenticateUser(authMode: String?, reason: String, completion: @escaping (Bool, String?) -> Void) {
-        let mode = authMode ?? "pinOrBiometric"
-        
-        // For "none" mode, skip authentication
-        if mode == "none" {
-            completion(true, nil)
-            return
-        }
-        
-        let context = LAContext()
-        var error: NSError?
-        var policy: LAPolicy = .deviceOwnerAuthentication
-        
-        // For biometric-only, use biometric policy
-        if mode == "biometricOnly" {
-            if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
-                policy = .deviceOwnerAuthenticationWithBiometrics
-            } else {
-                completion(false, "Biometric authentication is not available")
-                return
-            }
-        }
-        
-        context.evaluatePolicy(policy, localizedReason: reason) { success, error in
-            DispatchQueue.main.async {
-                if success {
-                    completion(true, nil)
-                } else {
-                    let errorMessage = error?.localizedDescription ?? "Authentication failed"
-                    completion(false, errorMessage)
-                }
-            }
-        }
-    }
-    
+
     // MARK: - Key Operations Helpers
     
     /// Converts key name string to Data, handling errors consistently
@@ -156,15 +120,18 @@ class SecureEnclavePlugin: Plugin {
         let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
-        
-        guard status == errSecSuccess, let keyRef = keyRef else {
+
+        // Accept both errSecSuccess and errSecInteractionNotAllowed
+        // errSecInteractionNotAllowed can occur for auth-required keys, but authentication
+        // will be enforced later when the key is actually used (e.g., during SecKeyCreateSignature)
+        guard (status == errSecSuccess || status == errSecInteractionNotAllowed), let keyRef = keyRef else {
             let message = sanitizeErrorWithKeyName(keyName, operation: "Key not found")
-            logError(operation, error: message, detailedError: "Key not found: \(keyName)")
+            logError(operation, error: message, detailedError: "Key not found: \(keyName), status: \(status)")
             invoke.reject(message)
             return nil
         }
-        
-        // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
+
+        // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess or errSecInteractionNotAllowed
         // SecKey is a typealias for CFTypeRef, so we can use it directly
         // swiftlint:disable:next force_cast
         return keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
@@ -269,24 +236,45 @@ class SecureEnclavePlugin: Plugin {
         return accessControl
     }
     
-    /// Determines if a key requires authentication
+    /// Determines if a key requires authentication by checking its access control attributes
     /// Returns true if authentication is required, false if not, or nil if it cannot be determined
+    ///
+    /// Note: This is a best-effort attempt. The Secure Enclave enforces access control during
+    /// key usage (e.g., SecKeyCreateSignature), so this method is for informational purposes only.
     private func keyRequiresAuthentication(keyNameData: Data) -> Bool? {
-        let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
-        var keyRef: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
-        
-        // If we can get the key without authentication, it doesn't require auth
+        // Query for the key's attributes including access control
+        var query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
+        query[kSecReturnAttributes as String] = true
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        // If we can't get the key at all, return nil
+        guard status == errSecSuccess || status == errSecInteractionNotAllowed else {
+            return nil
+        }
+
+        // Try to extract access control information from attributes
+        if let attributes = result as? [String: Any],
+           let accessControl = attributes[kSecAttrAccessControl as String] as CFTypeRef? {
+            // If the key has access control set, check the flags
+            let flags = SecAccessControlGetConstraints(accessControl as! SecAccessControl)
+
+            // If access control exists with constraints, authentication is likely required
+            // Keys with only .privateKeyUsage don't require user authentication
+            // Keys with .userPresence or .biometryCurrentSet do require authentication
+            if flags != nil {
+                return true
+            }
+        }
+
+        // If we successfully retrieved the key without any access control constraints,
+        // it likely doesn't require authentication
         if status == errSecSuccess {
             return false
         }
-        
-        // If we get errSecInteractionNotAllowed, the key requires authentication
-        if status == errSecInteractionNotAllowed {
-            return true
-        }
-        
-        // For other errors, we can't determine if authentication is required
+
+        // Default: can't determine
         return nil
     }
     
