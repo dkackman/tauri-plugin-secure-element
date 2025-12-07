@@ -97,13 +97,16 @@ extension SecureEnclavePlugin {
                         continue
                     }
 
-                    let authMode = getKeyAuthMode(keyNameData: keyNameData)
+                    let requiresAuth = keyRequiresAuthentication(keyNameData: keyNameData)
 
-                    keys.append([
+                    var keyInfo: [String: Any] = [
                         "keyName": keyName,
                         "publicKey": publicKeyBase64,
-                        "authMode": authMode,
-                    ])
+                    ]
+                    if let requiresAuth = requiresAuth {
+                        keyInfo["requiresAuthentication"] = requiresAuth
+                    }
+                    keys.append(keyInfo)
                 }
             }
         } else if status != errSecItemNotFound {

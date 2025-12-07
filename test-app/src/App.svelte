@@ -244,12 +244,12 @@
           <div class="key-item">
             <div><strong>Name:</strong> {key.keyName}</div>
             <div>
-              <strong>Auth Mode:</strong>
-              {key.authMode === "none"
-                ? "None"
-                : key.authMode === "biometricOnly"
-                  ? "Biometric Only"
-                  : "PIN or Biometric"}
+              <strong>Requires Authentication:</strong>
+              {key.requiresAuthentication === undefined || key.requiresAuthentication === null
+                ? "Unknown"
+                : key.requiresAuthentication
+                  ? "Yes"
+                  : "No"}
             </div>
             <div>
               <strong>Public Key:</strong>

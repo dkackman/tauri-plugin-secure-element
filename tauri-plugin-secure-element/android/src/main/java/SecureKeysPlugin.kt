@@ -131,59 +131,24 @@ class SecureKeysPlugin(
 
     /**
      * Checks if a key requires user authentication by examining its KeyInfo
+     * Returns true if authentication is required, false if not, or null if it cannot be determined
      */
-    private fun keyRequiresAuthentication(alias: String): Boolean {
+    private fun keyRequiresAuthentication(alias: String): Boolean? {
         return try {
-            val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: return false
+            val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: return null
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val privateKey = entry.privateKey as? ECPrivateKey ?: return false
+                val privateKey = entry.privateKey as? ECPrivateKey ?: return null
                 val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
                 val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
                 keyInfo.isUserAuthenticationRequired
             } else {
-                // API < 23: Assume auth is required if key exists (conservative approach)
-                true
+                // API < 23: Can't determine reliably
+                null
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to check key authentication requirements", e)
-            // If we can't determine, assume auth is required for security
-            true
-        }
-    }
-
-    /**
-     * Determines the authentication mode of a key by examining its KeyInfo
-     * Returns "none", "pinOrBiometric", or "biometricOnly"
-     */
-    private fun getKeyAuthMode(alias: String): String {
-        return try {
-            val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: return "none"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val privateKey = entry.privateKey as? ECPrivateKey ?: return "none"
-                val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
-                val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-
-                if (!keyInfo.isUserAuthenticationRequired) {
-                    return "none"
-                }
-
-                // Note: Determining the exact auth type (biometric-only vs pin/biometric)
-                // is not reliably possible from KeyInfo on all Android versions.
-                // We default to "pinOrBiometric" which is the most common case.
-                // On API 30+, keys created with setUserAuthenticationParameters() might
-                // have more specific requirements, but we can't easily query them.
-
-                // For API < 30 or if we can't determine the specific type,
-                // default to pinOrBiometric (most common case)
-                "pinOrBiometric"
-            } else {
-                // API < 23: Assume pinOrBiometric if key exists
-                "pinOrBiometric"
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to determine key authentication mode", e)
-            // If we can't determine, default to pinOrBiometric (conservative approach)
-            "pinOrBiometric"
+            // If we can't determine, return null
+            null
         }
     }
 
@@ -478,7 +443,7 @@ class SecureKeysPlugin(
         try {
             val args = invoke.parseArgs(ListKeysArgs::class.java)
 
-            val keys = mutableListOf<Map<String, String>>()
+            val keys = mutableListOf<Map<String, Any?>>()
 
             val aliases = keyStore.aliases()
 
@@ -507,15 +472,16 @@ class SecureKeysPlugin(
                     continue
                 }
 
-                // Determine the key's authentication mode
-                val authMode = getKeyAuthMode(alias)
+                // Determine if the key requires authentication
+                val requiresAuth = keyRequiresAuthentication(alias)
 
-                val keyInfo =
-                    mapOf(
-                        "keyName" to keyName,
-                        "publicKey" to publicKeyBase64,
-                        "authMode" to authMode,
-                    )
+                val keyInfo = mutableMapOf<String, Any?>(
+                    "keyName" to keyName,
+                    "publicKey" to publicKeyBase64,
+                )
+                if (requiresAuth != null) {
+                    keyInfo["requiresAuthentication"] = requiresAuth
+                }
                 keys.add(keyInfo)
             }
 
