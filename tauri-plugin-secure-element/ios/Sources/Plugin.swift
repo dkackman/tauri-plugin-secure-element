@@ -124,30 +124,128 @@ class SecureEnclavePlugin: Plugin {
             }
         }
     }
-    // MARK: - Ping (for testing)
-
-    @objc func ping(_ invoke: Invoke) throws {
-        let args = try invoke.parseArgs(PingArgs.self)
-        invoke.resolve(["value": args.value ?? ""])
-    }
-
-    // MARK: - Generate Secure Key
-
-    @objc func generateSecureKey(_ invoke: Invoke) throws {
-        let args = try invoke.parseArgs(GenerateSecureKeyArgs.self)
-
-        // Check if we're running on a simulator
-        #if targetEnvironment(simulator)
-            // iOS Simulator does not have Secure Enclave hardware
-            let message = "Secure Enclave is not available on iOS Simulator. Please test on a physical device."
-            logError("generateSecureKey", error: message)
+    
+    // MARK: - Key Operations Helpers
+    
+    /// Converts key name string to Data, handling errors consistently
+    private func keyNameToData(_ keyName: String, operation: String, invoke: Invoke) -> Data? {
+        guard let keyNameData = keyName.data(using: .utf8) else {
+            let message = "Invalid key name"
+            logError(operation, error: message)
             invoke.reject(message)
-            return
+            return nil
+        }
+        return keyNameData
+    }
+    
+    /// Creates a base query dictionary for Secure Enclave key operations
+    private func createKeyQuery(keyNameData: Data, returnRef: Bool = true) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: keyNameData,
+            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+        ]
+        if returnRef {
+            query[kSecReturnRef as String] = true
+        }
+        return query
+    }
+    
+    /// Looks up a key by name and returns the SecKey, handling errors
+    private func lookupKey(keyName: String, keyNameData: Data, operation: String, invoke: Invoke) -> SecKey? {
+        let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
+        var keyRef: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
+        
+        guard status == errSecSuccess, let keyRef = keyRef else {
+            let message = sanitizeErrorWithKeyName(keyName, operation: "Key not found")
+            logError(operation, error: message, detailedError: "Key not found: \(keyName)")
+            invoke.reject(message)
+            return nil
+        }
+        
+        // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
+        // SecKey is a typealias for CFTypeRef, so we can use it directly
+        // swiftlint:disable:next force_cast
+        return keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
+    }
+    
+    /// Extracts and exports a public key from a private key as base64
+    private func exportPublicKeyBase64(privateKey: SecKey, operation: String, invoke: Invoke) -> String? {
+        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+            let message = "Failed to extract public key"
+            logError(operation, error: message)
+            invoke.reject(message)
+            return nil
+        }
+        
+        var exportError: Unmanaged<CFError>?
+        guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? else {
+            if let error = exportError {
+                let errorDescription = extractCFErrorDescription(error)
+                let detailedMessage = "Failed to export public key: \(errorDescription)"
+                let message = sanitizeError(detailedMessage, genericMessage: "Failed to export public key")
+                logError(operation, error: message, detailedError: detailedMessage)
+                invoke.reject(message)
+                return nil
+            }
+            let message = "Failed to export public key"
+            logError(operation, error: message)
+            invoke.reject(message)
+            return nil
+        }
+        
+        return publicKeyData.base64EncodedString()
+    }
+    
+    /// Extracts and exports a public key from a private key as base64 (non-rejecting version for loops)
+    private func exportPublicKeyBase64Silent(privateKey: SecKey) -> String? {
+        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+            return nil
+        }
+        
+        var exportError: Unmanaged<CFError>?
+        guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? else {
+            return nil
+        }
+        
+        return publicKeyData.base64EncodedString()
+    }
+    
+    /// Looks up a key by name and returns the SecKey (non-rejecting version for loops)
+    private func lookupKeySilent(keyNameData: Data) -> SecKey? {
+        let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
+        var keyRef: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
+        
+        guard status == errSecSuccess, let keyRef = keyRef else {
+            return nil
+        }
+        
+        // swiftlint:disable:next force_cast
+        return keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
+    }
+    
+    /// Extracts error description from CFError
+    private func extractCFErrorDescription(_ error: Unmanaged<CFError>) -> String {
+        return CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+    }
+    
+    /// Checks if running on simulator and rejects if so
+    private func checkSimulator(operation: String, invoke: Invoke) -> Bool {
+        #if targetEnvironment(simulator)
+        let message = "Secure Enclave is not available on iOS Simulator. Please test on a physical device."
+        logError(operation, error: message)
+        invoke.reject(message)
+        return true
+        #else
+        return false
         #endif
-
-        // Create access control - keys are only accessible when device is unlocked
-        // .privateKeyUsage flag is REQUIRED for Secure Enclave keys
-        let flags = getAccessControlFlags(authMode: args.authMode)
+    }
+    
+    /// Creates access control for Secure Enclave keys
+    private func createAccessControl(authMode: String?, operation: String, invoke: Invoke) -> SecAccessControl? {
+        let flags = getAccessControlFlags(authMode: authMode)
         var accessError: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
@@ -156,61 +254,51 @@ class SecureEnclavePlugin: Plugin {
             &accessError
         ) else {
             if let error = accessError {
-                let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+                let errorDescription = extractCFErrorDescription(error)
                 let detailedMessage = "Failed to create access control: \(errorDescription)"
                 let message = sanitizeError(detailedMessage, genericMessage: "Failed to create access control")
-                logError("generateSecureKey", error: message, detailedError: detailedMessage)
+                logError(operation, error: message, detailedError: detailedMessage)
                 invoke.reject(message)
-                return
+                return nil
             }
             let message = "Failed to create access control"
-            logError("generateSecureKey", error: message)
+            logError(operation, error: message)
             invoke.reject(message)
-            return
+            return nil
         }
-
-        // Create key attributes for Secure Enclave
-        // Safely convert key name to data
-        guard let keyNameData = args.keyName.data(using: .utf8) else {
-            let message = "Invalid key name encoding"
-            logError("generateSecureKey", error: message)
-            invoke.reject(message)
-            return
-        }
-        
-        // Check if a key with this name already exists
-        // This prevents accidental overwrites and ensures consistent behavior with Android
-        let checkQuery: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyNameData,
-            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-            kSecReturnRef as String: false, // We only need to know if it exists
-        ]
-        
+        return accessControl
+    }
+    
+    /// Checks if a key with the given name already exists
+    private func checkKeyExists(keyName: String, keyNameData: Data, operation: String, invoke: Invoke) -> Bool {
+        let checkQuery = createKeyQuery(keyNameData: keyNameData, returnRef: false)
         var checkResult: CFTypeRef?
         let checkStatus = SecItemCopyMatching(checkQuery as CFDictionary, &checkResult)
         
         if checkStatus == errSecSuccess {
             // Key already exists
-            let message = sanitizeErrorWithKeyName(args.keyName, operation: "Key already exists")
-            logError("generateSecureKey", error: message, detailedError: "Key already exists: \(args.keyName)")
+            let message = sanitizeErrorWithKeyName(keyName, operation: "Key already exists")
+            logError(operation, error: message, detailedError: "Key already exists: \(keyName)")
             invoke.reject(message)
-            return
+            return true
         } else if checkStatus != errSecItemNotFound {
             // Unexpected error while checking
             let detailedMessage = "Failed to check for existing key: \(checkStatus)"
             let message = sanitizeError(detailedMessage, genericMessage: "Failed to check for existing key")
-            logError("generateSecureKey", error: message, detailedError: detailedMessage)
+            logError(operation, error: message, detailedError: detailedMessage)
             invoke.reject(message)
-            return
+            return true
         }
-        // errSecItemNotFound means key doesn't exist, which is what we want - continue
-        
+        return false // Key doesn't exist, which is what we want
+    }
+    
+    /// Creates a Secure Enclave key with the given attributes
+    private func createSecureEnclaveKey(keyNameData: Data, accessControl: SecAccessControl, operation: String, invoke: Invoke) -> SecKey? {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-            kSecAttrIsPermanent as String: true, // Non-ephemeral key
+            kSecAttrIsPermanent as String: true,
             kSecAttrApplicationTag as String: keyNameData,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
@@ -221,326 +309,19 @@ class SecureEnclavePlugin: Plugin {
         var error: Unmanaged<CFError>?
         guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
             if let error = error {
-                let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+                let errorDescription = extractCFErrorDescription(error)
                 let detailedMessage = "Failed to create key: \(errorDescription)"
                 let message = sanitizeError(detailedMessage, genericMessage: "Failed to create key")
-                logError("generateSecureKey", error: message, detailedError: detailedMessage)
+                logError(operation, error: message, detailedError: detailedMessage)
                 invoke.reject(message)
-                return
+                return nil
             }
             let message = "Failed to create key"
-            logError("generateSecureKey", error: message)
+            logError(operation, error: message)
             invoke.reject(message)
-            return
+            return nil
         }
-
-        // Extract the public key
-        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
-            let message = "Failed to extract public key"
-            logError("generateSecureKey", error: message)
-            invoke.reject(message)
-            return
-        }
-
-        // Export public key as DER format
-        var exportError: Unmanaged<CFError>?
-        guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? else {
-            if let error = exportError {
-                let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
-                let detailedMessage = "Failed to export public key: \(errorDescription)"
-                let message = sanitizeError(detailedMessage, genericMessage: "Failed to export public key")
-                logError("generateSecureKey", error: message, detailedError: detailedMessage)
-                invoke.reject(message)
-                return
-            }
-            let message = "Failed to export public key"
-            logError("generateSecureKey", error: message)
-            invoke.reject(message)
-            return
-        }
-
-        // Convert to base64
-        let publicKeyBase64 = publicKeyData.base64EncodedString()
-
-        invoke.resolve([
-            "publicKey": publicKeyBase64,
-            "keyName": args.keyName,
-        ])
-    }
-
-    // MARK: - List Keys
-
-    @objc func listKeys(_ invoke: Invoke) throws {
-        let args = try invoke.parseArgs(ListKeysArgs.self)
-
-        // Query for all keys in Secure Enclave
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-            kSecReturnAttributes as String: true,
-            kSecReturnData as String: false,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        var keys: [[String: Any]] = []
-
-        if status == errSecSuccess, let items = result as? [[String: Any]] {
-            for item in items {
-                guard let keyNameData = item[kSecAttrApplicationTag as String] as? Data,
-                      let keyName = String(data: keyNameData, encoding: .utf8)
-                else {
-                    continue
-                }
-
-                // Apply filters if provided
-                if let filterName = args.keyName, filterName != keyName {
-                    continue
-                }
-
-                // Get the public key for this private key
-                // We need to reconstruct the key reference to get the public key
-                let keyQuery: [String: Any] = [
-                    kSecClass as String: kSecClassKey,
-                    kSecAttrApplicationTag as String: keyNameData,
-                    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-                    kSecReturnRef as String: true,
-                ]
-
-                var keyRef: CFTypeRef?
-                let keyStatus = SecItemCopyMatching(keyQuery as CFDictionary, &keyRef)
-
-                if keyStatus == errSecSuccess, let keyRef = keyRef {
-                    // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
-                    // SecKey is a typealias for CFTypeRef, so we can use it directly
-                    // Suppress compiler warning: conditional downcast always succeeds for typealias
-                    // swiftlint:disable:next force_cast
-                    let privateKey = keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
-                    if let publicKey = SecKeyCopyPublicKey(privateKey) {
-                        var exportError: Unmanaged<CFError>?
-                        if let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? {
-                            let publicKeyBase64 = publicKeyData.base64EncodedString()
-
-                            // Apply public key filter if provided
-                            if let filterPublicKey = args.publicKey, filterPublicKey != publicKeyBase64 {
-                                continue
-                            }
-
-                            keys.append([
-                                "keyName": keyName,
-                                "publicKey": publicKeyBase64,
-                            ])
-                        }
-                    }
-                }
-            }
-        } else if status != errSecItemNotFound {
-            let detailedMessage = "Failed to query keys: \(status)"
-            let message = sanitizeError(detailedMessage, genericMessage: "Failed to query keys")
-            logError("listKeys", error: message, detailedError: detailedMessage)
-            invoke.reject(message)
-            return
-        }
-
-        invoke.resolve(["keys": keys])
-    }
-
-    // MARK: - Sign With Key
-
-    @objc func signWithKey(_ invoke: Invoke) throws {
-        let args = try invoke.parseArgs(SignWithKeyArgs.self)
-
-        // Find the key by name
-        guard let keyNameData = args.keyName.data(using: .utf8) else {
-            let message = "Invalid key name"
-            logError("signWithKey", error: message)
-            invoke.reject(message)
-            return
-        }
-
-        // Require authentication before signing
-        authenticateUser(authMode: args.authMode, reason: "Authenticate to sign with secure key") { success, errorMessage in
-            if !success {
-                let message = errorMessage ?? "Authentication failed"
-                self.logError("signWithKey", error: message)
-                invoke.reject(message)
-                return
-            }
-
-            // Authentication successful, proceed with signing
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassKey,
-                kSecAttrApplicationTag as String: keyNameData,
-                kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-                kSecReturnRef as String: true,
-            ]
-
-            var keyRef: CFTypeRef?
-            let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
-
-            guard status == errSecSuccess, let keyRef = keyRef else {
-                let message = self.sanitizeErrorWithKeyName(args.keyName, operation: "Key not found")
-                self.logError("signWithKey", error: message, detailedError: "Key not found: \(args.keyName)")
-                invoke.reject(message)
-                return
-            }
-
-            // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
-            // SecKey is a typealias for CFTypeRef, so we can use it directly
-            // Suppress compiler warning: conditional downcast always succeeds for typealias
-            // swiftlint:disable:next force_cast
-            let privateKey = keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
-
-            // Convert data to Data type
-            let dataToSign = Data(args.data)
-
-            // Create SHA256 digest using CryptoKit
-            let digest = SHA256.hash(data: dataToSign)
-            let digestData = Data(digest)
-
-            // Sign the digest using ECDSA
-            var signError: Unmanaged<CFError>?
-            guard let signature = SecKeyCreateSignature(
-                privateKey,
-                .ecdsaSignatureDigestX962SHA256,
-                digestData as CFData,
-                &signError
-            ) as Data? else {
-                if let error = signError {
-                    let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
-                    let detailedMessage = "Failed to sign: \(errorDescription)"
-                    let message = self.sanitizeError(detailedMessage, genericMessage: "Failed to sign")
-                    self.logError("signWithKey", error: message, detailedError: detailedMessage)
-                    invoke.reject(message)
-                    return
-                }
-                let message = "Failed to sign"
-                self.logError("signWithKey", error: message)
-                invoke.reject(message)
-                return
-            }
-
-            invoke.resolve(["signature": [UInt8](signature)])
-        }
-    }
-
-    // MARK: - Delete Key
-
-    @objc func deleteKey(_ invoke: Invoke) throws {
-        let args = try invoke.parseArgs(DeleteKeyArgs.self)
-
-        guard let keyNameData = args.keyName.data(using: .utf8) else {
-            let message = "Invalid key name"
-            logError("deleteKey", error: message)
-            invoke.reject(message)
-            return
-        }
-
-        // Require authentication before deletion
-        authenticateUser(authMode: args.authMode, reason: "Authenticate to delete secure key") { success, errorMessage in
-            if !success {
-                let message = errorMessage ?? "Authentication failed"
-                self.logError("deleteKey", error: message)
-                invoke.reject(message)
-                return
-            }
-
-            // Authentication successful, proceed with deletion
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassKey,
-                kSecAttrApplicationTag as String: keyNameData,
-                kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-            ]
-
-            let status = SecItemDelete(query as CFDictionary)
-
-            if status == errSecSuccess || status == errSecItemNotFound {
-                invoke.resolve(["success": true])
-            } else {
-                let detailedMessage = "Failed to delete key: \(status)"
-                let message = self.sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
-                self.logError("deleteKey", error: message, detailedError: detailedMessage)
-                invoke.reject(message)
-            }
-        }
-    }
-
-    // MARK: - Check Secure Element Support
-
-    @objc func checkSecureElementSupport(_ invoke: Invoke) throws {
-        // Check if we're running on a simulator
-        #if targetEnvironment(simulator)
-            // iOS Simulator does not have Secure Enclave hardware
-            // Secure Enclave IS the TEE on iOS, so both are false on simulator
-            invoke.resolve([
-                "secureElementSupported": false,
-                "teeSupported": false,
-            ])
-            return
-        #endif
-
-        // On physical devices, check if Secure Enclave is available
-        // by attempting to create a test key with Secure Enclave token ID
-        // On iOS, Secure Enclave IS the TEE (Trusted Execution Environment)
-        var accessError: Unmanaged<CFError>?
-        let flags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence] // Default auth mode for support check
-        guard SecAccessControlCreateWithFlags(
-            kCFAllocatorDefault,
-            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            flags,
-            &accessError
-        ) != nil else {
-            // If we can't create access control, Secure Enclave/TEE is not available
-            invoke.resolve([
-                "secureElementSupported": false,
-                "teeSupported": false,
-            ])
-            return
-        }
-
-        // Try to create a test key with Secure Enclave token ID
-        // Use a unique tag to identify our test key for cleanup
-        let testTag = Data("secure_element_test_\(UUID().uuidString)".utf8)
-        let testAttributes: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-            kSecAttrKeySizeInBits as String: 256,
-            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-            kSecAttrIsPermanent as String: false, // Temporary key for testing
-            kSecAttrApplicationTag as String: testTag,
-        ]
-
-        var testError: Unmanaged<CFError>?
-        let testKey = SecKeyCreateRandomKey(testAttributes as CFDictionary, &testError)
-
-        // Always clean up the test key explicitly, even if ephemeral
-        // This prevents resource leakage if the function is called repeatedly
-        defer {
-            if testKey != nil {
-                let deleteQuery: [String: Any] = [
-                    kSecClass as String: kSecClassKey,
-                    kSecAttrApplicationTag as String: testTag,
-                    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-                ]
-                SecItemDelete(deleteQuery as CFDictionary)
-            }
-        }
-
-        if testKey != nil {
-            // Successfully created a key, Secure Enclave is available
-            // On iOS, Secure Enclave IS the TEE, so both are true
-            invoke.resolve([
-                "secureElementSupported": true,
-                "teeSupported": true, // Secure Enclave is iOS's TEE
-            ])
-        } else {
-            // Failed to create key, Secure Enclave/TEE is not available
-            invoke.resolve([
-                "secureElementSupported": false,
-                "teeSupported": false,
-            ])
-        }
+        return privateKey
     }
 }
 
