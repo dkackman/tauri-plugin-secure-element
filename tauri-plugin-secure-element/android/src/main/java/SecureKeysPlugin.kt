@@ -3,24 +3,29 @@ package app.tauri.plugin.secureelement
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
-import app.tauri.plugin.secureelement.BuildConfig
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import app.tauri.plugin.secureelement.BuildConfig
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
 import java.security.interfaces.ECPrivateKey
 import java.security.spec.ECGenParameterSpec
+import java.util.concurrent.Executor
 
 @InvokeArg
 class PingArgs {
@@ -30,6 +35,7 @@ class PingArgs {
 @InvokeArg
 class GenerateSecureKeyArgs {
     var keyName: String = ""
+    var authMode: String? = null // "none", "pinOrBiometric", or "biometricOnly"
 }
 
 @InvokeArg
@@ -42,11 +48,13 @@ class ListKeysArgs {
 class SignWithKeyArgs {
     var keyName: String = ""
     var data: ByteArray = byteArrayOf()
+    var authMode: String? = null // "none", "pinOrBiometric", or "biometricOnly"
 }
 
 @InvokeArg
 class DeleteKeyArgs {
     var keyName: String = ""
+    var authMode: String? = null // "none", "pinOrBiometric", or "biometricOnly"
 }
 
 @TauriPlugin
@@ -56,34 +64,133 @@ class SecureKeysPlugin(
     companion object {
         private const val TAG = "SecureKeysPlugin"
     }
-    
+
     /**
      * Returns a detailed error message in debug builds, generic message in release builds.
      * This prevents information disclosure in production while helping developers debug.
      */
-    private fun sanitizeError(detailedMessage: String, genericMessage: String): String {
-        return if (BuildConfig.DEBUG) {
+    private fun sanitizeError(
+        detailedMessage: String,
+        genericMessage: String,
+    ): String =
+        if (BuildConfig.DEBUG) {
             detailedMessage
         } else {
             genericMessage
         }
-    }
-    
+
     /**
      * Returns error message with key name in debug builds only.
      */
-    private fun sanitizeErrorWithKeyName(keyName: String, operation: String): String {
-        return if (BuildConfig.DEBUG) {
+    private fun sanitizeErrorWithKeyName(
+        keyName: String,
+        operation: String,
+    ): String =
+        if (BuildConfig.DEBUG) {
             "$operation: $keyName"
         } else {
             operation
         }
-    }
 
     private val keyStoreAliasPrefix = "secure_element_"
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    private val executor: Executor = ContextCompat.getMainExecutor(activity)
 
     private fun getKeyAlias(keyName: String): String = "$keyStoreAliasPrefix$keyName"
+
+    /**
+     * Authenticates the user using BiometricPrompt based on auth mode
+     */
+    private fun authenticateUser(
+        authMode: String?,
+        reason: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        val mode = authMode ?: "pinOrBiometric"
+
+        // For "none" mode, skip authentication
+        if (mode == "none") {
+            onSuccess()
+            return
+        }
+
+        // For biometric-only, check if biometrics are available
+        if (mode == "biometricOnly") {
+            val biometricManager = BiometricManager.from(activity)
+            when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+                BiometricManager.BIOMETRIC_SUCCESS -> {
+                    // Biometrics available, proceed with BiometricPrompt
+                }
+
+                BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE,
+                BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE,
+                BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED,
+                -> {
+                    onError("Biometric authentication is not available")
+                    return
+                }
+
+                else -> {
+                    onError("Biometric authentication is not available")
+                    return
+                }
+            }
+        }
+
+        // Create BiometricPrompt
+        // BiometricPrompt requires FragmentActivity, so we need to cast
+        val fragmentActivity =
+            activity as? FragmentActivity
+                ?: run {
+                    onError("Activity is not a FragmentActivity")
+                    return
+                }
+
+        val biometricPrompt =
+            BiometricPrompt(
+                fragmentActivity,
+                executor,
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        super.onAuthenticationSucceeded(result)
+                        onSuccess()
+                    }
+
+                    override fun onAuthenticationError(
+                        errorCode: Int,
+                        errString: CharSequence,
+                    ) {
+                        super.onAuthenticationError(errorCode, errString)
+                        onError(errString.toString())
+                    }
+                },
+            )
+
+        // Build prompt info
+        val promptInfo =
+            if (mode == "biometricOnly") {
+                BiometricPrompt.PromptInfo
+                    .Builder()
+                    .setTitle("Biometric Authentication Required")
+                    .setSubtitle(reason)
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                    .setNegativeButtonText("Cancel")
+                    .build()
+            } else {
+                BiometricPrompt.PromptInfo
+                    .Builder()
+                    .setTitle("Authentication Required")
+                    .setSubtitle(reason)
+                    .setAllowedAuthenticators(
+                        BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                            BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+                    ).setNegativeButtonText("Cancel")
+                    .build()
+            }
+
+        biometricPrompt.authenticate(promptInfo)
+    }
 
     /**
      * Check if Secure Element (StrongBox) is supported on this device.
@@ -105,7 +212,7 @@ class SecureKeysPlugin(
 
     /**
      * Check if Trusted Execution Environment (TEE) / hardware-backed keystore is supported.
-     * This checks if keys can be stored in hardware-backed storage (TEE) even without 
+     * This checks if keys can be stored in hardware-backed storage (TEE) even without
      * StrongBox, i.e. ARM TrustZone
      */
     private fun isTeeSupported(): Boolean {
@@ -211,11 +318,13 @@ class SecureKeysPlugin(
 
             // Check if Secure Element (StrongBox) is supported upfront
             val useSecureElement = isSecureElementSupported()
+            val authMode = args.authMode ?: "pinOrBiometric"
+            val requireAuth = authMode != "none"
 
             var keyPairGenerator =
                 KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
 
-            var keyGenParameterSpec =
+            var keyGenParameterSpecBuilder =
                 KeyGenParameterSpec
                     .Builder(
                         alias,
@@ -223,11 +332,18 @@ class SecureKeysPlugin(
                     ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                     .setDigests(KeyProperties.DIGEST_SHA256)
                     .apply {
+                        // Only require authentication if not "none" mode
+                        if (requireAuth) {
+                            setUserAuthenticationRequired(true) // Require PIN/biometric authentication
+                            setUserAuthenticationValidityDurationSeconds(0) // Require auth every time (auth-per-use)
+                        }
                         // Only set StrongBox if Secure Element is supported
                         if (useSecureElement) {
                             setIsStrongBoxBacked(true)
                         }
-                    }.build()
+                    }
+
+            var keyGenParameterSpec = keyGenParameterSpecBuilder.build()
 
             try {
                 keyPairGenerator.initialize(keyGenParameterSpec)
@@ -242,14 +358,22 @@ class SecureKeysPlugin(
                             "AndroidKeyStore",
                         )
 
-                    keyGenParameterSpec =
+                    keyGenParameterSpecBuilder =
                         KeyGenParameterSpec
                             .Builder(
                                 alias,
                                 KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
                             ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                             .setDigests(KeyProperties.DIGEST_SHA256)
-                            .build()
+                            .apply {
+                                // Only require authentication if not "none" mode
+                                if (requireAuth) {
+                                    setUserAuthenticationRequired(true) // Require PIN/biometric authentication
+                                    setUserAuthenticationValidityDurationSeconds(0) // Require auth every time (auth-per-use)
+                                }
+                            }
+
+                    keyGenParameterSpec = keyGenParameterSpecBuilder.build()
 
                     keyPairGenerator.initialize(keyGenParameterSpec)
                     keyPairGenerator.generateKeyPair()
@@ -358,29 +482,48 @@ class SecureKeysPlugin(
                 return
             }
 
-            // Get the private key entry
-            val entry =
-                keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-                    ?: run {
-                        val message = "Failed to get key entry"
-                        Log.e(TAG, "signWithKey: $message")
-                        throw Exception(message)
+            // Require authentication before signing
+            authenticateUser(
+                authMode = args.authMode,
+                reason = "Authenticate to sign with secure key",
+                onSuccess = {
+                    try {
+                        // Get the private key entry
+                        val entry =
+                            keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+                                ?: run {
+                                    val message = "Failed to get key entry"
+                                    Log.e(TAG, "signWithKey: $message")
+                                    throw Exception(message)
+                                }
+
+                        // Sign the data using ECDSA with SHA-256
+                        // Note: Android's SHA256withECDSA hashes the data internally,
+                        // while iOS hashes first then signs the digest.
+                        // Both approaches produce valid ECDSA signatures, though the encoding
+                        // format may differ (DER vs X962). For verification purposes, both are valid.
+                        val signature = Signature.getInstance("SHA256withECDSA")
+                        signature.initSign(entry.privateKey)
+                        signature.update(args.data)
+                        val signatureBytes = signature.sign()
+
+                        // Convert ByteArray to List<Int> (unsigned bytes 0-255) for proper JSON serialization
+                        val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
+                        val ret = mapOf("signature" to signatureArray)
+                        invoke.resolveObject(ret)
+                    } catch (e: Exception) {
+                        val detailedMessage = "Failed to sign: ${e.message}"
+                        val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+                        Log.e(TAG, "signWithKey: $detailedMessage", e)
+                        invoke.reject(errorMessage)
                     }
-
-            // Sign the data using ECDSA with SHA-256
-            // Note: Android's SHA256withECDSA hashes the data internally,
-            // while iOS hashes first then signs the digest.
-            // Both approaches produce valid ECDSA signatures, though the encoding
-            // format may differ (DER vs X962). For verification purposes, both are valid.
-            val signature = Signature.getInstance("SHA256withECDSA")
-            signature.initSign(entry.privateKey)
-            signature.update(args.data)
-            val signatureBytes = signature.sign()
-
-            // Convert ByteArray to List<Int> (unsigned bytes 0-255) for proper JSON serialization
-            val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
-            val ret = mapOf("signature" to signatureArray)
-            invoke.resolveObject(ret)
+                },
+                onError = { errorMessage ->
+                    val message = sanitizeError(errorMessage, "Authentication failed")
+                    Log.e(TAG, "signWithKey: Authentication failed: $errorMessage")
+                    invoke.reject(message)
+                },
+            )
         } catch (e: Exception) {
             val detailedMessage = "Failed to sign: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
@@ -412,12 +555,30 @@ class SecureKeysPlugin(
                 return
             }
 
-            // Delete the key
-            keyStore.deleteEntry(alias)
-
-            val ret = JSObject()
-            ret.put("success", true)
-            invoke.resolve(ret)
+            // Require authentication before deletion
+            authenticateUser(
+                authMode = args.authMode,
+                reason = "Authenticate to delete secure key",
+                onSuccess = {
+                    try {
+                        // Authentication successful, proceed with deletion
+                        keyStore.deleteEntry(alias)
+                        val ret = JSObject()
+                        ret.put("success", true)
+                        invoke.resolve(ret)
+                    } catch (e: Exception) {
+                        val detailedMessage = "Failed to delete key: ${e.message}"
+                        val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
+                        Log.e(TAG, "deleteKey: $detailedMessage", e)
+                        invoke.reject(errorMessage)
+                    }
+                },
+                onError = { errorMessage ->
+                    val message = sanitizeError(errorMessage, "Authentication failed")
+                    Log.e(TAG, "deleteKey: Authentication failed: $errorMessage")
+                    invoke.reject(message)
+                },
+            )
         } catch (e: Exception) {
             val detailedMessage = "Failed to delete key: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")

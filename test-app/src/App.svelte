@@ -34,6 +34,9 @@
   let teeSupported = $state(null);
   let secureElementCheckError = $state("");
 
+  // Authentication Mode
+  let authMode = $state("pinOrBiometric");
+
   function _createKey() {
     if (!newKeyName.trim()) {
       createKeyError = "Please enter a key name";
@@ -41,7 +44,7 @@
     }
     createKeyError = "";
     createdKey = null;
-    generateSecureKey(newKeyName.trim())
+    generateSecureKey(newKeyName.trim(), authMode)
       .then((result) => {
         createdKey = result;
         newKeyName = "";
@@ -79,7 +82,7 @@
     // Convert string to Uint8Array for signing
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(messageToSign);
-    signWithKey(signKeyName.trim(), dataBytes)
+    signWithKey(signKeyName.trim(), dataBytes, authMode)
       .then((sig) => {
         signature = sig;
       })
@@ -95,7 +98,7 @@
     }
     deleteError = "";
     deleteSuccess = false;
-    deleteKey(deleteKeyName.trim())
+    deleteKey(deleteKeyName.trim(), authMode)
       .then((success) => {
         deleteSuccess = success;
         if (success) {
@@ -173,6 +176,16 @@
         <span class="status-value">Checking...</span>
       </div>
     {/if}
+  </div>
+
+  <!-- Authentication Mode Selector -->
+  <div class="auth-mode-selector">
+    <label for="authMode" class="auth-mode-label">Authentication Mode:</label>
+    <select id="authMode" bind:value={authMode} class="auth-mode-select">
+      <option value="none">None</option>
+      <option value="pinOrBiometric">PIN or Biometric (Default)</option>
+      <option value="biometricOnly">Biometric Only</option>
+    </select>
   </div>
 
   <!-- Create Key Section -->
@@ -363,6 +376,45 @@
     color: #666;
     font-size: 12px;
     margin-left: 4px;
+  }
+
+  .auth-mode-selector {
+    margin-bottom: 20px;
+    padding: 12px;
+    background: #f5f5f5;
+    border-radius: 6px;
+    border-left: 4px solid #4caf50;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .auth-mode-label {
+    font-weight: 600;
+    color: #555;
+    font-size: 14px;
+  }
+
+  .auth-mode-select {
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+    background: white;
+    cursor: pointer;
+    flex: 0 0 auto;
+    min-width: 200px;
+  }
+
+  .auth-mode-select:hover {
+    border-color: #4caf50;
+  }
+
+  .auth-mode-select:focus {
+    outline: none;
+    border-color: #4caf50;
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
   }
 
   h2 {

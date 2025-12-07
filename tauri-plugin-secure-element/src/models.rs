@@ -1,5 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+/// Authentication mode for secure element operations
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthenticationMode {
+    /// No authentication required
+    None,
+    /// Allow PIN or biometric authentication (default)
+    #[default]
+    PinOrBiometric,
+    /// Require biometric authentication only
+    BiometricOnly,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PingRequest {
@@ -18,6 +31,9 @@ pub struct PingResponse {
 pub struct GenerateSecureKeyRequest {
     /// The name/identifier for this key. Must be unique.
     pub key_name: String,
+    /// Authentication mode for key operations (default: PinOrBiometric)
+    #[serde(default)]
+    pub auth_mode: AuthenticationMode,
 }
 
 /// Response containing the public key for the newly created key
@@ -66,6 +82,9 @@ pub struct SignWithKeyRequest {
     pub key_name: String,
     /// The data to sign
     pub data: Vec<u8>,
+    /// Authentication mode for signing (default: PinOrBiometric)
+    #[serde(default)]
+    pub auth_mode: AuthenticationMode,
 }
 
 /// Response containing the signature
@@ -82,6 +101,9 @@ pub struct SignWithKeyResponse {
 pub struct DeleteKeyRequest {
     /// The name of the key to delete
     pub key_name: String,
+    /// Authentication mode for deletion (default: PinOrBiometric)
+    #[serde(default)]
+    pub auth_mode: AuthenticationMode,
 }
 
 /// Response for key deletion

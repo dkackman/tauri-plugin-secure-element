@@ -13,14 +13,18 @@ export async function ping(value: string): Promise<string | null> {
   }).then((r) => (r.value ? r.value : null));
 }
 
+export type AuthenticationMode = "none" | "pinOrBiometric" | "biometricOnly";
+
 export async function generateSecureKey(
-  keyName: string
+  keyName: string,
+  authMode: AuthenticationMode = "pinOrBiometric"
 ): Promise<{ publicKey: string; keyName: string }> {
   return await invoke<{ publicKey: string; keyName: string }>(
     "plugin:secure-element|generate_secure_key",
     {
       payload: {
         keyName,
+        authMode,
       },
     }
   );
@@ -40,7 +44,8 @@ export async function listKeys(
 
 export async function signWithKey(
   keyName: string,
-  data: Uint8Array
+  data: Uint8Array,
+  authMode: AuthenticationMode = "pinOrBiometric"
 ): Promise<Uint8Array> {
   return await invoke<{ signature: number[] }>(
     "plugin:secure-element|sign_with_key",
@@ -48,17 +53,22 @@ export async function signWithKey(
       payload: {
         keyName,
         data: Array.from(data),
+        authMode,
       },
     }
   ).then((r) => new Uint8Array(r.signature));
 }
 
-export async function deleteKey(keyName: string): Promise<boolean> {
+export async function deleteKey(
+  keyName: string,
+  authMode: AuthenticationMode = "pinOrBiometric"
+): Promise<boolean> {
   return await invoke<{ success: boolean }>(
     "plugin:secure-element|delete_key",
     {
       payload: {
         keyName,
+        authMode,
       },
     }
   ).then((r) => r.success);

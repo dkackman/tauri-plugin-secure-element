@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import os.log
 import Security
 import SwiftRs
@@ -15,6 +16,7 @@ class PingArgs: Decodable {
 
 class GenerateSecureKeyArgs: Decodable {
     let keyName: String
+    let authMode: String? // "none", "pinOrBiometric", or "biometricOnly"
 }
 
 class ListKeysArgs: Decodable {
@@ -25,10 +27,12 @@ class ListKeysArgs: Decodable {
 class SignWithKeyArgs: Decodable {
     let keyName: String
     let data: [UInt8]
+    let authMode: String? // "none", "pinOrBiometric", or "biometricOnly"
 }
 
 class DeleteKeyArgs: Decodable {
     let keyName: String
+    let authMode: String? // "none", "pinOrBiometric", or "biometricOnly"
 }
 
 // MARK: - SecureEnclavePlugin
@@ -62,6 +66,64 @@ class SecureEnclavePlugin: Plugin {
         let logMessage = detailedError ?? error
         os_log("%{public}@: %{private}@", log: Self.logger, type: .error, operation, logMessage)
     }
+    
+    /// Converts authentication mode string to SecAccessControlCreateFlags
+    private func getAccessControlFlags(authMode: String?) -> SecAccessControlCreateFlags {
+        let mode = authMode ?? "pinOrBiometric"
+        
+        // .privateKeyUsage is REQUIRED for Secure Enclave keys
+        var flags: SecAccessControlCreateFlags = [.privateKeyUsage]
+        
+        switch mode {
+        case "none":
+            // No authentication required, only .privateKeyUsage
+            break
+        case "biometricOnly":
+            // Require biometric authentication only
+            flags.insert(.biometryCurrentSet)
+        case "pinOrBiometric", _:
+            // Allow PIN or biometric (default)
+            flags.insert(.userPresence)
+        }
+        
+        return flags
+    }
+    
+    /// Authenticates the user using LocalAuthentication based on auth mode
+    private func authenticateUser(authMode: String?, reason: String, completion: @escaping (Bool, String?) -> Void) {
+        let mode = authMode ?? "pinOrBiometric"
+        
+        // For "none" mode, skip authentication
+        if mode == "none" {
+            completion(true, nil)
+            return
+        }
+        
+        let context = LAContext()
+        var error: NSError?
+        var policy: LAPolicy = .deviceOwnerAuthentication
+        
+        // For biometric-only, use biometric policy
+        if mode == "biometricOnly" {
+            if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+                policy = .deviceOwnerAuthenticationWithBiometrics
+            } else {
+                completion(false, "Biometric authentication is not available")
+                return
+            }
+        }
+        
+        context.evaluatePolicy(policy, localizedReason: reason) { success, error in
+            DispatchQueue.main.async {
+                if success {
+                    completion(true, nil)
+                } else {
+                    let errorMessage = error?.localizedDescription ?? "Authentication failed"
+                    completion(false, errorMessage)
+                }
+            }
+        }
+    }
     // MARK: - Ping (for testing)
 
     @objc func ping(_ invoke: Invoke) throws {
@@ -74,13 +136,23 @@ class SecureEnclavePlugin: Plugin {
     @objc func generateSecureKey(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(GenerateSecureKeyArgs.self)
 
+        // Check if we're running on a simulator
+        #if targetEnvironment(simulator)
+            // iOS Simulator does not have Secure Enclave hardware
+            let message = "Secure Enclave is not available on iOS Simulator. Please test on a physical device."
+            logError("generateSecureKey", error: message)
+            invoke.reject(message)
+            return
+        #endif
+
         // Create access control - keys are only accessible when device is unlocked
         // .privateKeyUsage flag is REQUIRED for Secure Enclave keys
+        let flags = getAccessControlFlags(authMode: args.authMode)
         var accessError: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            .privateKeyUsage, // Required for Secure Enclave
+            flags,
             &accessError
         ) else {
             if let error = accessError {
@@ -242,8 +314,10 @@ class SecureEnclavePlugin: Plugin {
 
                 if keyStatus == errSecSuccess, let keyRef = keyRef {
                     // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
-                    // No cast needed - SecKey is just a typealias for CFTypeRef
-                    let privateKey = (keyRef as! SecKey) // Safe: verified errSecSuccess
+                    // SecKey is a typealias for CFTypeRef, so we can use it directly
+                    // Suppress compiler warning: conditional downcast always succeeds for typealias
+                    // swiftlint:disable:next force_cast
+                    let privateKey = keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
                     if let publicKey = SecKeyCopyPublicKey(privateKey) {
                         var exportError: Unmanaged<CFError>?
                         if let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? {
@@ -286,57 +360,70 @@ class SecureEnclavePlugin: Plugin {
             return
         }
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyNameData,
-            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-            kSecReturnRef as String: true,
-        ]
-
-        var keyRef: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
-
-        guard status == errSecSuccess, let keyRef = keyRef else {
-            let message = sanitizeErrorWithKeyName(args.keyName, operation: "Key not found")
-            logError("signWithKey", error: message, detailedError: "Key not found: \(args.keyName)")
-            invoke.reject(message)
-            return
-        }
-
-        // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
-        // No cast needed - SecKey is just a typealias for CFTypeRef
-        let privateKey = (keyRef as! SecKey) // Safe: verified errSecSuccess
-
-        // Convert data to Data type
-        let dataToSign = Data(args.data)
-
-        // Create SHA256 digest using CryptoKit
-        let digest = SHA256.hash(data: dataToSign)
-        let digestData = Data(digest)
-
-        // Sign the digest using ECDSA
-        var signError: Unmanaged<CFError>?
-        guard let signature = SecKeyCreateSignature(
-            privateKey,
-            .ecdsaSignatureDigestX962SHA256,
-            digestData as CFData,
-            &signError
-        ) as Data? else {
-            if let error = signError {
-                let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
-                let detailedMessage = "Failed to sign: \(errorDescription)"
-                let message = sanitizeError(detailedMessage, genericMessage: "Failed to sign")
-                logError("signWithKey", error: message, detailedError: detailedMessage)
+        // Require authentication before signing
+        authenticateUser(authMode: args.authMode, reason: "Authenticate to sign with secure key") { success, errorMessage in
+            if !success {
+                let message = errorMessage ?? "Authentication failed"
+                self.logError("signWithKey", error: message)
                 invoke.reject(message)
                 return
             }
-            let message = "Failed to sign"
-            logError("signWithKey", error: message)
-            invoke.reject(message)
-            return
-        }
 
-        invoke.resolve(["signature": [UInt8](signature)])
+            // Authentication successful, proceed with signing
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: keyNameData,
+                kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+                kSecReturnRef as String: true,
+            ]
+
+            var keyRef: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
+
+            guard status == errSecSuccess, let keyRef = keyRef else {
+                let message = self.sanitizeErrorWithKeyName(args.keyName, operation: "Key not found")
+                self.logError("signWithKey", error: message, detailedError: "Key not found: \(args.keyName)")
+                invoke.reject(message)
+                return
+            }
+
+            // keyRef is already SecKey (typealias for CFTypeRef) when errSecSuccess
+            // SecKey is a typealias for CFTypeRef, so we can use it directly
+            // Suppress compiler warning: conditional downcast always succeeds for typealias
+            // swiftlint:disable:next force_cast
+            let privateKey = keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
+
+            // Convert data to Data type
+            let dataToSign = Data(args.data)
+
+            // Create SHA256 digest using CryptoKit
+            let digest = SHA256.hash(data: dataToSign)
+            let digestData = Data(digest)
+
+            // Sign the digest using ECDSA
+            var signError: Unmanaged<CFError>?
+            guard let signature = SecKeyCreateSignature(
+                privateKey,
+                .ecdsaSignatureDigestX962SHA256,
+                digestData as CFData,
+                &signError
+            ) as Data? else {
+                if let error = signError {
+                    let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+                    let detailedMessage = "Failed to sign: \(errorDescription)"
+                    let message = self.sanitizeError(detailedMessage, genericMessage: "Failed to sign")
+                    self.logError("signWithKey", error: message, detailedError: detailedMessage)
+                    invoke.reject(message)
+                    return
+                }
+                let message = "Failed to sign"
+                self.logError("signWithKey", error: message)
+                invoke.reject(message)
+                return
+            }
+
+            invoke.resolve(["signature": [UInt8](signature)])
+        }
     }
 
     // MARK: - Delete Key
@@ -351,21 +438,32 @@ class SecureEnclavePlugin: Plugin {
             return
         }
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyNameData,
-            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-        ]
+        // Require authentication before deletion
+        authenticateUser(authMode: args.authMode, reason: "Authenticate to delete secure key") { success, errorMessage in
+            if !success {
+                let message = errorMessage ?? "Authentication failed"
+                self.logError("deleteKey", error: message)
+                invoke.reject(message)
+                return
+            }
 
-        let status = SecItemDelete(query as CFDictionary)
+            // Authentication successful, proceed with deletion
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecAttrApplicationTag as String: keyNameData,
+                kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+            ]
 
-        if status == errSecSuccess || status == errSecItemNotFound {
-            invoke.resolve(["success": true])
-        } else {
-            let detailedMessage = "Failed to delete key: \(status)"
-            let message = sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
-            logError("deleteKey", error: message, detailedError: detailedMessage)
-            invoke.reject(message)
+            let status = SecItemDelete(query as CFDictionary)
+
+            if status == errSecSuccess || status == errSecItemNotFound {
+                invoke.resolve(["success": true])
+            } else {
+                let detailedMessage = "Failed to delete key: \(status)"
+                let message = self.sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
+                self.logError("deleteKey", error: message, detailedError: detailedMessage)
+                invoke.reject(message)
+            }
         }
     }
 
@@ -387,10 +485,11 @@ class SecureEnclavePlugin: Plugin {
         // by attempting to create a test key with Secure Enclave token ID
         // On iOS, Secure Enclave IS the TEE (Trusted Execution Environment)
         var accessError: Unmanaged<CFError>?
+        let flags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence] // Default auth mode for support check
         guard SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            .privateKeyUsage, // Required for Secure Enclave
+            flags,
             &accessError
         ) != nil else {
             // If we can't create access control, Secure Enclave/TEE is not available
@@ -403,7 +502,7 @@ class SecureEnclavePlugin: Plugin {
 
         // Try to create a test key with Secure Enclave token ID
         // Use a unique tag to identify our test key for cleanup
-        let testTag = "secure_element_test_\(UUID().uuidString)".data(using: .utf8)!
+        let testTag = Data("secure_element_test_\(UUID().uuidString)".utf8)
         let testAttributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
