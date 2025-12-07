@@ -245,7 +245,8 @@
             <div><strong>Name:</strong> {key.keyName}</div>
             <div>
               <strong>Requires Authentication:</strong>
-              {key.requiresAuthentication === undefined || key.requiresAuthentication === null
+              {key.requiresAuthentication === undefined ||
+              key.requiresAuthentication === null
                 ? "Unknown"
                 : key.requiresAuthentication
                   ? "Yes"
