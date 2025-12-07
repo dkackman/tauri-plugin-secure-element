@@ -27,12 +27,12 @@ class ListKeysArgs: Decodable {
 class SignWithKeyArgs: Decodable {
     let keyName: String
     let data: [UInt8]
-    let authMode: String? // "none", "pinOrBiometric", or "biometricOnly"
+    // Note: Authentication is enforced automatically by Secure Enclave based on the key's access control
 }
 
 class DeleteKeyArgs: Decodable {
     let keyName: String
-    let authMode: String? // "none", "pinOrBiometric", or "biometricOnly"
+    // Note: Authentication requirements are determined by the key's own attributes
 }
 
 // MARK: - SecureEnclavePlugin
@@ -267,6 +267,61 @@ class SecureEnclavePlugin: Plugin {
             return nil
         }
         return accessControl
+    }
+    
+    /// Checks if a key requires authentication by attempting to access it
+    /// Returns true if the key requires authentication, false otherwise
+    private func keyRequiresAuthentication(keyNameData: Data) -> Bool {
+        let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
+        var keyRef: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
+        
+        // If we can get the key without authentication, it doesn't require auth
+        // If we get errSecInteractionNotAllowed, the key requires authentication
+        if status == errSecSuccess {
+            return false // Key accessible without auth
+        } else if status == errSecInteractionNotAllowed {
+            return true // Key requires authentication
+        }
+        
+        // For other errors, assume auth is required (conservative approach)
+        return true
+    }
+    
+    /// Determines the authentication mode of a key by attempting to access it
+    /// Returns "none", "pinOrBiometric", or "biometricOnly"
+    private func getKeyAuthMode(keyNameData: Data) -> String {
+        let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
+        var keyRef: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
+        
+        // If we can get the key without authentication, it doesn't require auth
+        if status == errSecSuccess {
+            return "none"
+        }
+        
+        // If we get errSecInteractionNotAllowed, the key requires authentication
+        // Unfortunately, iOS doesn't expose the exact access control flags of an existing key,
+        // so we can't distinguish between biometric-only and pin/biometric.
+        // We'll default to "pinOrBiometric" as it's the most common case.
+        if status == errSecInteractionNotAllowed {
+            // Try to determine if it's biometric-only by checking if biometrics are available
+            // and if the key can be accessed with biometric policy only
+            let context = LAContext()
+            var error: NSError?
+            if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+                // Biometrics are available, but we can't determine if the key requires
+                // biometric-only vs pin/biometric without trying to use it
+                // Default to pinOrBiometric as it's more permissive
+                return "pinOrBiometric"
+            } else {
+                // Biometrics not available, so it must be pin/biometric
+                return "pinOrBiometric"
+            }
+        }
+        
+        // For other errors, assume pinOrBiometric (conservative approach)
+        return "pinOrBiometric"
     }
     
     /// Checks if a key with the given name already exists

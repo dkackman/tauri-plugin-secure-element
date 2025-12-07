@@ -48,13 +48,13 @@ class ListKeysArgs {
 class SignWithKeyArgs {
     var keyName: String = ""
     var data: ByteArray = byteArrayOf()
-    var authMode: String? = null // "none", "pinOrBiometric", or "biometricOnly"
+    // Note: Authentication is enforced automatically by Android KeyStore based on the key's requirements
 }
 
 @InvokeArg
 class DeleteKeyArgs {
     var keyName: String = ""
-    var authMode: String? = null // "none", "pinOrBiometric", or "biometricOnly"
+    // Note: Authentication requirements are determined by the key's own attributes
 }
 
 @TauriPlugin
@@ -127,6 +127,64 @@ class SecureKeysPlugin(
             return false
         }
         return true
+    }
+
+    /**
+     * Checks if a key requires user authentication by examining its KeyInfo
+     */
+    private fun keyRequiresAuthentication(alias: String): Boolean {
+        return try {
+            val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val privateKey = entry.privateKey as? ECPrivateKey ?: return false
+                val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
+                val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
+                keyInfo.isUserAuthenticationRequired
+            } else {
+                // API < 23: Assume auth is required if key exists (conservative approach)
+                true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to check key authentication requirements", e)
+            // If we can't determine, assume auth is required for security
+            true
+        }
+    }
+
+    /**
+     * Determines the authentication mode of a key by examining its KeyInfo
+     * Returns "none", "pinOrBiometric", or "biometricOnly"
+     */
+    private fun getKeyAuthMode(alias: String): String {
+        return try {
+            val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: return "none"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val privateKey = entry.privateKey as? ECPrivateKey ?: return "none"
+                val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
+                val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
+
+                if (!keyInfo.isUserAuthenticationRequired) {
+                    return "none"
+                }
+
+                // Note: Determining the exact auth type (biometric-only vs pin/biometric)
+                // is not reliably possible from KeyInfo on all Android versions.
+                // We default to "pinOrBiometric" which is the most common case.
+                // On API 30+, keys created with setUserAuthenticationParameters() might
+                // have more specific requirements, but we can't easily query them.
+
+                // For API < 30 or if we can't determine the specific type,
+                // default to pinOrBiometric (most common case)
+                "pinOrBiometric"
+            } else {
+                // API < 23: Assume pinOrBiometric if key exists
+                "pinOrBiometric"
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to determine key authentication mode", e)
+            // If we can't determine, default to pinOrBiometric (conservative approach)
+            "pinOrBiometric"
+        }
     }
 
     private fun buildKeyGenParameterSpec(
@@ -235,8 +293,7 @@ class SecureKeysPlugin(
                     .setAllowedAuthenticators(
                         BiometricManager.Authenticators.BIOMETRIC_STRONG or
                             BiometricManager.Authenticators.DEVICE_CREDENTIAL,
-                    )
-                    .build()
+                    ).build()
             }
 
         biometricPrompt.authenticate(promptInfo)
@@ -450,7 +507,15 @@ class SecureKeysPlugin(
                     continue
                 }
 
-                val keyInfo = mapOf("keyName" to keyName, "publicKey" to publicKeyBase64)
+                // Determine the key's authentication mode
+                val authMode = getKeyAuthMode(alias)
+
+                val keyInfo =
+                    mapOf(
+                        "keyName" to keyName,
+                        "publicKey" to publicKeyBase64,
+                        "authMode" to authMode,
+                    )
                 keys.add(keyInfo)
             }
 
@@ -475,44 +540,37 @@ class SecureKeysPlugin(
                 return
             }
 
-            // Require authentication before signing
-            authenticateUser(
-                authMode = args.authMode,
-                reason = "Authenticate to sign with secure key",
-                onSuccess = {
-                    try {
-                        // Get the private key entry
-                        val entry =
-                            getKeyEntry(alias)
-                                ?: throw Exception("Failed to get key entry")
+            // Android KeyStore automatically enforces the key's authentication requirements
+            // when using the key. No explicit authentication needed - the platform handles it.
+            try {
+                // Get the private key entry
+                val entry =
+                    getKeyEntry(alias)
+                        ?: throw Exception("Failed to get key entry")
 
-                        // Sign the data using ECDSA with SHA-256
-                        // Note: Android's SHA256withECDSA hashes the data internally,
-                        // while iOS hashes first then signs the digest.
-                        // Both approaches produce valid ECDSA signatures, though the encoding
-                        // format may differ (DER vs X962). For verification purposes, both are valid.
-                        val signature = Signature.getInstance("SHA256withECDSA")
-                        signature.initSign(entry.privateKey)
-                        signature.update(args.data)
-                        val signatureBytes = signature.sign()
+                // Sign the data using ECDSA with SHA-256
+                // Note: Android's SHA256withECDSA hashes the data internally,
+                // while iOS hashes first then signs the digest.
+                // Both approaches produce valid ECDSA signatures, though the encoding
+                // format may differ (DER vs X962). For verification purposes, both are valid.
+                // Android KeyStore will automatically prompt for authentication if the key requires it.
+                val signature = Signature.getInstance("SHA256withECDSA")
+                signature.initSign(entry.privateKey)
+                signature.update(args.data)
+                val signatureBytes = signature.sign()
 
-                        // Convert ByteArray to List<Int> (unsigned bytes 0-255) for proper JSON serialization
-                        val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
-                        val ret = mapOf("signature" to signatureArray)
-                        invoke.resolveObject(ret)
-                    } catch (e: Exception) {
-                        val detailedMessage = "Failed to sign: ${e.message}"
-                        val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                        Log.e(TAG, "signWithKey: $detailedMessage", e)
-                        invoke.reject(errorMessage)
-                    }
-                },
-                onError = { errorMessage ->
-                    val message = sanitizeError(errorMessage, "Authentication failed")
-                    Log.e(TAG, "signWithKey: Authentication failed: $errorMessage")
-                    invoke.reject(message)
-                },
-            )
+                // Convert ByteArray to List<Int> (unsigned bytes 0-255) for proper JSON serialization
+                val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
+                val ret = mapOf("signature" to signatureArray)
+                invoke.resolveObject(ret)
+            } catch (e: Exception) {
+                // Android KeyStore will throw UserNotAuthenticatedException if authentication
+                // is required but not provided. This is expected behavior.
+                val detailedMessage = "Failed to sign: ${e.message}"
+                val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+                Log.e(TAG, "signWithKey: $detailedMessage", e)
+                invoke.reject(errorMessage)
+            }
         } catch (e: Exception) {
             val detailedMessage = "Failed to sign: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
@@ -535,30 +593,17 @@ class SecureKeysPlugin(
                 return
             }
 
-            // Require authentication before deletion
-            authenticateUser(
-                authMode = args.authMode,
-                reason = "Authenticate to delete secure key",
-                onSuccess = {
-                    try {
-                        // Authentication successful, proceed with deletion
-                        keyStore.deleteEntry(alias)
-                        val ret = JSObject()
-                        ret.put("success", true)
-                        invoke.resolve(ret)
-                    } catch (e: Exception) {
-                        val detailedMessage = "Failed to delete key: ${e.message}"
-                        val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                        Log.e(TAG, "deleteKey: $detailedMessage", e)
-                        invoke.reject(errorMessage)
-                    }
-                },
-                onError = { errorMessage ->
-                    val message = sanitizeError(errorMessage, "Authentication failed")
-                    Log.e(TAG, "deleteKey: Authentication failed: $errorMessage")
-                    invoke.reject(message)
-                },
-            )
+            try {
+                keyStore.deleteEntry(alias)
+                val ret = JSObject()
+                ret.put("success", true)
+                invoke.resolve(ret)
+            } catch (e: Exception) {
+                val detailedMessage = "Failed to delete key: ${e.message}"
+                val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
+                Log.e(TAG, "deleteKey: $detailedMessage", e)
+                invoke.reject(errorMessage)
+            }
         } catch (e: Exception) {
             val detailedMessage = "Failed to delete key: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")

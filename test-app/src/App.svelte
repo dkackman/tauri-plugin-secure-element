@@ -1,10 +1,10 @@
 <script>
   import {
+    checkSecureElementSupport,
+    deleteKey,
     generateSecureKey,
     listKeys,
     signWithKey,
-    deleteKey,
-    checkSecureElementSupport,
   } from "tauri-plugin-secure-element-api";
 
   // Create Key Section
@@ -82,7 +82,7 @@
     // Convert string to Uint8Array for signing
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(messageToSign);
-    signWithKey(signKeyName.trim(), dataBytes, authMode)
+    signWithKey(signKeyName.trim(), dataBytes)
       .then((sig) => {
         signature = sig;
       })
@@ -98,7 +98,7 @@
     }
     deleteError = "";
     deleteSuccess = false;
-    deleteKey(deleteKeyName.trim(), authMode)
+    deleteKey(deleteKeyName.trim())
       .then((success) => {
         deleteSuccess = success;
         if (success) {
@@ -178,16 +178,6 @@
     {/if}
   </div>
 
-  <!-- Authentication Mode Selector -->
-  <div class="auth-mode-selector">
-    <label for="authMode" class="auth-mode-label">Authentication Mode:</label>
-    <select id="authMode" bind:value={authMode} class="auth-mode-select">
-      <option value="none">None</option>
-      <option value="pinOrBiometric">PIN or Biometric (Default)</option>
-      <option value="biometricOnly">Biometric Only</option>
-    </select>
-  </div>
-
   <!-- Create Key Section -->
   <section class="section">
     <h2>Create New Key</h2>
@@ -200,6 +190,12 @@
         placeholder="Enter unique key name"
         onkeydown={(e) => e.key === "Enter" && _createKey()}
       />
+      <label for="authMode">Authentication Mode (for this key):</label>
+      <select id="authMode" bind:value={authMode} class="auth-mode-select">
+        <option value="none">None</option>
+        <option value="pinOrBiometric">PIN or Biometric (Default)</option>
+        <option value="biometricOnly">Biometric Only</option>
+      </select>
       <button onclick={_createKey} class="primary">Create Key</button>
     </div>
     {#if createKeyError}
@@ -245,6 +241,14 @@
         {#each keysList as key}
           <div class="key-item">
             <div><strong>Name:</strong> {key.keyName}</div>
+            <div>
+              <strong>Auth Mode:</strong>
+              {key.authMode === "none"
+                ? "None"
+                : key.authMode === "biometricOnly"
+                  ? "Biometric Only"
+                  : "PIN or Biometric"}
+            </div>
             <div>
               <strong>Public Key:</strong>
               <code class="public-key">{formatPublicKey(key.publicKey)}</code>
@@ -372,39 +376,14 @@
     font-weight: 500;
   }
 
-  .status-detail {
-    color: #666;
-    font-size: 12px;
-    margin-left: 4px;
-  }
-
-  .auth-mode-selector {
-    margin-bottom: 20px;
-    padding: 12px;
-    background: #f5f5f5;
-    border-radius: 6px;
-    border-left: 4px solid #4caf50;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .auth-mode-label {
-    font-weight: 600;
-    color: #555;
-    font-size: 14px;
-  }
-
   .auth-mode-select {
-    padding: 8px 12px;
+    padding: 10px;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 14px;
     font-family: inherit;
     background: white;
     cursor: pointer;
-    flex: 0 0 auto;
-    min-width: 200px;
   }
 
   .auth-mode-select:hover {

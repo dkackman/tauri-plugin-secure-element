@@ -64,6 +64,8 @@ pub struct KeyInfo {
     pub key_name: String,
     /// The public key in base64 encoding
     pub public_key: String,
+    /// The authentication mode required by this key (None, PinOrBiometric, or BiometricOnly)
+    pub auth_mode: AuthenticationMode,
 }
 
 /// Response containing list of keys
@@ -82,9 +84,8 @@ pub struct SignWithKeyRequest {
     pub key_name: String,
     /// The data to sign
     pub data: Vec<u8>,
-    /// Authentication mode for signing (default: PinOrBiometric)
-    #[serde(default)]
-    pub auth_mode: AuthenticationMode,
+    // Note: Authentication is enforced automatically by the platform based on the key's requirements
+    // set at creation time. The auth_mode parameter is ignored for signing operations.
 }
 
 /// Response containing the signature
@@ -101,9 +102,8 @@ pub struct SignWithKeyResponse {
 pub struct DeleteKeyRequest {
     /// The name of the key to delete
     pub key_name: String,
-    /// Authentication mode for deletion (default: PinOrBiometric)
-    #[serde(default)]
-    pub auth_mode: AuthenticationMode,
+    // Note: Authentication requirements are determined by the key's own attributes,
+    // not by app-specified parameters. The platform enforces the key's requirements.
 }
 
 /// Response for key deletion

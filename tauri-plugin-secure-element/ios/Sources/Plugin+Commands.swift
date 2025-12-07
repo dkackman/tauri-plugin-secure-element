@@ -92,15 +92,17 @@ extension SecureEnclavePlugin {
                 // Get the public key for this private key
                 // We need to reconstruct the key reference to get the public key
                 if let privateKey = lookupKeySilent(keyNameData: keyNameData),
-                   let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey) {
-                    // Apply public key filter if provided
+                    let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey) {
                     if let filterPublicKey = args.publicKey, filterPublicKey != publicKeyBase64 {
                         continue
                     }
 
+                    let authMode = getKeyAuthMode(keyNameData: keyNameData)
+
                     keys.append([
                         "keyName": keyName,
                         "publicKey": publicKeyBase64,
+                        "authMode": authMode,
                     ])
                 }
             }
@@ -125,51 +127,43 @@ extension SecureEnclavePlugin {
             return
         }
 
-        // Require authentication before signing
-        authenticateUser(authMode: args.authMode, reason: "Authenticate to sign with secure key") { success, errorMessage in
-            if !success {
-                let message = errorMessage ?? "Authentication failed"
-                self.logError("signWithKey", error: message)
-                invoke.reject(message)
-                return
-            }
-
-            // Authentication successful, proceed with signing
-            guard let privateKey = self.lookupKey(keyName: args.keyName, keyNameData: keyNameData, operation: "signWithKey", invoke: invoke) else {
-                return
-            }
-
-            // Convert data to Data type
-            let dataToSign = Data(args.data)
-
-            // Create SHA256 digest using CryptoKit
-            let digest = SHA256.hash(data: dataToSign)
-            let digestData = Data(digest)
-
-            // Sign the digest using ECDSA
-            var signError: Unmanaged<CFError>?
-            guard let signature = SecKeyCreateSignature(
-                privateKey,
-                .ecdsaSignatureDigestX962SHA256,
-                digestData as CFData,
-                &signError
-            ) as Data? else {
-                if let error = signError {
-                    let errorDescription = self.extractCFErrorDescription(error)
-                    let detailedMessage = "Failed to sign: \(errorDescription)"
-                    let message = self.sanitizeError(detailedMessage, genericMessage: "Failed to sign")
-                    self.logError("signWithKey", error: message, detailedError: detailedMessage)
-                    invoke.reject(message)
-                    return
-                }
-                let message = "Failed to sign"
-                self.logError("signWithKey", error: message)
-                invoke.reject(message)
-                return
-            }
-
-            invoke.resolve(["signature": [UInt8](signature)])
+        // Secure Enclave automatically enforces the key's access control requirements
+        // when using the key. No explicit authentication needed - the platform handles it.
+        guard let privateKey = lookupKey(keyName: args.keyName, keyNameData: keyNameData, operation: "signWithKey", invoke: invoke) else {
+            return
         }
+
+        // Convert data to Data type
+        let dataToSign = Data(args.data)
+
+        // Create SHA256 digest using CryptoKit
+        let digest = SHA256.hash(data: dataToSign)
+        let digestData = Data(digest)
+
+        // Sign the digest using ECDSA
+        // Secure Enclave will automatically prompt for authentication if the key requires it
+        var signError: Unmanaged<CFError>?
+        guard let signature = SecKeyCreateSignature(
+            privateKey,
+            .ecdsaSignatureDigestX962SHA256,
+            digestData as CFData,
+            &signError
+        ) as Data? else {
+            if let error = signError {
+                let errorDescription = extractCFErrorDescription(error)
+                let detailedMessage = "Failed to sign: \(errorDescription)"
+                let message = sanitizeError(detailedMessage, genericMessage: "Failed to sign")
+                logError("signWithKey", error: message, detailedError: detailedMessage)
+                invoke.reject(message)
+                return
+            }
+            let message = "Failed to sign"
+            logError("signWithKey", error: message)
+            invoke.reject(message)
+            return
+        }
+
+        invoke.resolve(["signature": [UInt8](signature)])
     }
 
     // MARK: - Delete Key
@@ -181,28 +175,16 @@ extension SecureEnclavePlugin {
             return
         }
 
-        // Require authentication before deletion
-        authenticateUser(authMode: args.authMode, reason: "Authenticate to delete secure key") { success, errorMessage in
-            if !success {
-                let message = errorMessage ?? "Authentication failed"
-                self.logError("deleteKey", error: message)
-                invoke.reject(message)
-                return
-            }
+        let query = createKeyQuery(keyNameData: keyNameData, returnRef: false)
+        let status = SecItemDelete(query as CFDictionary)
 
-            // Authentication successful, proceed with deletion
-            let query = self.createKeyQuery(keyNameData: keyNameData, returnRef: false)
-
-            let status = SecItemDelete(query as CFDictionary)
-
-            if status == errSecSuccess || status == errSecItemNotFound {
-                invoke.resolve(["success": true])
-            } else {
-                let detailedMessage = "Failed to delete key: \(status)"
-                let message = self.sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
-                self.logError("deleteKey", error: message, detailedError: detailedMessage)
-                invoke.reject(message)
-            }
+        if status == errSecSuccess || status == errSecItemNotFound {
+            invoke.resolve(["success": true])
+        } else {
+            let detailedMessage = "Failed to delete key: \(status)"
+            let message = sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
+            logError("deleteKey", error: message, detailedError: detailedMessage)
+            invoke.reject(message)
         }
     }
 

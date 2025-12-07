@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export interface KeyInfo {
   keyName: string;
   publicKey: string;
+  authMode: AuthenticationMode;
 }
 
 export async function ping(value: string): Promise<string | null> {
@@ -44,8 +45,7 @@ export async function listKeys(
 
 export async function signWithKey(
   keyName: string,
-  data: Uint8Array,
-  authMode: AuthenticationMode = "pinOrBiometric"
+  data: Uint8Array
 ): Promise<Uint8Array> {
   return await invoke<{ signature: number[] }>(
     "plugin:secure-element|sign_with_key",
@@ -53,22 +53,17 @@ export async function signWithKey(
       payload: {
         keyName,
         data: Array.from(data),
-        authMode,
       },
     }
   ).then((r) => new Uint8Array(r.signature));
 }
 
-export async function deleteKey(
-  keyName: string,
-  authMode: AuthenticationMode = "pinOrBiometric"
-): Promise<boolean> {
+export async function deleteKey(keyName: string): Promise<boolean> {
   return await invoke<{ success: boolean }>(
     "plugin:secure-element|delete_key",
     {
       payload: {
         keyName,
-        authMode,
       },
     }
   ).then((r) => r.success);
