@@ -274,6 +274,11 @@ class SecureEnclavePlugin: Plugin {
             return false
         }
 
+        // If status is errSecInteractionNotAllowed but we couldn't extract the constraints,
+        // the error itself suggests authentication is required
+        if status == errSecInteractionNotAllowed {
+            return true
+        }
         // Default: can't determine
         return nil
     }
