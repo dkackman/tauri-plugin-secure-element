@@ -1,10 +1,11 @@
-<script>
+<script lang="ts">
   import {
     checkSecureElementSupport,
     deleteKey,
     generateSecureKey,
     listKeys,
     signWithKey,
+    type AuthenticationMode,
   } from "tauri-plugin-secure-element-api";
 
   // Create Key Section
@@ -21,7 +22,7 @@
   // Sign Message Section
   let signKeyName = $state("");
   let messageToSign = $state("");
-  let signature = $state(null);
+  let signature = $state<Uint8Array | null>(null);
   let signError = $state("");
 
   // Delete Key Section
@@ -35,7 +36,7 @@
   let secureElementCheckError = $state("");
 
   // Authentication Mode
-  let authMode = $state("pinOrBiometric");
+  let authMode = $state<AuthenticationMode>("pinOrBiometric");
 
   function _createKey() {
     if (!newKeyName.trim()) {
@@ -119,7 +120,8 @@
     return pubKey;
   }
 
-  function formatSignature(sig) {
+  function formatSignature(sig: Uint8Array | null) {
+    if (!sig) return "";
     return Array.from(sig)
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
