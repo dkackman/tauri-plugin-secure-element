@@ -65,10 +65,6 @@ class SecureKeysPlugin(
         private const val TAG = "SecureKeysPlugin"
     }
 
-    /**
-     * Returns a detailed error message in debug builds, generic message in release builds.
-     * This prevents information disclosure in production while helping developers debug.
-     */
     private fun sanitizeError(
         detailedMessage: String,
         genericMessage: String,
@@ -79,9 +75,6 @@ class SecureKeysPlugin(
             genericMessage
         }
 
-    /**
-     * Returns error message with key name in debug builds only.
-     */
     private fun sanitizeErrorWithKeyName(
         keyName: String,
         operation: String,
@@ -98,9 +91,65 @@ class SecureKeysPlugin(
 
     private fun getKeyAlias(keyName: String): String = "$keyStoreAliasPrefix$keyName"
 
-    /**
-     * Authenticates the user using BiometricPrompt based on auth mode
-     */
+    private fun getKeyEntry(alias: String): KeyStore.PrivateKeyEntry? = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+
+    private fun exportPublicKeyBase64(entry: KeyStore.PrivateKeyEntry): String? {
+        val publicKey = entry.certificate?.publicKey ?: return null
+        val publicKeyBytes = publicKey.encoded
+        return Base64.encodeToString(publicKeyBytes, Base64.NO_WRAP)
+    }
+
+    private fun checkKeyNotExists(
+        keyName: String,
+        alias: String,
+        operation: String,
+        invoke: Invoke,
+    ): Boolean {
+        if (keyStore.containsAlias(alias)) {
+            val message = sanitizeErrorWithKeyName(keyName, "Key already exists")
+            Log.e(TAG, "$operation: Key already exists: $keyName")
+            invoke.reject(message)
+            return false
+        }
+        return true
+    }
+
+    private fun checkKeyExists(
+        keyName: String,
+        alias: String,
+        operation: String,
+        invoke: Invoke,
+    ): Boolean {
+        if (!keyStore.containsAlias(alias)) {
+            val message = sanitizeErrorWithKeyName(keyName, "Key not found")
+            Log.e(TAG, "$operation: Key not found: $keyName")
+            invoke.reject(message)
+            return false
+        }
+        return true
+    }
+
+    private fun buildKeyGenParameterSpec(
+        alias: String,
+        requireAuth: Boolean,
+        useSecureElement: Boolean,
+    ): KeyGenParameterSpec =
+        KeyGenParameterSpec
+            .Builder(
+                alias,
+                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+            ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+            .setDigests(KeyProperties.DIGEST_SHA256)
+            .apply {
+                if (requireAuth) {
+                    setUserAuthenticationRequired(true)
+                    setUserAuthenticationValidityDurationSeconds(0) // Require auth every time
+                }
+                if (useSecureElement) {
+                    setIsStrongBoxBacked(true)
+                }
+            }.build()
+
     private fun authenticateUser(
         authMode: String?,
         reason: String,
@@ -167,7 +216,6 @@ class SecureKeysPlugin(
                 },
             )
 
-        // Build prompt info
         val promptInfo =
             if (mode == "biometricOnly") {
                 BiometricPrompt.PromptInfo
@@ -178,6 +226,8 @@ class SecureKeysPlugin(
                     .setNegativeButtonText("Cancel")
                     .build()
             } else {
+                // When DEVICE_CREDENTIAL is allowed, negative button text cannot be set
+                // Android provides its own system UI for device credentials
                 BiometricPrompt.PromptInfo
                     .Builder()
                     .setTitle("Authentication Required")
@@ -185,7 +235,7 @@ class SecureKeysPlugin(
                     .setAllowedAuthenticators(
                         BiometricManager.Authenticators.BIOMETRIC_STRONG or
                             BiometricManager.Authenticators.DEVICE_CREDENTIAL,
-                    ).setNegativeButtonText("Cancel")
+                    )
                     .build()
             }
 
@@ -306,13 +356,9 @@ class SecureKeysPlugin(
     fun generateSecureKey(invoke: Invoke) {
         try {
             val args = invoke.parseArgs(GenerateSecureKeyArgs::class.java)
-
             val alias = getKeyAlias(args.keyName)
 
-            if (keyStore.containsAlias(alias)) {
-                val message = sanitizeErrorWithKeyName(args.keyName, "Key already exists")
-                Log.e(TAG, "generateSecureKey: Key already exists: ${args.keyName}")
-                invoke.reject(message)
+            if (!checkKeyNotExists(args.keyName, alias, "generateSecureKey", invoke)) {
                 return
             }
 
@@ -324,26 +370,7 @@ class SecureKeysPlugin(
             var keyPairGenerator =
                 KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
 
-            var keyGenParameterSpecBuilder =
-                KeyGenParameterSpec
-                    .Builder(
-                        alias,
-                        KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-                    ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                    .setDigests(KeyProperties.DIGEST_SHA256)
-                    .apply {
-                        // Only require authentication if not "none" mode
-                        if (requireAuth) {
-                            setUserAuthenticationRequired(true) // Require PIN/biometric authentication
-                            setUserAuthenticationValidityDurationSeconds(0) // Require auth every time (auth-per-use)
-                        }
-                        // Only set StrongBox if Secure Element is supported
-                        if (useSecureElement) {
-                            setIsStrongBoxBacked(true)
-                        }
-                    }
-
-            var keyGenParameterSpec = keyGenParameterSpecBuilder.build()
+            var keyGenParameterSpec = buildKeyGenParameterSpec(alias, requireAuth, useSecureElement)
 
             try {
                 keyPairGenerator.initialize(keyGenParameterSpec)
@@ -358,22 +385,7 @@ class SecureKeysPlugin(
                             "AndroidKeyStore",
                         )
 
-                    keyGenParameterSpecBuilder =
-                        KeyGenParameterSpec
-                            .Builder(
-                                alias,
-                                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-                            ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                            .setDigests(KeyProperties.DIGEST_SHA256)
-                            .apply {
-                                // Only require authentication if not "none" mode
-                                if (requireAuth) {
-                                    setUserAuthenticationRequired(true) // Require PIN/biometric authentication
-                                    setUserAuthenticationValidityDurationSeconds(0) // Require auth every time (auth-per-use)
-                                }
-                            }
-
-                    keyGenParameterSpec = keyGenParameterSpecBuilder.build()
+                    keyGenParameterSpec = buildKeyGenParameterSpec(alias, requireAuth, false)
 
                     keyPairGenerator.initialize(keyGenParameterSpec)
                     keyPairGenerator.generateKeyPair()
@@ -384,14 +396,13 @@ class SecureKeysPlugin(
             }
 
             // Get the public key
-            val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-            val publicKey =
-                entry?.certificate?.publicKey
-                    ?: throw Exception("Failed to get public key after key generation")
+            val entry =
+                getKeyEntry(alias)
+                    ?: throw Exception("Failed to get key entry after key generation")
 
-            // Export public key in X.509 format (DER) and convert to base64
-            val publicKeyBytes = publicKey.encoded
-            val publicKeyBase64 = Base64.encodeToString(publicKeyBytes, Base64.NO_WRAP)
+            val publicKeyBase64 =
+                exportPublicKeyBase64(entry)
+                    ?: throw Exception("Failed to get public key after key generation")
 
             val ret = JSObject()
             ret.put("publicKey", publicKeyBase64)
@@ -431,15 +442,8 @@ class SecureKeysPlugin(
                 }
 
                 // Get the public key
-                val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-                val publicKey = entry?.certificate?.publicKey
-                if (publicKey == null) {
-                    continue
-                }
-
-                // Export public key in X.509 format (DER) and convert to base64
-                val publicKeyBytes = publicKey.encoded
-                val publicKeyBase64 = Base64.encodeToString(publicKeyBytes, Base64.NO_WRAP)
+                val entry = getKeyEntry(alias) ?: continue
+                val publicKeyBase64 = exportPublicKeyBase64(entry) ?: continue
 
                 // Apply public key filter if provided
                 if (args.publicKey != null && args.publicKey != publicKeyBase64) {
@@ -465,20 +469,9 @@ class SecureKeysPlugin(
     fun signWithKey(invoke: Invoke) {
         try {
             val args = invoke.parseArgs(SignWithKeyArgs::class.java)
-
-            if (args.keyName.isBlank()) {
-                val message = "Key name cannot be empty"
-                Log.e(TAG, "signWithKey: $message")
-                invoke.reject(message)
-                return
-            }
-
             val alias = getKeyAlias(args.keyName)
 
-            if (!keyStore.containsAlias(alias)) {
-                val message = sanitizeErrorWithKeyName(args.keyName, "Key not found")
-                Log.e(TAG, "signWithKey: Key not found: ${args.keyName}")
-                invoke.reject(message)
+            if (!checkKeyExists(args.keyName, alias, "signWithKey", invoke)) {
                 return
             }
 
@@ -490,12 +483,8 @@ class SecureKeysPlugin(
                     try {
                         // Get the private key entry
                         val entry =
-                            keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-                                ?: run {
-                                    val message = "Failed to get key entry"
-                                    Log.e(TAG, "signWithKey: $message")
-                                    throw Exception(message)
-                                }
+                            getKeyEntry(alias)
+                                ?: throw Exception("Failed to get key entry")
 
                         // Sign the data using ECDSA with SHA-256
                         // Note: Android's SHA256withECDSA hashes the data internally,
@@ -536,17 +525,8 @@ class SecureKeysPlugin(
     fun deleteKey(invoke: Invoke) {
         try {
             val args = invoke.parseArgs(DeleteKeyArgs::class.java)
-
-            if (args.keyName.isBlank()) {
-                val message = "Key name cannot be empty"
-                Log.e(TAG, "deleteKey: $message")
-                invoke.reject(message)
-                return
-            }
-
             val alias = getKeyAlias(args.keyName)
 
-            // Check if key exists
             if (!keyStore.containsAlias(alias)) {
                 // Key doesn't exist, but we'll return success anyway (idempotent)
                 val ret = JSObject()
