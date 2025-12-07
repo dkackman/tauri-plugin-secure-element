@@ -123,4 +123,6 @@ pub struct CheckSecureElementSupportResponse {
     pub secure_element_supported: bool,
     /// Whether Trusted Execution Environment (TEE) / hardware-backed keystore is supported
     pub tee_supported: bool,
+    /// Android API < 30 doesn't persist biometric-only authentication requirements
+    pub can_enforce_biometric_only: bool,
 }

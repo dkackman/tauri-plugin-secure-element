@@ -72,6 +72,7 @@ export async function deleteKey(keyName: string): Promise<boolean> {
 export interface SecureElementSupport {
   secureElementSupported: boolean;
   teeSupported: boolean;
+  canEnforceBiometricOnly: boolean;
 }
 
 export async function checkSecureElementSupport(): Promise<SecureElementSupport> {

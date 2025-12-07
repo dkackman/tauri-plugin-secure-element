@@ -370,9 +370,12 @@ class SecureKeysPlugin(
         try {
             val secureElementSupported = isSecureElementSupported()
             val teeSupported = isTeeSupported()
+            // API 30+ (Android 11+) supports biometric-only enforcement at key level
+            val canEnforceBiometricOnly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
             val ret = JSObject()
             ret.put("secureElementSupported", secureElementSupported)
             ret.put("teeSupported", teeSupported)
+            ret.put("canEnforceBiometricOnly", canEnforceBiometricOnly)
             invoke.resolve(ret)
         } catch (e: Exception) {
             Log.e(TAG, "Error in checkSecureElementSupport", e)

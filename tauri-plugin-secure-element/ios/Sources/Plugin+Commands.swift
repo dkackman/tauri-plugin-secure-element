@@ -201,6 +201,7 @@ extension SecureEnclavePlugin {
             invoke.resolve([
                 "secureElementSupported": false,
                 "teeSupported": false,
+                "canEnforceBiometricOnly": false,
             ])
             return
         #endif
@@ -220,6 +221,7 @@ extension SecureEnclavePlugin {
             invoke.resolve([
                 "secureElementSupported": false,
                 "teeSupported": false,
+                "canEnforceBiometricOnly": false,
             ])
             return
         }
@@ -257,12 +259,14 @@ extension SecureEnclavePlugin {
             invoke.resolve([
                 "secureElementSupported": true,
                 "teeSupported": true, // Secure Enclave is iOS's TEE
+                "canEnforceBiometricOnly": true,
             ])
         } else {
             // Failed to create key, Secure Enclave/TEE is not available
             invoke.resolve([
                 "secureElementSupported": false,
                 "teeSupported": false,
+                "canEnforceBiometricOnly": false,
             ])
         }
     }

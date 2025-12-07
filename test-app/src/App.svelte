@@ -33,6 +33,7 @@
   // Secure Element Support
   let secureElementSupported = $state(null);
   let teeSupported = $state(null);
+  let canEnforceBiometricOnly = $state(null);
   let secureElementCheckError = $state("");
 
   // Authentication Mode
@@ -135,14 +136,23 @@
         console.log("[App] checkSecureElementSupport success:", result);
         secureElementSupported = result.secureElementSupported;
         teeSupported = result.teeSupported;
+        canEnforceBiometricOnly = result.canEnforceBiometricOnly;
       })
       .catch((err) => {
         console.error("[App] checkSecureElementSupport error:", err);
         secureElementCheckError = err.toString();
         secureElementSupported = false;
         teeSupported = false;
+        canEnforceBiometricOnly = false;
       });
   }
+
+  // Reset authMode if biometricOnly is selected but not supported
+  $effect(() => {
+    if (authMode === "biometricOnly" && canEnforceBiometricOnly === false) {
+      authMode = "pinOrBiometric";
+    }
+  });
 
   // Load keys and check secure element support on mount
   _refreshKeysList();
@@ -172,6 +182,14 @@
           {teeSupported ? "✓ Supported" : "✗ Not Supported"}
         </span>
       </div>
+      <div
+        class="status-item {canEnforceBiometricOnly ? 'success' : 'warning'}"
+      >
+        <span class="status-label">Biometric-Only Enforcement:</span>
+        <span class="status-value">
+          {canEnforceBiometricOnly ? "✓ Supported" : "✗ Not Supported"}
+        </span>
+      </div>
     {:else}
       <div class="status-item info">
         <span class="status-label">Hardware Security:</span>
@@ -196,7 +214,9 @@
       <select id="authMode" bind:value={authMode} class="auth-mode-select">
         <option value="none">None</option>
         <option value="pinOrBiometric">PIN or Biometric (Default)</option>
-        <option value="biometricOnly">Biometric Only</option>
+        {#if canEnforceBiometricOnly === true}
+          <option value="biometricOnly">Biometric Only</option>
+        {/if}
       </select>
       <button onclick={_createKey} class="primary">Create Key</button>
     </div>
