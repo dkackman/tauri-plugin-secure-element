@@ -1,9 +1,9 @@
 use tauri::{command, AppHandle, Runtime};
 
 use crate::models::*;
+use crate::validation::{validate_key_name, validate_public_key_filter, validate_sign_data_size};
 use crate::Result;
 use crate::SecureElementExt;
-use crate::validation::{validate_key_name, validate_public_key_filter, validate_sign_data_size};
 
 #[command]
 pub(crate) async fn ping<R: Runtime>(
