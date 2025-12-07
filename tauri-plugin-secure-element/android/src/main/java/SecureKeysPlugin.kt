@@ -508,13 +508,10 @@ class SecureKeysPlugin(
      * Checks if an exception indicates user authentication is required
      */
     private fun isUserNotAuthenticatedException(e: Exception): Boolean {
-        // Check the exception type and message for auth-related errors
-        val message = e.message ?: ""
-        return e.javaClass.name.contains("UserNotAuthenticated") ||
-            message.contains("User not authenticated") ||
-            message.contains("user not authenticated", ignoreCase = true) ||
-            message.contains("KEY_USER_NOT_AUTHENTICATED") ||
-            (e.cause?.message?.contains("user not authenticated", ignoreCase = true) == true)
+        // Check if the exception is UserNotAuthenticatedException
+        // This exception was added in API 23, same as KeyGenParameterSpec
+        return e is android.security.keystore.UserNotAuthenticatedException ||
+            e.cause is android.security.keystore.UserNotAuthenticatedException
     }
 
     /**
