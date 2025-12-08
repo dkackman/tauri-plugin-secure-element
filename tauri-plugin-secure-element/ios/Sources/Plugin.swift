@@ -181,20 +181,6 @@ class SecureEnclavePlugin: Plugin {
         return publicKeyData.base64EncodedString()
     }
 
-    /// Looks up a key by name and returns the SecKey (non-rejecting version for loops)
-    private func lookupKeySilent(keyNameData: Data) -> SecKey? {
-        let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
-        var keyRef: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
-
-        guard status == errSecSuccess, let keyRef = keyRef else {
-            return nil
-        }
-
-        // swiftlint:disable:next force_cast
-        return keyRef as! SecKey // Safe: SecKey is typealias for CFTypeRef
-    }
-
     /// Extracts error description from CFError
     private func extractCFErrorDescription(_ error: Unmanaged<CFError>) -> String {
         return CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
@@ -236,51 +222,6 @@ class SecureEnclavePlugin: Plugin {
             return nil
         }
         return accessControl
-    }
-
-    /// Determines if a key requires authentication by checking its access control attributes
-    /// Returns true if authentication is required, false if not, or nil if it cannot be determined
-    ///
-    /// Note: This is a best-effort attempt. The Secure Enclave enforces access control during
-    /// key usage (e.g., SecKeyCreateSignature), so this method is for informational purposes only.
-    private func keyRequiresAuthentication(keyNameData: Data) -> Bool? {
-        // Query for the key's attributes including access control
-        var query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
-        query[kSecReturnAttributes as String] = true
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        // If we can't get the key at all, return nil
-        guard status == errSecSuccess || status == errSecInteractionNotAllowed else {
-            return nil
-        }
-
-        // If status is errSecInteractionNotAllowed, authentication is required
-        // This error occurs when the key has access control that requires user interaction
-        if status == errSecInteractionNotAllowed {
-            return true
-        }
-
-        // If we successfully retrieved the key, check if it has access control
-        // All Secure Enclave keys have access control, but keys with only .privateKeyUsage
-        // don't require user authentication, while keys with .userPresence or .biometryCurrentSet
-        // do require authentication (but may still be accessible for reading attributes)
-        if status == errSecSuccess {
-            if let attributes = result as? [String: Any],
-               attributes[kSecAttrAccessControl as String] != nil
-            {
-                // Key has access control, but we can't determine the specific flags
-                // without using private APIs. Return nil to indicate uncertainty.
-                // In practice, keys with auth requirements will return errSecInteractionNotAllowed
-                // when trying to access them, so this is mainly for keys that don't require auth.
-                return false
-            }
-            return false
-        }
-
-        // Default: can't determine
-        return nil
     }
 
     /// Checks if a key with the given name already exists
@@ -394,10 +335,12 @@ class SecureEnclavePlugin: Plugin {
         let args = try invoke.parseArgs(ListKeysArgs.self)
 
         // Query for all keys in Secure Enclave
+        // Request both attributes and key references to avoid a second lookup
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecReturnAttributes as String: true,
+            kSecReturnRef as String: true,
             kSecReturnData as String: false,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
@@ -410,10 +353,14 @@ class SecureEnclavePlugin: Plugin {
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
                 guard let keyNameData = item[kSecAttrApplicationTag as String] as? Data,
-                      let keyName = String(data: keyNameData, encoding: .utf8)
+                      let keyName = String(data: keyNameData, encoding: .utf8),
+                      let keyRef = item[kSecValueRef as String] as? CFTypeRef
                 else {
                     continue
                 }
+                // kSecValueRef returns a SecKey when kSecReturnRef is true
+                // swiftlint:disable:next force_cast
+                let privateKey = keyRef as! SecKey
 
                 // Apply filters if provided
                 if let filterName = args.keyName, filterName != keyName {
@@ -421,15 +368,14 @@ class SecureEnclavePlugin: Plugin {
                 }
 
                 // Get the public key for this private key
-                // We need to reconstruct the key reference to get the public key
-                if let privateKey = lookupKeySilent(keyNameData: keyNameData),
-                   let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey)
+                // Use the key reference from the initial query
+                if let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey)
                 {
                     if let filterPublicKey = args.publicKey, filterPublicKey != publicKeyBase64 {
                         continue
                     }
 
-                    let requiresAuth = keyRequiresAuthentication(keyNameData: keyNameData)
+                    let requiresAuth: Bool? = nil
 
                     var keyInfo: [String: Any] = [
                         "keyName": keyName,
@@ -532,10 +478,12 @@ class SecureEnclavePlugin: Plugin {
         }
 
         // Query for all keys in Secure Enclave
+        // Request both attributes and key references to avoid a second lookup
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecReturnAttributes as String: true,
+            kSecReturnRef as String: true,
             kSecReturnData as String: false,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
@@ -546,13 +494,18 @@ class SecureEnclavePlugin: Plugin {
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             // Find the key matching the public key
             for item in items {
-                guard let keyNameData = item[kSecAttrApplicationTag as String] as? Data else {
+                guard let keyNameData = item[kSecAttrApplicationTag as String] as? Data,
+                      let keyRef = item[kSecValueRef as String] as? CFTypeRef
+                else {
                     continue
                 }
+                // kSecValueRef returns a SecKey when kSecReturnRef is true
+                // swiftlint:disable:next force_cast
+                let privateKey = keyRef as! SecKey
 
                 // Get the public key for this private key
-                if let privateKey = lookupKeySilent(keyNameData: keyNameData),
-                   let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey),
+                // Use the key reference from the initial query
+                if let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey),
                    publicKeyBase64 == targetPublicKey
                 {
                     // Found the matching key, delete it
