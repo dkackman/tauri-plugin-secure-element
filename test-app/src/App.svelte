@@ -274,9 +274,8 @@
             </div>
             <div>
               <strong>Public Key:</strong>
-              <code class="public-key">{formatPublicKey(key.publicKey)}</code>
+              <code class="public-key">{key.publicKey}</code>
             </div>
-            <div class="full-key"><code>{key.publicKey}</code></div>
           </div>
         {/each}
       </div>
