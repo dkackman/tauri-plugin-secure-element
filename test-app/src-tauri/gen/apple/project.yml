@@ -12,6 +12,7 @@ settingGroups:
     base:
       PRODUCT_NAME: tauri-app
       PRODUCT_BUNDLE_IDENTIFIER: com.tauri.secureelement.example
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
 targetTemplates:
   app:
     type: application

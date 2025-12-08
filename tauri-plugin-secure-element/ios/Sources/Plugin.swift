@@ -531,7 +531,7 @@ class SecureEnclavePlugin: Plugin {
             invoke.resolve([
                 "secureElementSupported": false,
                 "teeSupported": false,
-                "canEnforceBiometricOnly": false,
+                "canEnforceBiometricOnly": true,
             ])
             return
         #endif
