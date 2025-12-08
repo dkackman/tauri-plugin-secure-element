@@ -93,22 +93,11 @@ class SecureEnclavePlugin: Plugin {
 
     // MARK: - Key Operations Helpers
 
-    /// Converts key name string to Data, handling errors consistently
-    private func keyNameToData(_ keyName: String, operation: String, invoke: Invoke) -> Data? {
-        guard let keyNameData = keyName.data(using: .utf8) else {
-            let message = "Invalid key name"
-            logError(operation, error: message)
-            invoke.reject(message)
-            return nil
-        }
-        return keyNameData
-    }
-
     /// Creates a base query dictionary for Secure Enclave key operations
-    private func createKeyQuery(keyNameData: Data, returnRef: Bool = true) -> [String: Any] {
+    private func createKeyQuery(keyName: String, returnRef: Bool = true) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyNameData,
+            kSecAttrLabel as String: keyName,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
         ]
         if returnRef {
@@ -118,8 +107,8 @@ class SecureEnclavePlugin: Plugin {
     }
 
     /// Looks up a key by name and returns the SecKey, handling errors
-    private func lookupKey(keyName: String, keyNameData: Data, operation: String, invoke: Invoke) -> SecKey? {
-        let query = createKeyQuery(keyNameData: keyNameData, returnRef: true)
+    private func lookupKey(keyName: String, operation: String, invoke: Invoke) -> SecKey? {
+        let query = createKeyQuery(keyName: keyName, returnRef: true)
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
@@ -225,8 +214,8 @@ class SecureEnclavePlugin: Plugin {
     }
 
     /// Checks if a key with the given name already exists
-    private func checkKeyExists(keyName: String, keyNameData: Data, operation: String, invoke: Invoke) -> Bool {
-        let checkQuery = createKeyQuery(keyNameData: keyNameData, returnRef: false)
+    private func checkKeyExists(keyName: String, operation: String, invoke: Invoke) -> Bool {
+        let checkQuery = createKeyQuery(keyName: keyName, returnRef: false)
         var checkResult: CFTypeRef?
         let checkStatus = SecItemCopyMatching(checkQuery as CFDictionary, &checkResult)
 
@@ -248,13 +237,13 @@ class SecureEnclavePlugin: Plugin {
     }
 
     /// Creates a Secure Enclave key with the given attributes
-    private func createSecureEnclaveKey(keyNameData: Data, accessControl: SecAccessControl, operation: String, invoke: Invoke) -> SecKey? {
+    private func createSecureEnclaveKey(keyName: String, accessControl: SecAccessControl, operation: String, invoke: Invoke) -> SecKey? {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecAttrIsPermanent as String: true,
-            kSecAttrApplicationTag as String: keyNameData,
+            kSecAttrLabel as String: keyName,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
                 kSecAttrAccessControl as String: accessControl,
@@ -303,18 +292,13 @@ class SecureEnclavePlugin: Plugin {
             return
         }
 
-        // Safely convert key name to data
-        guard let keyNameData = keyNameToData(args.keyName, operation: "generateSecureKey", invoke: invoke) else {
-            return
-        }
-
         // Check if a key with this name already exists
-        if checkKeyExists(keyName: args.keyName, keyNameData: keyNameData, operation: "generateSecureKey", invoke: invoke) {
+        if checkKeyExists(keyName: args.keyName, operation: "generateSecureKey", invoke: invoke) {
             return
         }
 
         // Create the Secure Enclave key
-        guard let privateKey = createSecureEnclaveKey(keyNameData: keyNameData, accessControl: accessControl, operation: "generateSecureKey", invoke: invoke) else {
+        guard let privateKey = createSecureEnclaveKey(keyName: args.keyName, accessControl: accessControl, operation: "generateSecureKey", invoke: invoke) else {
             return
         }
 
@@ -352,15 +336,17 @@ class SecureEnclavePlugin: Plugin {
 
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
-                guard let keyNameData = item[kSecAttrApplicationTag as String] as? Data,
-                      let keyName = String(data: keyNameData, encoding: .utf8),
-                      let keyRef = item[kSecValueRef as String] as? CFTypeRef
+                guard let keyRef = item[kSecValueRef as String] as? CFTypeRef
                 else {
                     continue
                 }
                 // kSecValueRef returns a SecKey when kSecReturnRef is true
                 // swiftlint:disable:next force_cast
                 let privateKey = keyRef as! SecKey
+
+                // Extract key name from kSecAttrLabel, default to "<unnamed>" if missing or empty
+                let keyNameLabel = (item[kSecAttrLabel as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let keyName = keyNameLabel?.isEmpty == false ? keyNameLabel! : "<unnamed>"
 
                 // Apply filters if provided
                 if let filterName = args.keyName, filterName != keyName {
@@ -375,6 +361,7 @@ class SecureEnclavePlugin: Plugin {
                         continue
                     }
 
+                    // TODO - come back to this once we move where name is kept
                     let requiresAuth: Bool? = nil
 
                     var keyInfo: [String: Any] = [
@@ -403,14 +390,9 @@ class SecureEnclavePlugin: Plugin {
     @objc func signWithKey(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(SignWithKeyArgs.self)
 
-        // Find the key by name
-        guard let keyNameData = keyNameToData(args.keyName, operation: "signWithKey", invoke: invoke) else {
-            return
-        }
-
         // Secure Enclave automatically enforces the key's access control requirements
         // when using the key. No explicit authentication needed - the platform handles it.
-        guard let privateKey = lookupKey(keyName: args.keyName, keyNameData: keyNameData, operation: "signWithKey", invoke: invoke) else {
+        guard let privateKey = lookupKey(keyName: args.keyName, operation: "signWithKey", invoke: invoke) else {
             return
         }
 
@@ -454,11 +436,7 @@ class SecureEnclavePlugin: Plugin {
 
         // If keyName is provided, delete by name (fast path)
         if let keyName = args.keyName {
-            guard let keyNameData = keyNameToData(keyName, operation: "deleteKey", invoke: invoke) else {
-                return
-            }
-
-            let query = createKeyQuery(keyNameData: keyNameData, returnRef: false)
+            let query = createKeyQuery(keyName: keyName, returnRef: false)
             let status = SecItemDelete(query as CFDictionary)
 
             if status == errSecSuccess || status == errSecItemNotFound {
@@ -494,8 +472,7 @@ class SecureEnclavePlugin: Plugin {
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             // Find the key matching the public key
             for item in items {
-                guard let keyNameData = item[kSecAttrApplicationTag as String] as? Data,
-                      let keyRef = item[kSecValueRef as String] as? CFTypeRef
+                guard let keyRef = item[kSecValueRef as String] as? CFTypeRef
                 else {
                     continue
                 }
@@ -508,8 +485,12 @@ class SecureEnclavePlugin: Plugin {
                 if let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey),
                    publicKeyBase64 == targetPublicKey
                 {
+                    // Extract key name from kSecAttrLabel for deletion
+                    let keyNameLabel = (item[kSecAttrLabel as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let keyName = keyNameLabel?.isEmpty == false ? keyNameLabel! : "<unnamed>"
+                    
                     // Found the matching key, delete it
-                    let deleteQuery = createKeyQuery(keyNameData: keyNameData, returnRef: false)
+                    let deleteQuery = createKeyQuery(keyName: keyName, returnRef: false)
                     let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
 
                     if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
