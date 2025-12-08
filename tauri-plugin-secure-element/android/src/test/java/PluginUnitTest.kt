@@ -1,4 +1,4 @@
-package app.tauri.plugin.secureelement
+package net.kackman.secureelement
 
 import org.junit.Assert.*
 import org.junit.Test

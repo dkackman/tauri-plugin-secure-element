@@ -1,4 +1,4 @@
-package app.tauri.plugin.secureelement
+package net.kackman.secureelement
 
 import android.app.Activity
 import android.content.pm.PackageManager
@@ -18,7 +18,7 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
-import app.tauri.plugin.secureelement.BuildConfig
+import net.kackman.secureelement.BuildConfig
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore

@@ -41,7 +41,7 @@ class DeleteKeyArgs: Decodable {
 
 class SecureEnclavePlugin: Plugin {
     /// Logger for error tracking (consistent with Android's Log.e pattern)
-    private static let logger = OSLog(subsystem: "app.tauri.plugin.secureelement", category: "SecureEnclave")
+    private static let logger = OSLog(subsystem: "net.kackman.secureelement", category: "SecureEnclave")
 
     /// Returns a detailed error message in debug builds, generic message in release builds
     /// This prevents information disclosure in production while helping developers debug

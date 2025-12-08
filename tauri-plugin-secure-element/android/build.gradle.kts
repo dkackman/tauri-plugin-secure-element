@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "app.tauri.plugin.secureelement"
+    namespace = "net.kackman.secureelement"
     compileSdk = 36
 
     buildFeatures {

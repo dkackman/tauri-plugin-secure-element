@@ -1,4 +1,4 @@
-package app.tauri.plugin.secureelement
+package net.kackman.secureelement
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -17,6 +17,6 @@ class PluginInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("app.tauri.plugin.secureelement", appContext.packageName)
+        assertEquals("net.kackman.secureelement", appContext.packageName)
     }
 }

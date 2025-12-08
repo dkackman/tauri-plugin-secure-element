@@ -15,8 +15,7 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
     api: PluginApi<R, C>,
 ) -> crate::Result<SecureElement<R>> {
     #[cfg(target_os = "android")]
-    let handle =
-        api.register_android_plugin("app.tauri.plugin.secureelement", "SecureKeysPlugin")?;
+    let handle = api.register_android_plugin("net.kackman.secureelement", "SecureKeysPlugin")?;
     #[cfg(target_os = "ios")]
     let handle = api.register_ios_plugin(init_plugin_secure_element)?;
     Ok(SecureElement(handle))
