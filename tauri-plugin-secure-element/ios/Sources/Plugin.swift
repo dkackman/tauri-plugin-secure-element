@@ -31,8 +31,10 @@ class SignWithKeyArgs: Decodable {
 }
 
 class DeleteKeyArgs: Decodable {
-    let keyName: String
-    // Note: Authentication requirements are determined by the key's own attributes
+    let keyName: String?
+    let publicKey: String?
+    // Note: At least one of keyName or publicKey must be provided.
+    // Authentication requirements are determined by the key's own attributes
 }
 
 // MARK: - SecureEnclavePlugin
@@ -504,17 +506,78 @@ class SecureEnclavePlugin: Plugin {
     @objc func deleteKey(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(DeleteKeyArgs.self)
 
-        guard let keyNameData = keyNameToData(args.keyName, operation: "deleteKey", invoke: invoke) else {
+        // If keyName is provided, delete by name (fast path)
+        if let keyName = args.keyName {
+            guard let keyNameData = keyNameToData(keyName, operation: "deleteKey", invoke: invoke) else {
+                return
+            }
+
+            let query = createKeyQuery(keyNameData: keyNameData, returnRef: false)
+            let status = SecItemDelete(query as CFDictionary)
+
+            if status == errSecSuccess || status == errSecItemNotFound {
+                invoke.resolve(["success": true])
+            } else {
+                let detailedMessage = "Failed to delete key: \(status)"
+                let message = sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
+                logError("deleteKey", error: message, detailedError: detailedMessage)
+                invoke.reject(message)
+            }
             return
         }
 
-        let query = createKeyQuery(keyNameData: keyNameData, returnRef: false)
-        let status = SecItemDelete(query as CFDictionary)
+        // If publicKey is provided, find the key by public key and delete it
+        guard let targetPublicKey = args.publicKey else {
+            return
+        }
 
-        if status == errSecSuccess || status == errSecItemNotFound {
+        // Query for all keys in Secure Enclave
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: false,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        if status == errSecSuccess, let items = result as? [[String: Any]] {
+            // Find the key matching the public key
+            for item in items {
+                guard let keyNameData = item[kSecAttrApplicationTag as String] as? Data else {
+                    continue
+                }
+
+                // Get the public key for this private key
+                if let privateKey = lookupKeySilent(keyNameData: keyNameData),
+                   let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey),
+                   publicKeyBase64 == targetPublicKey
+                {
+                    // Found the matching key, delete it
+                    let deleteQuery = createKeyQuery(keyNameData: keyNameData, returnRef: false)
+                    let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+
+                    if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
+                        invoke.resolve(["success": true])
+                    } else {
+                        let detailedMessage = "Failed to delete key: \(deleteStatus)"
+                        let message = sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
+                        logError("deleteKey", error: message, detailedError: detailedMessage)
+                        invoke.reject(message)
+                    }
+                    return
+                }
+            }
+
+            // Key not found by public key, return success (idempotent)
+            invoke.resolve(["success": true])
+        } else if status == errSecItemNotFound {
+            // No keys found, return success (idempotent)
             invoke.resolve(["success": true])
         } else {
-            let detailedMessage = "Failed to delete key: \(status)"
+            let detailedMessage = "Failed to query keys for deletion: \(status)"
             let message = sanitizeError(detailedMessage, genericMessage: "Failed to delete key")
             logError("deleteKey", error: message, detailedError: detailedMessage)
             invoke.reject(message)

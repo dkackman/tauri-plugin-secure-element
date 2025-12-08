@@ -52,7 +52,9 @@ class SignWithKeyArgs {
 
 @InvokeArg
 class DeleteKeyArgs {
-    var keyName: String = ""
+    var keyName: String? = null
+    var publicKey: String? = null
+    // Note: At least one of keyName or publicKey must be provided.
 }
 
 @TauriPlugin
@@ -678,27 +680,74 @@ class SecureKeysPlugin(
     fun deleteKey(invoke: Invoke) {
         try {
             val args = invoke.parseArgs(DeleteKeyArgs::class.java)
-            val alias = getKeyAlias(args.keyName)
 
-            if (!keyStore.containsAlias(alias)) {
-                // Key doesn't exist, but we'll return success anyway (idempotent)
-                val ret = JSObject()
-                ret.put("success", true)
-                invoke.resolve(ret)
+            // If keyName is provided, delete by name (fast path)
+            if (args.keyName != null) {
+                val alias = getKeyAlias(args.keyName!!)
+
+                if (!keyStore.containsAlias(alias)) {
+                    // Key doesn't exist, but we'll return success anyway (idempotent)
+                    val ret = JSObject()
+                    ret.put("success", true)
+                    invoke.resolve(ret)
+                    return
+                }
+
+                try {
+                    keyStore.deleteEntry(alias)
+                    val ret = JSObject()
+                    ret.put("success", true)
+                    invoke.resolve(ret)
+                } catch (e: Exception) {
+                    val detailedMessage = "Failed to delete key: ${e.message}"
+                    val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
+                    Log.e(TAG, "deleteKey: $detailedMessage", e)
+                    invoke.reject(errorMessage)
+                }
                 return
             }
 
-            try {
-                keyStore.deleteEntry(alias)
-                val ret = JSObject()
-                ret.put("success", true)
-                invoke.resolve(ret)
-            } catch (e: Exception) {
-                val detailedMessage = "Failed to delete key: ${e.message}"
-                val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                Log.e(TAG, "deleteKey: $detailedMessage", e)
-                invoke.reject(errorMessage)
+            // If publicKey is provided, find the key by public key and delete it
+            val targetPublicKey = args.publicKey
+            if (targetPublicKey == null) {
+                return
             }
+
+            val aliases = keyStore.aliases()
+            var found = false
+
+            while (aliases.hasMoreElements()) {
+                val alias = aliases.nextElement() as String
+
+                // Only process our keys (those with our prefix)
+                if (!alias.startsWith(keyStoreAliasPrefix)) {
+                    continue
+                }
+
+                // Get the public key
+                val entry = getKeyEntry(alias) ?: continue
+                val publicKeyBase64 = exportPublicKeyBase64(entry) ?: continue
+
+                // Check if this key matches the target public key
+                if (publicKeyBase64 == targetPublicKey) {
+                    try {
+                        keyStore.deleteEntry(alias)
+                        found = true
+                        break
+                    } catch (e: Exception) {
+                        val detailedMessage = "Failed to delete key: ${e.message}"
+                        val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
+                        Log.e(TAG, "deleteKey: $detailedMessage", e)
+                        invoke.reject(errorMessage)
+                        return
+                    }
+                }
+            }
+
+            // Return success whether key was found or not (idempotent)
+            val ret = JSObject()
+            ret.put("success", true)
+            invoke.resolve(ret)
         } catch (e: Exception) {
             val detailedMessage = "Failed to delete key: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")

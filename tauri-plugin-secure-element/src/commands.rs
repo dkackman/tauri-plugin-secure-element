@@ -53,7 +53,29 @@ pub(crate) async fn delete_key<R: Runtime>(
     app: AppHandle<R>,
     payload: DeleteKeyRequest,
 ) -> Result<DeleteKeyResponse> {
-    validate_key_name(&payload.key_name)?;
+    // At least one of key_name or public_key must be provided
+    if payload.key_name.is_none() && payload.public_key.is_none() {
+        return Err(crate::Error::Validation(
+            "Either key_name or public_key must be provided".to_string(),
+        ));
+    }
+
+    if payload.key_name.is_some() && payload.public_key.is_some() {
+        return Err(crate::Error::Validation(
+            "Only one of key_name or public_key must be provided".to_string(),
+        ));
+    }
+
+    // Validate optional key name if provided
+    if let Some(ref key_name) = payload.key_name {
+        validate_key_name(key_name)?;
+    }
+
+    // Validate optional public key if provided
+    if let Some(ref public_key) = payload.public_key {
+        validate_public_key_filter(public_key)?;
+    }
+
     app.secure_element().delete_key(payload)
 }
 

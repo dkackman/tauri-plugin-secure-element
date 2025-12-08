@@ -101,9 +101,12 @@ pub struct SignWithKeyResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteKeyRequest {
-    /// The name of the key to delete
-    pub key_name: String,
-    // Note: Authentication requirements are determined by the key's own attributes,
+    /// Optional: The name of the key to delete
+    pub key_name: Option<String>,
+    /// Optional: The public key (base64) of the key to delete
+    pub public_key: Option<String>,
+    // Note: At least one of key_name or public_key must be provided.
+    // Authentication requirements are determined by the key's own attributes,
     // not by app-specified parameters. The platform enforces the key's requirements.
 }
 

@@ -58,12 +58,20 @@ export async function signWithKey(
   ).then((r) => new Uint8Array(r.signature));
 }
 
-export async function deleteKey(keyName: string): Promise<boolean> {
+/**
+ * Delete a key by name or by public key.
+ * At least one of keyName or publicKey must be provided.
+ */
+export async function deleteKey(
+  keyName?: string,
+  publicKey?: string
+): Promise<boolean> {
   return await invoke<{ success: boolean }>(
     "plugin:secure-element|delete_key",
     {
       payload: {
-        keyName,
+        keyName: keyName || null,
+        publicKey: publicKey || null,
       },
     }
   ).then((r) => r.success);

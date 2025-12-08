@@ -27,6 +27,7 @@
 
   // Delete Key Section
   let deleteKeyName = $state("");
+  let deletePublicKey = $state("");
   let deleteError = $state("");
   let deleteSuccess = $state(false);
 
@@ -94,17 +95,22 @@
   }
 
   function _deleteKey() {
-    if (!deleteKeyName.trim()) {
-      deleteError = "Please enter a key name";
+    const keyName = deleteKeyName.trim() || undefined;
+    const publicKey = deletePublicKey.trim() || undefined;
+
+    if (!keyName && !publicKey) {
+      deleteError = "Please enter either a key name or public key";
       return;
     }
+
     deleteError = "";
     deleteSuccess = false;
-    deleteKey(deleteKeyName.trim())
+    deleteKey(keyName, publicKey)
       .then((success) => {
         deleteSuccess = success;
         if (success) {
           deleteKeyName = "";
+          deletePublicKey = "";
           _refreshKeysList();
         }
       })
@@ -319,7 +325,7 @@
   <section class="section">
     <h2>Delete Key</h2>
     <div class="form-group">
-      <label for="deleteKeyName">Key Name:</label>
+      <label for="deleteKeyName">Key Name (optional):</label>
       <input
         id="deleteKeyName"
         type="text"
@@ -327,6 +333,15 @@
         placeholder="Enter key name to delete"
         onkeydown={(e) => e.key === "Enter" && _deleteKey()}
       />
+      <label for="deletePublicKey">Public Key (optional):</label>
+      <input
+        id="deletePublicKey"
+        type="text"
+        bind:value={deletePublicKey}
+        placeholder="Enter public key (base64) to delete"
+        onkeydown={(e) => e.key === "Enter" && _deleteKey()}
+      />
+      <small>At least one of key name or public key must be provided.</small>
       <button onclick={_deleteKey} class="danger">Delete Key</button>
     </div>
     {#if deleteError}
