@@ -246,7 +246,7 @@ class SecureEnclavePlugin: Plugin {
             invoke.reject(message)
             return nil
         }
-        
+
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
@@ -365,8 +365,7 @@ class SecureEnclavePlugin: Plugin {
 
                 // Get the public key for this private key
                 // Use the key reference from the initial query
-                if let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey)
-                {
+                if let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey) {
                     if let filterPublicKey = args.publicKey, filterPublicKey != publicKeyBase64 {
                         continue
                     }
@@ -511,7 +510,7 @@ class SecureEnclavePlugin: Plugin {
                     // Extract key name from kSecAttrLabel for deletion
                     let keyNameLabel = (item[kSecAttrLabel as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                     let keyName = keyNameLabel?.isEmpty == false ? keyNameLabel! : "<unnamed>"
-                    
+
                     // Found the matching key, delete it
                     let deleteQuery = createKeyQuery(keyName: keyName, returnRef: false)
                     let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
