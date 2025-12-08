@@ -388,6 +388,13 @@ class SecureKeysPlugin(
     @Command
     fun generateSecureKey(invoke: Invoke) {
         try {
+            if (!isSecureElementSupported() && !isTeeSupported()) {
+                invoke.reject(
+                    "Hardware-backed keystore is not available on this device. Secure element keys require hardware-backed storage.",
+                )
+                return
+            }
+
             val args = invoke.parseArgs(GenerateSecureKeyArgs::class.java)
             val alias = getKeyAlias(args.keyName)
 
@@ -452,9 +459,7 @@ class SecureKeysPlugin(
     fun listKeys(invoke: Invoke) {
         try {
             val args = invoke.parseArgs(ListKeysArgs::class.java)
-
             val keys = mutableListOf<Map<String, Any?>>()
-
             val aliases = keyStore.aliases()
 
             while (aliases.hasMoreElements()) {
