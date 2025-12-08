@@ -55,6 +55,7 @@ targets:
         CFBundleShortVersionString: 0.1.0
         CFBundleVersion: "0.1.0"
         NSLocalNetworkUsageDescription: "This app needs access to your local network to connect to the development server."
+        NSFaceIDUsageDescription: "This app uses Face ID or Touch ID to authenticate access to secure keys stored in the Secure Enclave."
         NSBonjourServices:
           - "_http._tcp"
           - "_https._tcp"
