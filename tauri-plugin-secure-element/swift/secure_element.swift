@@ -240,3 +240,162 @@ public func secureElementCheckSupport() -> UnsafeMutablePointer<CChar> {
     return mallocPtr
 }
 
+// Direct generate secure key implementation for FFI
+func generateSecureKeyDirect(keyName: String, authMode: String?) -> String {
+    // Check if a key with this name already exists
+    let checkQuery: [String: Any] = [
+        kSecClass as String: kSecClassKey,
+        kSecAttrLabel as String: keyName,
+        kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+        kSecReturnRef as String: false,
+    ]
+    
+    var checkResult: CFTypeRef?
+    let checkStatus = SecItemCopyMatching(checkQuery as CFDictionary, &checkResult)
+    
+    if checkStatus == errSecSuccess {
+        // Key already exists
+        return "{\"error\":\"Key already exists\"}"
+    } else if checkStatus != errSecItemNotFound {
+        // Unexpected error while checking
+        return "{\"error\":\"Failed to check for existing key: \(checkStatus)\"}"
+    }
+    
+    // Create access control
+    let mode = authMode ?? "pinOrBiometric"
+    var flags: SecAccessControlCreateFlags = [.privateKeyUsage]
+    
+    switch mode {
+    case "none":
+        // No authentication required, only .privateKeyUsage
+        break
+    case "biometricOnly":
+        // Require biometric authentication only
+        flags.insert(.biometryCurrentSet)
+    case "pinOrBiometric", _:
+        // Allow PIN or biometric (default)
+        flags.insert(.userPresence)
+    }
+    
+    var accessError: Unmanaged<CFError>?
+    guard let accessControl = SecAccessControlCreateWithFlags(
+        kCFAllocatorDefault,
+        kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        flags,
+        &accessError
+    ) else {
+        if let error = accessError {
+            let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+            return "{\"error\":\"Failed to create access control: \(errorDescription)\"}"
+        }
+        return "{\"error\":\"Failed to create access control\"}"
+    }
+    
+    // Store auth mode in kSecAttrApplicationTag as Data
+    guard let authModeData = mode.data(using: .utf8) else {
+        return "{\"error\":\"Invalid auth mode\"}"
+    }
+    
+    // Create the Secure Enclave key
+    let attributes: [String: Any] = [
+        kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+        kSecAttrKeySizeInBits as String: 256,
+        kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+        kSecAttrIsPermanent as String: true,
+        kSecAttrLabel as String: keyName,
+        kSecAttrApplicationTag as String: authModeData,
+        kSecPrivateKeyAttrs as String: [
+            kSecAttrIsPermanent as String: true,
+            kSecAttrAccessControl as String: accessControl,
+        ],
+    ]
+    
+    var keyError: Unmanaged<CFError>?
+    guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &keyError) else {
+        if let error = keyError {
+            let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+            return "{\"error\":\"Failed to create key: \(errorDescription)\"}"
+        }
+        return "{\"error\":\"Failed to create key\"}"
+    }
+    
+    // Extract and export public key
+    guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+        return "{\"error\":\"Failed to extract public key\"}"
+    }
+    
+    var exportError: Unmanaged<CFError>?
+    guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? else {
+        if let error = exportError {
+            let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+            return "{\"error\":\"Failed to export public key: \(errorDescription)\"}"
+        }
+        return "{\"error\":\"Failed to export public key\"}"
+    }
+    
+    let publicKeyBase64 = publicKeyData.base64EncodedString()
+    
+    // Serialize to JSON
+    do {
+        let response: [String: Any] = [
+            "publicKey": publicKeyBase64,
+            "keyName": keyName,
+        ]
+        let jsonData = try JSONSerialization.data(withJSONObject: response, options: [])
+        if let jsonString = String(data: jsonData, encoding: .utf8), !jsonString.isEmpty {
+            return jsonString
+        } else {
+            return "{\"error\":\"Failed to serialize response: encoding failed\"}"
+        }
+    } catch {
+        return "{\"error\":\"Failed to serialize: \(error.localizedDescription)\"}"
+    }
+}
+
+// FFI function for generate secure key
+@_cdecl("secure_element_generate_secure_key")
+public func secureElementGenerateSecureKey(keyName: UnsafePointer<CChar>?, authMode: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
+    // Convert C strings to Swift strings
+    guard let keyName = keyName else {
+        return strdup("{\"error\":\"keyName is required\"}")!
+    }
+    
+    let keyNameStr = String(cString: keyName)
+    guard !keyNameStr.isEmpty else {
+        return strdup("{\"error\":\"keyName cannot be empty\"}")!
+    }
+    
+    let authModeStr: String?
+    if let authMode = authMode {
+        let str = String(cString: authMode)
+        authModeStr = str.isEmpty ? nil : str
+    } else {
+        authModeStr = nil
+    }
+    
+    // Call the actual implementation
+    let result = generateSecureKeyDirect(keyName: keyNameStr, authMode: authModeStr)
+    
+    // Ensure result is not empty
+    guard !result.isEmpty else {
+        let errorMsg = "{\"error\":\"Swift function returned empty result\"}"
+        return strdup(errorMsg)!
+    }
+    
+    // Convert to UTF-8 C string array (includes null terminator)
+    let utf8Bytes = result.utf8CString
+    let count = utf8Bytes.count
+    
+    // Allocate memory with malloc (compatible with libc::free)
+    guard let mallocPtr = malloc(count)?.bindMemory(to: CChar.self, capacity: count) else {
+        return strdup("{\"error\":\"malloc failed\"}")!
+    }
+    
+    // Copy the bytes
+    for i in 0..<count {
+        mallocPtr[i] = utf8Bytes[i]
+    }
+    
+    return mallocPtr
+}
+
