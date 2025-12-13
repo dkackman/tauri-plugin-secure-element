@@ -5,8 +5,10 @@ import os.log
 import Security
 import SwiftRs
 import Tauri
+#if os(iOS)
 import UIKit
 import WebKit
+#endif
 
 // MARK: - Request Models
 
@@ -625,3 +627,106 @@ class SecureEnclavePlugin: Plugin {
 func initPlugin() -> Plugin {
     return SecureEnclavePlugin()
 }
+
+// MARK: - macOS FFI Wrappers
+
+#if os(macOS)
+import SwiftRs
+
+// Direct list keys implementation for FFI (without Invoke dependency)
+func listKeysDirect(keyName: String?, publicKey: String?) -> String {
+    let query: [String: Any] = [
+        kSecClass as String: kSecClassKey,
+        kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+        kSecReturnAttributes as String: true,
+        kSecReturnRef as String: true,
+        kSecReturnData as String: false,
+        kSecMatchLimit as String: kSecMatchLimitAll,
+    ]
+    
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    
+    var keys: [[String: Any]] = []
+    
+    if status == errSecSuccess, let items = result as? [[String: Any]] {
+        for item in items {
+            guard let keyRef = item[kSecValueRef as String] as? CFTypeRef else {
+                continue
+            }
+            // swiftlint:disable:next force_cast
+            let privateKey = keyRef as! SecKey
+            
+            let keyNameLabel = (item[kSecAttrLabel as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let foundKeyName = keyNameLabel?.isEmpty == false ? keyNameLabel! : "<unnamed>"
+            
+            // Apply filters
+            if let filterName = keyName, filterName != foundKeyName {
+                continue
+            }
+            
+            // Export public key
+            guard let publicKeyObj = SecKeyCopyPublicKey(privateKey) else {
+                continue
+            }
+            
+            var exportError: Unmanaged<CFError>?
+            guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKeyObj, &exportError) as Data? else {
+                continue
+            }
+            
+            let publicKeyBase64 = publicKeyData.base64EncodedString()
+            
+            if let filterPublicKey = publicKey, filterPublicKey != publicKeyBase64 {
+                continue
+            }
+            
+            // Extract auth mode
+            var requiresAuthentication: Bool? = nil
+            if let authModeData = item[kSecAttrApplicationTag as String] as? Data,
+               let authModeString = String(data: authModeData, encoding: .utf8) {
+                switch authModeString {
+                case "none":
+                    requiresAuthentication = false
+                case "pinOrBiometric", "biometricOnly":
+                    requiresAuthentication = true
+                default:
+                    requiresAuthentication = nil
+                }
+            }
+            
+            var keyInfo: [String: Any] = [
+                "keyName": foundKeyName,
+                "publicKey": publicKeyBase64,
+            ]
+            if let requiresAuthentication = requiresAuthentication {
+                keyInfo["requiresAuthentication"] = requiresAuthentication
+            }
+            keys.append(keyInfo)
+        }
+    } else if status != errSecItemNotFound {
+        // Return error as JSON
+        return "{\"error\":\"Failed to query keys: \(status)\"}"
+    }
+    
+    // Serialize to JSON
+    do {
+        let response = ["keys": keys]
+        let jsonData = try JSONSerialization.data(withJSONObject: response, options: [])
+        return String(data: jsonData, encoding: .utf8) ?? "{\"error\":\"Failed to serialize response\"}"
+    } catch {
+        return "{\"error\":\"Failed to serialize: \(error.localizedDescription)\"}"
+    }
+}
+
+// FFI function declarations for swift-rs
+@_cdecl("secure_element_list_keys")
+public func secureElementListKeys(keyName: SRString, publicKey: SRString) -> SRString {
+    let keyNameStr = keyName.to_string().isEmpty ? nil : keyName.to_string()
+    let publicKeyStr = publicKey.to_string().isEmpty ? nil : publicKey.to_string()
+    
+    let result = listKeysDirect(keyName: keyNameStr, publicKey: publicKeyStr)
+    return SRString(result)
+}
+
+#endif
