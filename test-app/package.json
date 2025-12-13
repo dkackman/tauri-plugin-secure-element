@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
+    "bootstrap": "^5.3.8",
     "tauri-plugin-secure-element-api": "file:../tauri-plugin-secure-element"
   },
   "devDependencies": {

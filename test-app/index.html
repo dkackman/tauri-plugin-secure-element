@@ -9,6 +9,22 @@
 
   <body>
     <div id="app"></div>
+    <script>
+      // Set Bootstrap theme based on system preference
+      function setTheme() {
+        const prefersDark = window.matchMedia(
+          "(prefers-color-scheme: dark)"
+        ).matches;
+        document.documentElement.setAttribute(
+          "data-bs-theme",
+          prefersDark ? "dark" : "light"
+        );
+      }
+      setTheme();
+      window
+        .matchMedia("(prefers-color-scheme: dark)")
+        .addEventListener("change", setTheme);
+    </script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

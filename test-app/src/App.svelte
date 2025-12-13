@@ -119,14 +119,6 @@
       });
   }
 
-  function formatPublicKey(pubKey) {
-    // Show first 20 and last 20 characters for readability
-    if (pubKey.length > 40) {
-      return `${pubKey.substring(0, 20)}...${pubKey.substring(pubKey.length - 20)}`;
-    }
-    return pubKey;
-  }
-
   function formatSignature(sig: Uint8Array | null) {
     if (!sig) return "";
     return Array.from(sig)
@@ -165,441 +157,250 @@
   _checkSecureElementSupport();
 </script>
 
-<main class="container">
-  <h1>Secure Key Manager</h1>
+<main class="container my-4">
+  <h1 class="mb-4 pb-2 border-bottom">Secure Key Manager</h1>
 
   <!-- Secure Element Status -->
-  <div class="secure-element-status">
-    {#if secureElementCheckError}
-      <div class="status-item error">
-        <span class="status-label">Hardware Security:</span>
-        <span class="status-value">Error checking support</span>
-      </div>
-    {:else if secureElementSupported !== null}
-      <div class="status-item {secureElementSupported ? 'success' : 'warning'}">
-        <span class="status-label">Secure Element:</span>
-        <span class="status-value">
-          {secureElementSupported ? "✓ Supported" : "✗ Not Supported"}
-        </span>
-      </div>
-      <div class="status-item {teeSupported ? 'success' : 'warning'}">
-        <span class="status-label">TEE:</span>
-        <span class="status-value">
-          {teeSupported ? "✓ Supported" : "✗ Not Supported"}
-        </span>
-      </div>
-      <div
-        class="status-item {canEnforceBiometricOnly ? 'success' : 'warning'}"
-      >
-        <span class="status-label">Biometric-Only Enforcement:</span>
-        <span class="status-value">
-          {canEnforceBiometricOnly ? "✓ Supported" : "✗ Not Supported"}
-        </span>
-      </div>
-    {:else}
-      <div class="status-item info">
-        <span class="status-label">Hardware Security:</span>
-        <span class="status-value">Checking...</span>
-      </div>
-    {/if}
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3">Hardware Security Status</h5>
+      {#if secureElementCheckError}
+        <div class="alert alert-danger mb-0">
+          <strong>Hardware Security:</strong> Error checking support
+        </div>
+      {:else if secureElementSupported !== null}
+        <div class="d-flex flex-column gap-2">
+          <div>
+            <strong>Secure Element:</strong>
+            <span
+              class="badge {secureElementSupported
+                ? 'bg-success'
+                : 'bg-warning'} ms-2"
+            >
+              {secureElementSupported ? "✓ Supported" : "✗ Not Supported"}
+            </span>
+          </div>
+          <div>
+            <strong>TEE:</strong>
+            <span
+              class="badge {teeSupported ? 'bg-success' : 'bg-warning'} ms-2"
+            >
+              {teeSupported ? "✓ Supported" : "✗ Not Supported"}
+            </span>
+          </div>
+          <div>
+            <strong>Biometric-Only Enforcement:</strong>
+            <span
+              class="badge {canEnforceBiometricOnly
+                ? 'bg-success'
+                : 'bg-warning'} ms-2"
+            >
+              {canEnforceBiometricOnly ? "✓ Supported" : "✗ Not Supported"}
+            </span>
+          </div>
+        </div>
+      {:else}
+        <div class="alert alert-info mb-0">
+          <strong>Hardware Security:</strong> Checking...
+        </div>
+      {/if}
+    </div>
   </div>
 
   <!-- Create Key Section -->
-  <section class="section">
-    <h2>Create New Key</h2>
-    <div class="form-group">
-      <label for="newKeyName">Key Name:</label>
-      <input
-        id="newKeyName"
-        type="text"
-        bind:value={newKeyName}
-        placeholder="Enter unique key name"
-        onkeydown={(e) => e.key === "Enter" && _createKey()}
-      />
-      <label for="authMode">Authentication Mode (for this key):</label>
-      <select id="authMode" bind:value={authMode} class="auth-mode-select">
-        <option value="none">None</option>
-        <option value="pinOrBiometric">PIN or Biometric (Default)</option>
-        {#if canEnforceBiometricOnly === true}
-          <option value="biometricOnly">Biometric Only</option>
-        {/if}
-      </select>
-      <button onclick={_createKey} class="primary">Create Key</button>
-    </div>
-    {#if createKeyError}
-      <div class="error">Error: {createKeyError}</div>
-    {/if}
-    {#if createdKey}
-      <div class="success">
-        <strong>Key Created Successfully!</strong><br />
-        <strong>Key Name:</strong>
-        {createdKey.keyName}<br />
-        <strong>Public Key:</strong>
-        <code class="public-key">{createdKey.publicKey}</code>
+  <section class="card mb-4">
+    <div class="card-body">
+      <h2 class="card-title h5 mb-3">Create New Key</h2>
+      <div class="mb-3">
+        <label for="newKeyName" class="form-label">Key Name:</label>
+        <input
+          id="newKeyName"
+          type="text"
+          class="form-control"
+          bind:value={newKeyName}
+          placeholder="Enter unique key name"
+          onkeydown={(e) => e.key === "Enter" && _createKey()}
+        />
       </div>
-    {/if}
+      <div class="mb-3">
+        <label for="authMode" class="form-label"
+          >Authentication Mode (for this key):</label
+        >
+        <select id="authMode" bind:value={authMode} class="form-select">
+          <option value="none">None</option>
+          <option value="pinOrBiometric">PIN or Biometric (Default)</option>
+          {#if canEnforceBiometricOnly === true}
+            <option value="biometricOnly">Biometric Only</option>
+          {/if}
+        </select>
+      </div>
+      <button onclick={_createKey} class="btn btn-success">Create Key</button>
+      {#if createKeyError}
+        <div class="alert alert-danger mt-3 mb-0">Error: {createKeyError}</div>
+      {/if}
+      {#if createdKey}
+        <div class="alert alert-success mt-3 mb-0">
+          <strong>Key Created Successfully!</strong><br />
+          <strong>Key Name:</strong>
+          {createdKey.keyName}<br />
+          <strong>Public Key:</strong>
+          <code class="d-block mt-2 p-2 bg-body-secondary rounded small"
+            >{createdKey.publicKey}</code
+          >
+        </div>
+      {/if}
+    </div>
   </section>
 
   <!-- List Keys Section -->
-  <section class="section">
-    <h2>List Keys</h2>
-    <div class="form-group">
-      <label for="filterKeyName">Filter by Key Name (optional):</label>
-      <input
-        id="filterKeyName"
-        type="text"
-        bind:value={filterKeyName}
-        placeholder="Key name filter"
-      />
-      <label for="filterPublicKey">Filter by Public Key (optional):</label>
-      <input
-        id="filterPublicKey"
-        type="text"
-        bind:value={filterPublicKey}
-        placeholder="Public key filter"
-      />
-      <button onclick={_refreshKeysList}>Refresh List</button>
-    </div>
-    {#if listKeysError}
-      <div class="error">Error: {listKeysError}</div>
-    {/if}
-    {#if keysList.length > 0}
-      <div class="keys-list">
-        <h3>Found {keysList.length} key(s):</h3>
-        {#each keysList as key}
-          <div class="key-item">
-            <div><strong>Name:</strong> {key.keyName}</div>
-            <div>
-              <strong>Requires Authentication:</strong>
-              {key.requiresAuthentication === undefined ||
-              key.requiresAuthentication === null
-                ? "Unknown"
-                : key.requiresAuthentication
-                  ? "Yes"
-                  : "No"}
-            </div>
-            <div>
-              <strong>Public Key:</strong>
-              <code class="public-key">{key.publicKey}</code>
-            </div>
-          </div>
-        {/each}
+  <section class="card mb-4">
+    <div class="card-body">
+      <h2 class="card-title h5 mb-3">List Keys</h2>
+      <div class="mb-3">
+        <label for="filterKeyName" class="form-label"
+          >Filter by Key Name (optional):</label
+        >
+        <input
+          id="filterKeyName"
+          type="text"
+          class="form-control"
+          bind:value={filterKeyName}
+          placeholder="Key name filter"
+        />
       </div>
-    {:else if !listKeysError}
-      <div class="info">No keys found</div>
-    {/if}
+      <div class="mb-3">
+        <label for="filterPublicKey" class="form-label"
+          >Filter by Public Key (optional):</label
+        >
+        <input
+          id="filterPublicKey"
+          type="text"
+          class="form-control"
+          bind:value={filterPublicKey}
+          placeholder="Public key filter"
+        />
+      </div>
+      <button onclick={_refreshKeysList} class="btn btn-primary"
+        >Refresh List</button
+      >
+      {#if listKeysError}
+        <div class="alert alert-danger mt-3 mb-0">Error: {listKeysError}</div>
+      {/if}
+      {#if keysList.length > 0}
+        <div class="mt-3">
+          <h3 class="h6 mb-3">Found {keysList.length} key(s):</h3>
+          {#each keysList as key}
+            <div class="card mb-2">
+              <div class="card-body">
+                <div class="mb-2"><strong>Name:</strong> {key.keyName}</div>
+                <div class="mb-2">
+                  <strong>Requires Authentication:</strong>
+                  {key.requiresAuthentication === undefined ||
+                  key.requiresAuthentication === null
+                    ? "Unknown"
+                    : key.requiresAuthentication
+                      ? "Yes"
+                      : "No"}
+                </div>
+                <div>
+                  <strong>Public Key:</strong>
+                  <code class="d-block mt-1 p-2 bg-body-secondary rounded small"
+                    >{key.publicKey}</code
+                  >
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else if !listKeysError}
+        <div class="alert alert-info mt-3 mb-0">No keys found</div>
+      {/if}
+    </div>
   </section>
 
   <!-- Sign Message Section -->
-  <section class="section">
-    <h2>Sign Message</h2>
-    <div class="form-group">
-      <label for="signKeyName">Key Name:</label>
-      <input
-        id="signKeyName"
-        type="text"
-        bind:value={signKeyName}
-        placeholder="Enter key name to use"
-      />
-      <label for="messageToSign">Message to Sign:</label>
-      <textarea
-        id="messageToSign"
-        bind:value={messageToSign}
-        placeholder="Enter message to sign"
-        rows="3"
-      ></textarea>
-      <button onclick={_signMessage} class="primary">Sign Message</button>
-    </div>
-    {#if signError}
-      <div class="error">Error: {signError}</div>
-    {/if}
-    {#if signature}
-      <div class="success">
-        <strong>Signature Generated:</strong><br />
-        <code class="signature">{formatSignature(signature)}</code>
+  <section class="card mb-4">
+    <div class="card-body">
+      <h2 class="card-title h5 mb-3">Sign Message</h2>
+      <div class="mb-3">
+        <label for="signKeyName" class="form-label">Key Name:</label>
+        <input
+          id="signKeyName"
+          type="text"
+          class="form-control"
+          bind:value={signKeyName}
+          placeholder="Enter key name to use"
+        />
       </div>
-    {/if}
+      <div class="mb-3">
+        <label for="messageToSign" class="form-label">Message to Sign:</label>
+        <textarea
+          id="messageToSign"
+          class="form-control"
+          bind:value={messageToSign}
+          placeholder="Enter message to sign"
+          rows="3"
+        ></textarea>
+      </div>
+      <button onclick={_signMessage} class="btn btn-success"
+        >Sign Message</button
+      >
+      {#if signError}
+        <div class="alert alert-danger mt-3 mb-0">Error: {signError}</div>
+      {/if}
+      {#if signature}
+        <div class="alert alert-success mt-3 mb-0">
+          <strong>Signature Generated:</strong><br />
+          <code class="d-block mt-2 p-2 bg-body-secondary rounded small"
+            >{formatSignature(signature)}</code
+          >
+        </div>
+      {/if}
+    </div>
   </section>
 
   <!-- Delete Key Section -->
-  <section class="section">
-    <h2>Delete Key</h2>
-    <div class="form-group">
-      <label for="deleteKeyName">Key Name (optional):</label>
-      <input
-        id="deleteKeyName"
-        type="text"
-        bind:value={deleteKeyName}
-        placeholder="Enter key name to delete"
-        onkeydown={(e) => e.key === "Enter" && _deleteKey()}
-      />
-      <label for="deletePublicKey">Public Key (optional):</label>
-      <input
-        id="deletePublicKey"
-        type="text"
-        bind:value={deletePublicKey}
-        placeholder="Enter public key (base64) to delete"
-        onkeydown={(e) => e.key === "Enter" && _deleteKey()}
-      />
-      <small>At least one of key name or public key must be provided.</small>
-      <button onclick={_deleteKey} class="danger">Delete Key</button>
+  <section class="card mb-4">
+    <div class="card-body">
+      <h2 class="card-title h5 mb-3">Delete Key</h2>
+      <div class="mb-3">
+        <label for="deleteKeyName" class="form-label"
+          >Key Name (optional):</label
+        >
+        <input
+          id="deleteKeyName"
+          type="text"
+          class="form-control"
+          bind:value={deleteKeyName}
+          placeholder="Enter key name to delete"
+          onkeydown={(e) => e.key === "Enter" && _deleteKey()}
+        />
+      </div>
+      <div class="mb-3">
+        <label for="deletePublicKey" class="form-label"
+          >Public Key (optional):</label
+        >
+        <input
+          id="deletePublicKey"
+          type="text"
+          class="form-control"
+          bind:value={deletePublicKey}
+          placeholder="Enter public key (base64) to delete"
+          onkeydown={(e) => e.key === "Enter" && _deleteKey()}
+        />
+        <small class="form-text text-muted"
+          >At least one of key name or public key must be provided.</small
+        >
+      </div>
+      <button onclick={_deleteKey} class="btn btn-danger">Delete Key</button>
+      {#if deleteError}
+        <div class="alert alert-danger mt-3 mb-0">Error: {deleteError}</div>
+      {/if}
+      {#if deleteSuccess}
+        <div class="alert alert-success mt-3 mb-0">
+          Key deleted successfully!
+        </div>
+      {/if}
     </div>
-    {#if deleteError}
-      <div class="error">Error: {deleteError}</div>
-    {/if}
-    {#if deleteSuccess}
-      <div class="success">Key deleted successfully!</div>
-    {/if}
   </section>
 </main>
-
-<style>
-  .container {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 20px;
-    font-family:
-      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
-      Cantarell, sans-serif;
-  }
-
-  h1 {
-    color: #333;
-    border-bottom: 2px solid #4caf50;
-    padding-bottom: 10px;
-    margin-bottom: 15px;
-  }
-
-  .secure-element-status {
-    margin-bottom: 20px;
-    padding: 12px;
-    background: #f5f5f5;
-    border-radius: 6px;
-    border-left: 4px solid #2196f3;
-  }
-
-  .status-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-  }
-
-  .status-item.success {
-    color: #2e7d32;
-    border-left-color: #4caf50;
-  }
-
-  .status-item.warning {
-    color: #f57c00;
-    border-left-color: #ff9800;
-  }
-
-  .status-item.error {
-    color: #c62828;
-    border-left-color: #f44336;
-  }
-
-  .status-item.info {
-    color: #1565c0;
-    border-left-color: #2196f3;
-  }
-
-  .status-label {
-    font-weight: 600;
-  }
-
-  .status-value {
-    font-weight: 500;
-  }
-
-  .auth-mode-select {
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-    background: white;
-    cursor: pointer;
-  }
-
-  .auth-mode-select:hover {
-    border-color: #4caf50;
-  }
-
-  .auth-mode-select:focus {
-    outline: none;
-    border-color: #4caf50;
-    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
-  }
-
-  h2 {
-    color: #555;
-    margin-top: 0;
-    font-size: 1.3em;
-  }
-
-  h3 {
-    color: #666;
-    font-size: 1.1em;
-    margin: 10px 0;
-  }
-
-  .section {
-    background: #f9f9f9;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 20px;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 15px;
-  }
-
-  .form-group label {
-    font-weight: 600;
-    color: #555;
-    margin-top: 10px;
-  }
-
-  .form-group label:first-child {
-    margin-top: 0;
-  }
-
-  input,
-  textarea {
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 14px;
-    font-family: inherit;
-  }
-
-  textarea {
-    resize: vertical;
-    min-height: 60px;
-  }
-
-  button {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 4px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    margin-top: 10px;
-  }
-
-  button.primary {
-    background-color: #4caf50;
-    color: white;
-  }
-
-  button.primary:hover {
-    background-color: #45a049;
-  }
-
-  button.danger {
-    background-color: #f44336;
-    color: white;
-  }
-
-  button.danger:hover {
-    background-color: #da190b;
-  }
-
-  button:not(.primary):not(.danger) {
-    background-color: #2196f3;
-    color: white;
-  }
-
-  button:not(.primary):not(.danger):hover {
-    background-color: #0b7dda;
-  }
-
-  .error {
-    background-color: #ffebee;
-    color: #c62828;
-    padding: 10px;
-    border-radius: 4px;
-    border-left: 4px solid #c62828;
-    margin-top: 10px;
-  }
-
-  .success {
-    background-color: #e8f5e9;
-    color: #2e7d32;
-    padding: 10px;
-    border-radius: 4px;
-    border-left: 4px solid #2e7d32;
-    margin-top: 10px;
-  }
-
-  .info {
-    background-color: #e3f2fd;
-    color: #1565c0;
-    padding: 10px;
-    border-radius: 4px;
-    border-left: 4px solid #1565c0;
-    margin-top: 10px;
-  }
-
-  .keys-list {
-    margin-top: 15px;
-  }
-
-  .key-item {
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 15px;
-    margin-bottom: 10px;
-  }
-
-  .key-item div {
-    margin-bottom: 8px;
-  }
-
-  .key-item div:last-child {
-    margin-bottom: 0;
-  }
-
-  .full-key {
-    font-size: 11px;
-    color: #666;
-    word-break: break-all;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid #eee;
-  }
-
-  code {
-    background-color: #f5f5f5;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-family: "Monaco", "Courier New", monospace;
-    font-size: 12px;
-    word-break: break-all;
-  }
-
-  .public-key {
-    font-size: 11px;
-    display: inline-block;
-    max-width: 100%;
-  }
-
-  .signature {
-    display: block;
-    padding: 10px;
-    background-color: #f5f5f5;
-    border-radius: 4px;
-    margin-top: 10px;
-    word-break: break-all;
-    font-size: 11px;
-  }
-</style>
