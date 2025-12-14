@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 
 // Direct list keys implementation for FFI (without Invoke dependency)
 func listKeysDirect(keyName: String?, publicKey: String?) -> String {
@@ -375,6 +376,258 @@ public func secureElementGenerateSecureKey(keyName: UnsafePointer<CChar>?, authM
     
     // Call the actual implementation
     let result = generateSecureKeyDirect(keyName: keyNameStr, authMode: authModeStr)
+    
+    // Ensure result is not empty
+    guard !result.isEmpty else {
+        let errorMsg = "{\"error\":\"Swift function returned empty result\"}"
+        return strdup(errorMsg)!
+    }
+    
+    // Convert to UTF-8 C string array (includes null terminator)
+    let utf8Bytes = result.utf8CString
+    let count = utf8Bytes.count
+    
+    // Allocate memory with malloc (compatible with libc::free)
+    guard let mallocPtr = malloc(count)?.bindMemory(to: CChar.self, capacity: count) else {
+        return strdup("{\"error\":\"malloc failed\"}")!
+    }
+    
+    // Copy the bytes
+    for i in 0..<count {
+        mallocPtr[i] = utf8Bytes[i]
+    }
+    
+    return mallocPtr
+}
+
+// Helper function to create key query
+func createKeyQuery(keyName: String, returnRef: Bool = true) -> [String: Any] {
+    var query: [String: Any] = [
+        kSecClass as String: kSecClassKey,
+        kSecAttrLabel as String: keyName,
+        kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+    ]
+    if returnRef {
+        query[kSecReturnRef as String] = true
+    }
+    return query
+}
+
+// Helper function to export public key as base64
+func exportPublicKeyBase64Silent(privateKey: SecKey) -> String? {
+    guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+        return nil
+    }
+    
+    var exportError: Unmanaged<CFError>?
+    guard let publicKeyData = SecKeyCopyExternalRepresentation(publicKey, &exportError) as Data? else {
+        return nil
+    }
+    
+    return publicKeyData.base64EncodedString()
+}
+
+// Direct sign with key implementation for FFI
+func signWithKeyDirect(keyName: String, dataBase64: String) -> String {
+    // Look up the key by name
+    let query = createKeyQuery(keyName: keyName, returnRef: true)
+    var keyRef: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
+    
+    // Accept both errSecSuccess and errSecInteractionNotAllowed
+    // errSecInteractionNotAllowed can occur for auth-required keys, but authentication
+    // will be enforced later when the key is actually used
+    guard status == errSecSuccess || status == errSecInteractionNotAllowed, let keyRef = keyRef else {
+        return "{\"error\":\"Key not found: \(keyName), status: \(status)\"}"
+    }
+    
+    // keyRef is already SecKey (typealias for CFTypeRef)
+    let privateKey = keyRef as! SecKey
+    
+    // Decode base64 data
+    guard let dataToSign = Data(base64Encoded: dataBase64) else {
+        return "{\"error\":\"Failed to decode base64 data\"}"
+    }
+    
+    // Create SHA256 digest using CryptoKit
+    let digest = SHA256.hash(data: dataToSign)
+    let digestData = Data(digest)
+    
+    // Sign the digest using ECDSA
+    // Secure Enclave will automatically prompt for authentication if the key requires it
+    var signError: Unmanaged<CFError>?
+    guard let signature = SecKeyCreateSignature(
+        privateKey,
+        .ecdsaSignatureDigestX962SHA256,
+        digestData as CFData,
+        &signError
+    ) as Data? else {
+        if let error = signError {
+            let errorDescription = CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+            return "{\"error\":\"Failed to sign: \(errorDescription)\"}"
+        }
+        return "{\"error\":\"Failed to sign\"}"
+    }
+    
+    // Convert signature to base64 for JSON
+    let signatureBase64 = signature.base64EncodedString()
+    
+    // Serialize to JSON
+    do {
+        let response: [String: Any] = [
+            "signature": signatureBase64,
+        ]
+        let jsonData = try JSONSerialization.data(withJSONObject: response, options: [])
+        if let jsonString = String(data: jsonData, encoding: .utf8), !jsonString.isEmpty {
+            return jsonString
+        } else {
+            return "{\"error\":\"Failed to serialize response: encoding failed\"}"
+        }
+    } catch {
+        return "{\"error\":\"Failed to serialize: \(error.localizedDescription)\"}"
+    }
+}
+
+// FFI function for sign with key
+@_cdecl("secure_element_sign_with_key")
+public func secureElementSignWithKey(keyName: UnsafePointer<CChar>?, dataBase64: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
+    // Convert C strings to Swift strings
+    guard let keyName = keyName else {
+        return strdup("{\"error\":\"keyName is required\"}")!
+    }
+    
+    let keyNameStr = String(cString: keyName)
+    guard !keyNameStr.isEmpty else {
+        return strdup("{\"error\":\"keyName cannot be empty\"}")!
+    }
+    
+    guard let dataBase64 = dataBase64 else {
+        return strdup("{\"error\":\"data is required\"}")!
+    }
+    
+    let dataBase64Str = String(cString: dataBase64)
+    guard !dataBase64Str.isEmpty else {
+        return strdup("{\"error\":\"data cannot be empty\"}")!
+    }
+    
+    // Call the actual implementation
+    let result = signWithKeyDirect(keyName: keyNameStr, dataBase64: dataBase64Str)
+    
+    // Ensure result is not empty
+    guard !result.isEmpty else {
+        let errorMsg = "{\"error\":\"Swift function returned empty result\"}"
+        return strdup(errorMsg)!
+    }
+    
+    // Convert to UTF-8 C string array (includes null terminator)
+    let utf8Bytes = result.utf8CString
+    let count = utf8Bytes.count
+    
+    // Allocate memory with malloc (compatible with libc::free)
+    guard let mallocPtr = malloc(count)?.bindMemory(to: CChar.self, capacity: count) else {
+        return strdup("{\"error\":\"malloc failed\"}")!
+    }
+    
+    // Copy the bytes
+    for i in 0..<count {
+        mallocPtr[i] = utf8Bytes[i]
+    }
+    
+    return mallocPtr
+}
+
+// Direct delete key implementation for FFI
+func deleteKeyDirect(keyName: String?, publicKey: String?) -> String {
+    // If keyName is provided, delete by name (fast path)
+    if let keyName = keyName {
+        let query = createKeyQuery(keyName: keyName, returnRef: false)
+        let status = SecItemDelete(query as CFDictionary)
+        
+        if status == errSecSuccess || status == errSecItemNotFound {
+            return "{\"success\":true}"
+        } else {
+            return "{\"error\":\"Failed to delete key: \(status)\"}"
+        }
+    }
+    
+    // If publicKey is provided, find the key by public key and delete it
+    guard let targetPublicKey = publicKey else {
+        return "{\"error\":\"Either keyName or publicKey must be provided\"}"
+    }
+    
+    // Query for all keys in Secure Enclave
+    let query: [String: Any] = [
+        kSecClass as String: kSecClassKey,
+        kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+        kSecReturnAttributes as String: true,
+        kSecReturnRef as String: true,
+        kSecReturnData as String: false,
+        kSecMatchLimit as String: kSecMatchLimitAll,
+    ]
+    
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    
+    if status == errSecSuccess, let items = result as? [[String: Any]] {
+        // Find the key matching the public key
+        for item in items {
+            guard let keyRef = item[kSecValueRef as String] as? CFTypeRef else {
+                continue
+            }
+            let privateKey = keyRef as! SecKey
+            
+            // Get the public key for this private key
+            if let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey),
+               publicKeyBase64 == targetPublicKey
+            {
+                // Extract key name from kSecAttrLabel for deletion
+                let keyNameLabel = (item[kSecAttrLabel as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let keyName = keyNameLabel?.isEmpty == false ? keyNameLabel! : "<unnamed>"
+                
+                // Found the matching key, delete it
+                let deleteQuery = createKeyQuery(keyName: keyName, returnRef: false)
+                let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+                
+                if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
+                    return "{\"success\":true}"
+                } else {
+                    return "{\"error\":\"Failed to delete key: \(deleteStatus)\"}"
+                }
+            }
+        }
+        
+        // Key not found by public key, return success (idempotent)
+        return "{\"success\":true}"
+    } else if status == errSecItemNotFound {
+        // No keys found, return success (idempotent)
+        return "{\"success\":true}"
+    } else {
+        return "{\"error\":\"Failed to query keys for deletion: \(status)\"}"
+    }
+}
+
+// FFI function for delete key
+@_cdecl("secure_element_delete_key")
+public func secureElementDeleteKey(keyName: UnsafePointer<CChar>?, publicKey: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
+    // Convert C strings to Swift strings, treating null/empty as nil
+    let keyNameStr: String?
+    if let keyName = keyName {
+        let str = String(cString: keyName)
+        keyNameStr = str.isEmpty ? nil : str
+    } else {
+        keyNameStr = nil
+    }
+    
+    let publicKeyStr: String?
+    if let publicKey = publicKey {
+        let str = String(cString: publicKey)
+        publicKeyStr = str.isEmpty ? nil : str
+    } else {
+        publicKeyStr = nil
+    }
+    
+    // Call the actual implementation
+    let result = deleteKeyDirect(keyName: keyNameStr, publicKey: publicKeyStr)
     
     // Ensure result is not empty
     guard !result.isEmpty else {

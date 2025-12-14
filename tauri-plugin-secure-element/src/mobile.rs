@@ -21,6 +21,14 @@ extern "C" {
         key_name: *const std::ffi::c_char,
         auth_mode: *const std::ffi::c_char,
     ) -> *mut std::ffi::c_char;
+    fn secure_element_sign_with_key(
+        key_name: *const std::ffi::c_char,
+        data_base64: *const std::ffi::c_char,
+    ) -> *mut std::ffi::c_char;
+    fn secure_element_delete_key(
+        key_name: *const std::ffi::c_char,
+        public_key: *const std::ffi::c_char,
+    ) -> *mut std::ffi::c_char;
 }
 
 // initializes the Kotlin or Swift plugin classes
@@ -328,11 +336,120 @@ impl<R: Runtime> SecureElement<R> {
     pub fn sign_with_key(&self, payload: SignWithKeyRequest) -> crate::Result<SignWithKeyResponse> {
         #[cfg(target_os = "macos")]
         {
-            let _ = (self, payload);
-            Err(crate::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "macOS FFI bindings not yet fully implemented",
-            )))
+            use base64::Engine;
+            use std::ffi::{CStr, CString};
+
+            // Convert key_name to C string
+            let key_name_cstr = CString::new(payload.key_name.as_str()).map_err(|e| {
+                crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid key_name: {}", e),
+                ))
+            })?;
+
+            // Convert data to base64 string, then to C string
+            let data_base64 = base64::engine::general_purpose::STANDARD.encode(&payload.data);
+            let data_base64_cstr = CString::new(data_base64.as_str()).map_err(|e| {
+                crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid data_base64: {}", e),
+                ))
+            })?;
+
+            // Call Swift FFI function
+            let result_ptr = unsafe {
+                secure_element_sign_with_key(key_name_cstr.as_ptr(), data_base64_cstr.as_ptr())
+            };
+
+            if result_ptr.is_null() {
+                return Err(crate::Error::Io(std::io::Error::other(
+                    "FFI call returned null",
+                )));
+            }
+
+            // Convert C string to Rust string BEFORE freeing
+            let result_str = {
+                // Validate pointer is readable (check first byte)
+                unsafe {
+                    if *result_ptr == 0 {
+                        libc::free(result_ptr as *mut libc::c_void);
+                        return Err(crate::Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Swift function returned empty/null string",
+                        )));
+                    }
+                }
+
+                let result_cstr = unsafe { CStr::from_ptr(result_ptr) };
+
+                let str_result = result_cstr.to_str().map_err(|e| {
+                    // Free before returning error
+                    unsafe {
+                        libc::free(result_ptr as *mut libc::c_void);
+                    }
+                    crate::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "Invalid UTF-8 in FFI result: {} (pointer: {:p})",
+                            e, result_ptr
+                        ),
+                    ))
+                })?;
+
+                // Copy to owned String immediately to ensure it's valid after free
+                str_result.to_string()
+            };
+
+            // Now free the C string allocated by Swift
+            unsafe {
+                libc::free(result_ptr as *mut libc::c_void);
+            }
+
+            if result_str.is_empty() {
+                return Err(crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Swift function returned empty string",
+                )));
+            }
+
+            // Parse JSON response and check for errors
+            let response: serde_json::Value = serde_json::from_str(&result_str).map_err(|e| {
+                crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Failed to parse JSON response: {} (response was: '{}')",
+                        e, result_str
+                    ),
+                ))
+            })?;
+
+            // Check for error in response
+            if let Some(error_msg) = response.get("error").and_then(|v| v.as_str()) {
+                return Err(crate::Error::Io(std::io::Error::other(error_msg)));
+            }
+
+            // Extract signature from JSON (it's base64 encoded)
+            let signature_base64 = response
+                .get("signature")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    crate::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Missing signature in response",
+                    ))
+                })?;
+
+            // Decode base64 signature to bytes
+            let signature = base64::engine::general_purpose::STANDARD
+                .decode(signature_base64)
+                .map_err(|e| {
+                    crate::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to decode signature from base64: {}", e),
+                    ))
+                })?;
+
+            Ok(SignWithKeyResponse { signature })
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -345,11 +462,108 @@ impl<R: Runtime> SecureElement<R> {
     pub fn delete_key(&self, payload: DeleteKeyRequest) -> crate::Result<DeleteKeyResponse> {
         #[cfg(target_os = "macos")]
         {
-            let _ = (self, payload);
-            Err(crate::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "macOS FFI bindings not yet fully implemented",
-            )))
+            use std::ffi::{CStr, CString};
+
+            // Convert optional strings to C strings (pass null pointer for None)
+            let (key_name_ptr, _key_name_cstr) = match payload.key_name.as_ref() {
+                Some(s) => {
+                    if let Ok(cstr) = CString::new(s.as_str()) {
+                        (cstr.as_ptr(), Some(cstr))
+                    } else {
+                        (std::ptr::null(), None)
+                    }
+                }
+                None => (std::ptr::null(), None),
+            };
+
+            let (public_key_ptr, _public_key_cstr) = match payload.public_key.as_ref() {
+                Some(s) => {
+                    if let Ok(cstr) = CString::new(s.as_str()) {
+                        (cstr.as_ptr(), Some(cstr))
+                    } else {
+                        (std::ptr::null(), None)
+                    }
+                }
+                None => (std::ptr::null(), None),
+            };
+
+            // Call Swift FFI function
+            let result_ptr = unsafe { secure_element_delete_key(key_name_ptr, public_key_ptr) };
+
+            if result_ptr.is_null() {
+                return Err(crate::Error::Io(std::io::Error::other(
+                    "FFI call returned null",
+                )));
+            }
+
+            // Convert C string to Rust string BEFORE freeing
+            let result_str = {
+                // Validate pointer is readable (check first byte)
+                unsafe {
+                    if *result_ptr == 0 {
+                        libc::free(result_ptr as *mut libc::c_void);
+                        return Err(crate::Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Swift function returned empty/null string",
+                        )));
+                    }
+                }
+
+                let result_cstr = unsafe { CStr::from_ptr(result_ptr) };
+
+                let str_result = result_cstr.to_str().map_err(|e| {
+                    // Free before returning error
+                    unsafe {
+                        libc::free(result_ptr as *mut libc::c_void);
+                    }
+                    crate::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "Invalid UTF-8 in FFI result: {} (pointer: {:p})",
+                            e, result_ptr
+                        ),
+                    ))
+                })?;
+
+                // Copy to owned String immediately to ensure it's valid after free
+                str_result.to_string()
+            };
+
+            // Now free the C string allocated by Swift
+            unsafe {
+                libc::free(result_ptr as *mut libc::c_void);
+            }
+
+            if result_str.is_empty() {
+                return Err(crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Swift function returned empty string",
+                )));
+            }
+
+            // Parse JSON response and check for errors
+            let response: serde_json::Value = serde_json::from_str(&result_str).map_err(|e| {
+                crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Failed to parse JSON response: {} (response was: '{}')",
+                        e, result_str
+                    ),
+                ))
+            })?;
+
+            // Check for error in response
+            if let Some(error_msg) = response.get("error").and_then(|v| v.as_str()) {
+                return Err(crate::Error::Io(std::io::Error::other(error_msg)));
+            }
+
+            // Extract success from JSON
+            let success = response
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            Ok(DeleteKeyResponse { success })
         }
         #[cfg(not(target_os = "macos"))]
         {

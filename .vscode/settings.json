@@ -2,9 +2,16 @@
     "java.configuration.updateBuildConfiguration": "interactive",
     "cSpell.words": [
         "androidx",
+        "ECSEC",
         "libc",
+        "libsecure",
+        "rustc",
         "secp",
         "secureelement",
-        "swiftlint"
+        "strdup",
+        "swiftc",
+        "swiftlint",
+        "xcrun",
+        "xctoolchain"
     ]
 }
