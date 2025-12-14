@@ -1,4 +1,4 @@
-package com.tauri.secureelement.example
+package net.kackman.secureelement.example
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

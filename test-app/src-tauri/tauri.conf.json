@@ -1,7 +1,7 @@
 {
   "productName": "test-app",
   "version": "0.1.0",
-  "identifier": "com.tauri.secureelement.example",
+  "identifier": "net.kackman.secureelement.example",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
