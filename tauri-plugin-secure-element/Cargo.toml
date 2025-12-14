@@ -12,7 +12,7 @@ homepage = "https://github.com/dkackman/tauri-plugin-secure-element"
 documentation = "https://github.com/dkackman/tauri-plugin-secure-element#readme"
 readme = "README.md"
 categories = ["api-bindings", "cryptography", "authentication"]
-keywords = ["tauri", "plugin", "secure-element", "secure-enclave", "strongbox", "tee", "cryptography", "keychain"]
+keywords = ["tauri", "plugin", "secure-element", "secure-enclave", "strongbox"]
 exclude = [
     "**/.tauri",
     "**/target",
