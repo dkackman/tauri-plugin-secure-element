@@ -1,6 +1,6 @@
 name: tauri-app
 options:
-  bundleIdPrefix: com.tauri.secureelement.example
+  bundleIdPrefix: net.kackman.secureelement.example
   deploymentTarget:
     iOS: 14.0
 fileGroups: [../../src]
@@ -11,7 +11,7 @@ settingGroups:
   app:
     base:
       PRODUCT_NAME: tauri-app
-      PRODUCT_BUNDLE_IDENTIFIER: com.tauri.secureelement.example
+      PRODUCT_BUNDLE_IDENTIFIER: net.kackman.secureelement.example
       ENABLE_USER_SCRIPT_SANDBOXING: NO
 targetTemplates:
   app:
