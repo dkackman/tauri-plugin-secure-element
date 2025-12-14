@@ -2,8 +2,14 @@
     "java.configuration.updateBuildConfiguration": "interactive",
     "cSpell.words": [
         "androidx",
+        "clippy",
+        "ktlint",
+        "naturalcycles",
         "secp",
         "secureelement",
-        "swiftlint"
+        "serde",
+        "swiftformat",
+        "swiftlint",
+        "thiserror"
     ]
 }
