@@ -57,13 +57,28 @@ Or use the VS Code task "build-all" to build everything in sequence.
 
 ## Running
 
-### Run the Test App in Development Mode
+### iOS
 
 ```bash
 cd test-app
 pnpm tauri ios dev
+```
 
-or
+### Android
 
+```bash
+cd test-app
 pnpm tauri android dev
+```
+
+### macOS
+
+macOS Secure Enclave access requires special code signing setup with a provisioning profile. See the **[macOS Development Guide](docs/macos-development.md)** for detailed instructions.
+
+Quick start (after setup):
+
+```bash
+cd test-app
+./build-macos-dev.sh
+open src-tauri/target/debug/bundle/macos/test-app.app
 ```

@@ -1,6 +1,6 @@
 # Tauri Plugin Secure Element
 
-A Tauri plugin providing secure element functionality for iOS and Android platforms.
+A Tauri plugin providing secure element functionality for iOS, Android, and macOS platforms.
 
 ## Project Structure
 
@@ -89,9 +89,15 @@ pnpm tauri ios dev
 
 # Android
 pnpm tauri android dev
+
+# macOS (requires special setup - see docs/macos-development.md)
+./build-macos-dev.sh
+open src-tauri/target/debug/bundle/macos/test-app.app
 ```
 
 Note: The `predev` script automatically builds the plugin before running.
+
+**macOS Note:** Secure Enclave access on macOS requires a provisioning profile and special code signing. See `docs/macos-development.md` for setup instructions.
 
 ### Code Quality
 
@@ -186,15 +192,15 @@ pnpm build               # Ensure everything builds
 
 ## Platform Support
 
-- iOS: Uses Secure Enclave via Swift
-- Android: Uses Android StrongBox Keystore via Kotlin
-- Desktop: Currently stubbed (returns errors)
+- **iOS**: Uses Secure Enclave via Swift (Tauri mobile plugin)
+- **Android**: Uses Android StrongBox Keystore via Kotlin (Tauri mobile plugin)
+- **macOS**: Uses Secure Enclave via Swift FFI bindings (requires provisioning profile setup)
 
 ## Notes
 
-- This is a **mobile-first** plugin; desktop platforms are not fully supported
+- macOS support requires additional setup (provisioning profile) - see `docs/macos-development.md`
 - The test app's prebuild/predev scripts ensure the plugin is built before running
-- Swift tooling (swiftformat, swiftlint) is optional but recommended for iOS development
+- Swift tooling (swiftformat, swiftlint) is optional but recommended for iOS/macOS development
 - Kotlin formatting uses ktlint (installed via pnpm)
 - All commands should be run from the appropriate directory (root, plugin, or test-app)
-- Security and correctness are paramount.
+- Security and correctness are paramount
