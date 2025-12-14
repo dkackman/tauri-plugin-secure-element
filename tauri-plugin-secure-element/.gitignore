@@ -15,3 +15,15 @@ node_modules/
 
 dist-js
 dist
+
+
+# Android build artifacts
+android/build/
+android/.gradle/
+android/local.properties
+
+# iOS build artifacts
+ios/build/
+ios/.build/
+ios/Package.resolved
+ios/.swiftpm/
