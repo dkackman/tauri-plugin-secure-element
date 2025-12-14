@@ -14,6 +14,7 @@ readme = "README.md"
 categories = ["api-bindings", "cryptography", "authentication"]
 keywords = ["tauri", "plugin", "secure-element", "secure-enclave", "strongbox", "tee", "cryptography", "keychain"]
 include = ["src", "ios", "android", "build.rs", "permissions"]
+exclude = ["**/.tauri", "**/target", "**/node_modules", "**/build", "**/.gradle", "**/.build", "**/.swiftpm"]
 
 [dependencies]
 tauri = { version = "2.9.4" }
