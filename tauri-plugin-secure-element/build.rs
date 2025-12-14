@@ -91,6 +91,16 @@ fn main() {
 
         if let Ok(output) = ar_status {
             if output.status.success() {
+                // Double-check we're building for macOS (not iOS or Android)
+                let target = std::env::var("TARGET").unwrap_or_default();
+                if !target.contains("apple-darwin")
+                    || target.contains("apple-ios")
+                    || target.contains("android")
+                {
+                    // Skip linking for non-macOS targets
+                    return;
+                }
+
                 // Get Swift toolchain path for compatibility libraries (macOS only)
                 let toolchain_swift_lib = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx";
 

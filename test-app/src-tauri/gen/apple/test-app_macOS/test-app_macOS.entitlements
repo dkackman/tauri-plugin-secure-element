@@ -4,7 +4,7 @@
     <dict>
         <key>keychain-access-groups</key>
         <array>
-            <string>$(AppIdentifierPrefix)com.tauri.secureelement.example</string>
+            <string>$(AppIdentifierPrefix)net.kackman.secureelement.example</string>
         </array>
     </dict>
 </plist>

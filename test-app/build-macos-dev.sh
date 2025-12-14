@@ -4,11 +4,11 @@
 # PREREQUISITES:
 # 1. You must have an Apple Developer account (paid or free)
 # 2. You must create an App ID at https://developer.apple.com/account/resources/identifiers/list
-#    - Bundle ID: com.tauri.secureelement.example
+#    - Bundle ID: net.kackman.secureelement.example
 # 3. You must create a Mac Development provisioning profile at:
 #    https://developer.apple.com/account/resources/profiles/list
 #    - Select "macOS App Development" as the type
-#    - Select your App ID (com.tauri.secureelement.example)
+#    - Select your App ID (net.kackman.secureelement.example)
 #    - Select your Mac Development certificate
 #    - Select your Mac device
 #    - Download the .mobileprovision file
@@ -23,7 +23,7 @@ cd "$SCRIPT_DIR"
 
 # Configuration
 TEAM_ID="86TDY6D9V2"
-BUNDLE_ID="com.tauri.secureelement.example"
+BUNDLE_ID="net.kackman.secureelement.example"
 APP_NAME="test-app"
 ENTITLEMENTS="src-tauri/gen/apple/test-app_macOS/test-app_macOS.dev.entitlements"
 PROVISIONING_PROFILE="embedded.provisionprofile"

@@ -40,7 +40,7 @@ Simply signing with `codesign` is insufficient - the OS validates that restricte
 5. Fill in the details:
    - **Platform:** macOS
    - **Description:** Tauri Secure Element Test App
-   - **Bundle ID:** Select "Explicit" and enter `com.tauri.secureelement.example`
+   - **Bundle ID:** Select "Explicit" and enter `net.kackman.secureelement.example`
 6. Click **Continue**, then **Register**
 
 ### Step 2: Register Your Mac Device
@@ -62,7 +62,7 @@ system_profiler SPHardwareDataType | grep "Hardware UUID"
 1. Go to [Apple Developer - Profiles](https://developer.apple.com/account/resources/profiles/list)
 2. Click the **+** button to create a new profile
 3. Select **macOS App Development** and click **Continue**
-4. Select your App ID (`com.tauri.secureelement.example`) and click **Continue**
+4. Select your App ID (`net.kackman.secureelement.example`) and click **Continue**
 5. Select your development certificate and click **Continue**
 6. Select your Mac device(s) and click **Continue**
 7. Enter a profile name (e.g., "Tauri Secure Element Dev") and click **Generate**
@@ -201,12 +201,12 @@ Located at `test-app/src-tauri/gen/apple/test-app_macOS/test-app_macOS.dev.entit
 <plist version="1.0">
     <dict>
         <key>com.apple.application-identifier</key>
-        <string>TEAM_ID.com.tauri.secureelement.example</string>
+        <string>TEAM_ID.net.kackman.secureelement.example</string>
         <key>com.apple.developer.team-identifier</key>
         <string>TEAM_ID</string>
         <key>keychain-access-groups</key>
         <array>
-            <string>TEAM_ID.com.tauri.secureelement.example</string>
+            <string>TEAM_ID.net.kackman.secureelement.example</string>
         </array>
     </dict>
 </plist>

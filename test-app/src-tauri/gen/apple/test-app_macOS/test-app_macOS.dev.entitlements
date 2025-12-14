@@ -3,12 +3,12 @@
 <plist version="1.0">
     <dict>
         <key>com.apple.application-identifier</key>
-        <string>86TDY6D9V2.com.tauri.secureelement.example</string>
+        <string>86TDY6D9V2.net.kackman.secureelement.example</string>
         <key>com.apple.developer.team-identifier</key>
         <string>86TDY6D9V2</string>
         <key>keychain-access-groups</key>
         <array>
-            <string>86TDY6D9V2.com.tauri.secureelement.example</string>
+            <string>86TDY6D9V2.net.kackman.secureelement.example</string>
         </array>
     </dict>
 </plist>
