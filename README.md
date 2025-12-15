@@ -2,6 +2,9 @@
 
 A Tauri plugin for secure element functionality.
 
+![npm](https://img.shields.io/npm/v/tauri-plugin-secure-element-api)
+![Crates.io Downloads (latest version)](https://img.shields.io/crates/dv/tauri-plugin-secure-element)
+
 ## Prerequisites
 
 - [Rust](https://www.rust-lang.org/) (latest stable version)
