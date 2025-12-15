@@ -4,6 +4,7 @@
   "private": true,
   "description": "Tauri Plugin Secure Element - Monorepo",
   "scripts": {
+    "dev": "vite",
     "build": "pnpm --filter '*' build",
     "install:all": "pnpm install",
     "format": "pnpm --filter '*' format",

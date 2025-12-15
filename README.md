@@ -10,57 +10,20 @@ A Tauri plugin for secure element functionality.
 - [Tauri CLI](https://tauri.app/v1/guides/getting-started/prerequisites) (installed via pnpm)
 - [Setup system dependencies for Tauri](https://v2.tauri.app/start/prerequisites/)
 
-## Build Installation
-
-- Install dependencies:
+## Install and Build
 
 ```bash
 pnpm install
-```
-
-## Building
-
-### Build the Plugin
-
-Build the Rust plugin and JavaScript bindings:
-
-```bash
-cd tauri-plugin-secure-element
 pnpm build
 ```
 
-This will:
-
-- Compile the Rust plugin code
-- Build the TypeScript guest JavaScript code into `dist-js/`
-
-### Build the Example App
-
-Build the example Tauri application:
-
-```bash
-cd test-app
-pnpm build
-```
-
-The example app's `prebuild` script will automatically build the plugin first.
-
-### Build Everything
-
-From the plugin root directory:
-
-```bash
-pnpm build
-```
-
-Or use the VS Code task "build-all" to build everything in sequence.
+This will install dependencies, build the plugin, its js bindings and the test app front-end.
 
 ## Running
 
 ### Run the Test App in Development Mode
 
 ```bash
-cd test-app
 pnpm tauri ios dev
 
 or
