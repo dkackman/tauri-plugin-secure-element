@@ -26,49 +26,54 @@ use mobile::SecureElement;
 // This allows the code to compile during cargo package
 #[cfg(not(any(desktop, mobile)))]
 mod stub {
-    use tauri::{AppHandle, Runtime};
     use crate::models::*;
     use crate::Result;
-    
+    use tauri::{AppHandle, Runtime};
+
     pub struct SecureElement<R: Runtime>(AppHandle<R>);
-    
+
     impl<R: Runtime> SecureElement<R> {
         pub fn new(_app: AppHandle<R>) -> Self {
             Self(_app)
         }
-        
+
         pub fn ping(&self, payload: PingRequest) -> Result<PingResponse> {
-            Ok(PingResponse { value: payload.value })
+            Ok(PingResponse {
+                value: payload.value,
+            })
         }
-        
-        pub fn generate_secure_key(&self, _payload: GenerateSecureKeyRequest) -> Result<GenerateSecureKeyResponse> {
+
+        pub fn generate_secure_key(
+            &self,
+            _payload: GenerateSecureKeyRequest,
+        ) -> Result<GenerateSecureKeyResponse> {
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Secure element not available - compilation stub",
             )))
         }
-        
+
         pub fn list_keys(&self, _payload: ListKeysRequest) -> Result<ListKeysResponse> {
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Secure element not available - compilation stub",
             )))
         }
-        
+
         pub fn sign_with_key(&self, _payload: SignWithKeyRequest) -> Result<SignWithKeyResponse> {
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Secure element not available - compilation stub",
             )))
         }
-        
+
         pub fn delete_key(&self, _payload: DeleteKeyRequest) -> Result<DeleteKeyResponse> {
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Secure element not available - compilation stub",
             )))
         }
-        
+
         pub fn check_secure_element_support(&self) -> Result<CheckSecureElementSupportResponse> {
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,

@@ -1,0 +1,55 @@
+# EditorConfig is awesome: https://EditorConfig.org
+
+# Top-most EditorConfig file
+root = true
+
+# Default settings for all files
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# JavaScript, TypeScript, JSON, Markdown, YAML, etc.
+[*.{js,jsx,ts,tsx,json,md,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Rust (cargo fmt defaults: 4 spaces)
+[*.rs]
+indent_style = space
+indent_size = 4
+
+# Swift
+[*.swift]
+indent_style = space
+indent_size = 4
+
+# Kotlin (ktlint standard)
+[*.{kt,kts}]
+indent_style = space
+indent_size = 4
+
+# Shell scripts
+[*.{sh,bash}]
+indent_style = space
+indent_size = 2
+
+# Makefile (must use tabs)
+[Makefile]
+indent_style = tab
+
+# Configuration files (TOML uses 4 spaces to match Rust style)
+[*.toml]
+indent_style = space
+indent_size = 4
+
+[*.ini]
+indent_style = space
+indent_size = 2
+
+# XML files (Android manifests, etc.)
+[*.xml]
+indent_style = space
+indent_size = 2
+
