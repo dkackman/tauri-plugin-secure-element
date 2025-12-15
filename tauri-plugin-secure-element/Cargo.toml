@@ -1,12 +1,53 @@
 [package]
 name = "tauri-plugin-secure-element"
-version = "0.1.0"
-authors = [ "You" ]
-description = ""
+version = "0.1.0-alpha.1"
+authors = [ "Don Kackman<dkackman@gmail.com>" ]
+description = "Tauri plugin for secure element use on iOS (Secure Enclave) and Android (Strongbox and TEE)."
 edition = "2021"
 rust-version = "1.77.2"
-exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
 links = "tauri-plugin-secure-element"
+license = "Apache-2.0"
+repository = "https://github.com/dkackman/tauri-plugin-secure-element"
+homepage = "https://github.com/dkackman/tauri-plugin-secure-element"
+documentation = "https://github.com/dkackman/tauri-plugin-secure-element#readme"
+readme = "README.md"
+categories = ["api-bindings", "cryptography", "authentication"]
+keywords = ["tauri", "plugin", "secure-element", "secure-enclave", "strongbox"]
+exclude = [
+    "**/.tauri",
+    "**/target",
+    "**/node_modules",
+    "**/build",
+    "**/.gradle",
+    "**/.build",
+    "**/.swiftpm",
+    "**/Package.resolved",
+    "**/.git",
+    "**/.gitignore",
+    "**/.DS_Store",
+    "**/dist",
+    "**/dist-js",
+    "**/Cargo.lock",
+    "**/.vs",
+    "**/.idea",
+    "**/*.sublime*",
+    "**/debug.log",
+    "**/package-lock.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/pnpm-workspace.yaml",
+    "**/.npmrc",
+    "**/.prettierignore",
+    "**/.prettierrc.json",
+    "**/.swiftlint.yml",
+    "**/rollup.config.js",
+    "**/tsconfig.json",
+    "**/package.json",
+    "**/guest-js",
+    "**/ios/Tests",
+    "**/ios/.gitignore",
+    "**/android/local.properties",
+]
 
 [dependencies]
 tauri = { version = "2.9.4" }
