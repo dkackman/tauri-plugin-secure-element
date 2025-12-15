@@ -217,8 +217,3 @@ Apache-2.0
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Links
-
-- [Repository](https://github.com/dkackman/tauri-plugin-secure-element)
-- [Issues](https://github.com/dkackman/tauri-plugin-secure-element/issues)
