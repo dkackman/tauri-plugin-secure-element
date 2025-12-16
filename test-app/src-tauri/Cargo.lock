@@ -3311,7 +3311,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-secure-element"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "hex",
  "rand 0.8.5",

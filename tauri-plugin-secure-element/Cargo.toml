@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-secure-element"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 authors = [ "Don Kackman<dkackman@gmail.com>" ]
 description = "Tauri plugin for secure element use on iOS (Secure Enclave) and Android (Strongbox and TEE)."
 edition = "2021"

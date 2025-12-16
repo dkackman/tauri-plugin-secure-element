@@ -68,15 +68,30 @@ tauri-plugin-secure-element = "0.1.0"
 
 ### Setup
 
-Add the plugin to your `tauri.conf.json`:
+Add the plugin to your Rust code in `src-tauri/src/lib.rs`:
+
+```rust
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_secure_element::init())
+        // ... other plugins
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+```
+
+Add the plugin permissions to `src-tauri/capabilities/default.json`:
 
 ```json
 {
-  "plugins": {
-    "secure-element": {
-      "all": true
-    }
-  }
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "secure-element:default"
+  ]
 }
 ```
 

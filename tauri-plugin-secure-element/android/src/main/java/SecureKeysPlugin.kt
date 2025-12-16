@@ -520,8 +520,38 @@ class SecureKeysPlugin(
     private fun isUserNotAuthenticatedException(e: Exception): Boolean {
         // Check if the exception is UserNotAuthenticatedException
         // This exception was added in API 23, same as KeyGenParameterSpec
-        return e is android.security.keystore.UserNotAuthenticatedException ||
+        if (e is android.security.keystore.UserNotAuthenticatedException ||
             e.cause is android.security.keystore.UserNotAuthenticatedException
+        ) {
+            return true
+        }
+
+        // Also check for KeyStoreException with "Key user not authenticated" message
+        // Some Android versions/implementations throw KeyStoreException instead of UserNotAuthenticatedException
+        if (e is android.security.KeyStoreException) {
+            val message = e.message ?: ""
+            // Check for the specific error message indicating user not authenticated
+            // Error code -26 corresponds to KEY_USER_NOT_AUTHENTICATED
+            if (message.contains("Key user not authenticated", ignoreCase = true) ||
+                message.contains("KEY_USER_NOT_AUTHENTICATED", ignoreCase = true) ||
+                message.contains("internal Keystore code: -26", ignoreCase = true)
+            ) {
+                return true
+            }
+        }
+
+        // Check cause as well
+        if (e.cause is android.security.KeyStoreException) {
+            val message = e.cause?.message ?: ""
+            if (message.contains("Key user not authenticated", ignoreCase = true) ||
+                message.contains("KEY_USER_NOT_AUTHENTICATED", ignoreCase = true) ||
+                message.contains("internal Keystore code: -26", ignoreCase = true)
+            ) {
+                return true
+            }
+        }
+
+        return false
     }
 
     /**
