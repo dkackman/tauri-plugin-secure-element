@@ -3,11 +3,9 @@ disabled_rules:
   - trailing_whitespace
   - line_length
   - trailing_comma # Trailing commas are actually good practice in Swift
-
-# Allow longer function bodies for complex functions
-function_body_length:
-  warning: 60
-  error: 100
+  - type_body_length # Allow longer class/struct bodies for complex implementations
+  - file_length # Allow longer files for complex implementations
+  - function_body_length # Allow longer function bodies for complex functions
 
 included:
   - ios/Sources

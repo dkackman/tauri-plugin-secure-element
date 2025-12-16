@@ -325,6 +325,7 @@ class SecureEnclavePlugin: Plugin {
 
     // MARK: - List Keys
 
+    // swiftlint:disable:next cyclomatic_complexity
     @objc func listKeys(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ListKeysArgs.self)
 
@@ -371,9 +372,10 @@ class SecureEnclavePlugin: Plugin {
                     }
 
                     // Extract auth mode from kSecAttrApplicationTag
-                    var requiresAuthentication: Bool? = nil
+                    var requiresAuthentication: Bool?
                     if let authModeData = item[kSecAttrApplicationTag as String] as? Data,
                        let authModeString = String(data: authModeData, encoding: .utf8)
+                    // swiftlint:disable:next opening_brace
                     {
                         switch authModeString {
                         case "none":
@@ -506,6 +508,7 @@ class SecureEnclavePlugin: Plugin {
                 // Use the key reference from the initial query
                 if let publicKeyBase64 = exportPublicKeyBase64Silent(privateKey: privateKey),
                    publicKeyBase64 == targetPublicKey
+                // swiftlint:disable:next opening_brace
                 {
                     // Extract key name from kSecAttrLabel for deletion
                     let keyNameLabel = (item[kSecAttrLabel as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
