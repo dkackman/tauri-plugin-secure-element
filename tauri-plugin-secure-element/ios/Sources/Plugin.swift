@@ -233,7 +233,8 @@ class SecureEnclavePlugin: Plugin {
             invoke.reject(message)
             return true
         }
-        return false // Key doesn't exist, which is what we want
+
+        return false
     }
 
     /// Creates a Secure Enclave key with the given attributes
