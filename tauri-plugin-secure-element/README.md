@@ -52,10 +52,7 @@ Add the plugin permissions to `src-tauri/capabilities/default.json`:
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "secure-element:default"
-  ]
+  "permissions": ["core:default", "secure-element:default"]
 }
 ```
 
