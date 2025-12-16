@@ -167,8 +167,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Install latest npm
+        run: npm install -g npm@latest
+
+      - name: Verify npm version
+        run: npm --version
+
       - name: Publish to npm
-        run: pnpm publish --access public --no-git-checks --tag ${{ steps.npm-tag.outputs.tag }}
+        run: npm publish --access public --tag ${{ steps.npm-tag.outputs.tag }} --provenance
 
   # Create GitHub Release
   create-release:
