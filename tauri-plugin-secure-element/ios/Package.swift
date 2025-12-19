@@ -30,5 +30,10 @@ let package = Package(
             ],
             path: "Sources"
         ),
+        .testTarget(
+            name: "PluginTests",
+            dependencies: ["tauri-plugin-secure-element"],
+            path: "Tests"
+        ),
     ]
 )
