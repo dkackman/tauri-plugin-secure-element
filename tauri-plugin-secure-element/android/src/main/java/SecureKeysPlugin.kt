@@ -130,100 +130,20 @@ class SecureKeysPlugin(
     }
 
     /**
-     * Data class to hold key authentication information
+     * Builds a BiometricPrompt.PromptInfo for authentication.
+     * Always allows both biometric and device credential (PIN/pattern/password).
+     * The key itself enforces its actual requirements - if a key was created with
+     * biometric-only, PIN authentication will fail at the cryptographic level.
      */
-    private data class KeyAuthInfo(
-        val requiresAuthentication: Boolean,
-        val isBiometricOnly: Boolean,
-    )
-
-    /**
-     * Gets the KeyInfo for a key, if available
-     */
-    private fun getKeyInfo(alias: String): KeyInfo? {
-        return try {
-            val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: return null
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val privateKey = entry.privateKey as? ECPrivateKey ?: return null
-                val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
-                keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to get KeyInfo", e)
-            null
-        }
-    }
-
-    /**
-     * Checks if a key requires user authentication by examining its KeyInfo
-     * Returns true if authentication is required, false if not, or null if it cannot be determined
-     */
-    private fun keyRequiresAuthentication(alias: String): Boolean? {
-        return try {
-            val keyInfo = getKeyInfo(alias) ?: return null
-            keyInfo.isUserAuthenticationRequired
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to check key authentication requirements", e)
-            null
-        }
-    }
-
-    /**
-     * Gets detailed authentication info for a key
-     * Returns KeyAuthInfo with authentication requirements, or null if cannot be determined
-     */
-    private fun getKeyAuthInfo(alias: String): KeyAuthInfo? {
-        return try {
-            val keyInfo = getKeyInfo(alias) ?: return null
-            val requiresAuth = keyInfo.isUserAuthenticationRequired
-
-            // Determine if biometric-only (API 30+)
-            val isBiometricOnly =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && requiresAuth) {
-                    // Check if DEVICE_CREDENTIAL is NOT allowed
-                    val authType = keyInfo.userAuthenticationType
-                    (authType and KeyProperties.AUTH_DEVICE_CREDENTIAL) == 0
-                } else {
-                    // Pre-API 30: Can't determine, assume false (allow PIN)
-                    false
-                }
-
-            KeyAuthInfo(requiresAuth, isBiometricOnly)
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to get key auth info", e)
-            null
-        }
-    }
-
-    /**
-     * Builds a BiometricPrompt.PromptInfo based on key's authentication requirements
-     */
-    private fun buildPromptInfoForKey(
-        authInfo: KeyAuthInfo,
-        subtitle: String,
-    ): BiometricPrompt.PromptInfo =
-        if (authInfo.isBiometricOnly) {
-            // Biometric-only: cannot set DEVICE_CREDENTIAL, must provide negative button
-            BiometricPrompt.PromptInfo
-                .Builder()
-                .setTitle("Biometric Authentication Required")
-                .setSubtitle(subtitle)
-                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .setNegativeButtonText("Cancel")
-                .build()
-        } else {
-            // PIN or biometric: when DEVICE_CREDENTIAL is allowed, negative button cannot be set
-            BiometricPrompt.PromptInfo
-                .Builder()
-                .setTitle("Authentication Required")
-                .setSubtitle(subtitle)
-                .setAllowedAuthenticators(
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                        BiometricManager.Authenticators.DEVICE_CREDENTIAL,
-                ).build()
-        }
+    private fun buildPromptInfo(subtitle: String): BiometricPrompt.PromptInfo =
+        BiometricPrompt.PromptInfo
+            .Builder()
+            .setTitle("Authentication Required")
+            .setSubtitle(subtitle)
+            .setAllowedAuthenticators(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+            ).build()
 
     private fun buildKeyGenParameterSpec(
         alias: String,
@@ -505,17 +425,11 @@ class SecureKeysPlugin(
                     continue
                 }
 
-                // Determine if the key requires authentication
-                val requiresAuth = keyRequiresAuthentication(alias)
-
                 val keyInfo =
-                    mutableMapOf<String, Any?>(
+                    mapOf(
                         "keyName" to keyName,
                         "publicKey" to publicKeyBase64,
                     )
-                if (requiresAuth != null) {
-                    keyInfo["requiresAuthentication"] = requiresAuth
-                }
                 keys.add(keyInfo)
             }
 
@@ -587,7 +501,6 @@ class SecureKeysPlugin(
     private fun signWithBiometricPrompt(
         entry: KeyStore.PrivateKeyEntry,
         data: ByteArray,
-        authInfo: KeyAuthInfo,
         keyName: String,
         invoke: Invoke,
     ) {
@@ -653,8 +566,8 @@ class SecureKeysPlugin(
                 },
             )
 
-        // Build prompt info based on key's auth requirements
-        val promptInfo = buildPromptInfoForKey(authInfo, "Sign with key: $keyName")
+        // Build prompt info
+        val promptInfo = buildPromptInfo("Sign with key: $keyName")
 
         // Show authentication UI with CryptoObject
         biometricPrompt.authenticate(promptInfo, cryptoObject)
@@ -678,9 +591,6 @@ class SecureKeysPlugin(
                         return
                     }
 
-            // Get auth info - if we can't determine, we'll find out when we try to sign
-            val authInfo = getKeyAuthInfo(alias)
-
             // Initialize the signature object
             // Note: Android's SHA256withECDSA hashes the data internally,
             // while iOS hashes first then signs the digest.
@@ -700,12 +610,7 @@ class SecureKeysPlugin(
                 // Check if this is an authentication-required error
                 if (isUserNotAuthenticatedException(e)) {
                     Log.d(TAG, "Key requires authentication, showing BiometricPrompt")
-
-                    // Use detected auth info or default to PIN/biometric
-                    val effectiveAuthInfo = authInfo ?: KeyAuthInfo(requiresAuthentication = true, isBiometricOnly = false)
-
-                    // Show BiometricPrompt for authentication
-                    signWithBiometricPrompt(entry, args.data, effectiveAuthInfo, args.keyName, invoke)
+                    signWithBiometricPrompt(entry, args.data, args.keyName, invoke)
                 } else {
                     // Some other error - not auth related
                     val detailedMessage = "Failed to sign: ${e.message}"

@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 export interface KeyInfo {
   keyName: string;
   publicKey: string;
-  requiresAuthentication?: boolean;
 }
 
 export async function ping(value: string): Promise<string | null> {

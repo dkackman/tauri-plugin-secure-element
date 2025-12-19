@@ -238,23 +238,13 @@ class SecureEnclavePlugin: Plugin {
     }
 
     /// Creates a Secure Enclave key with the given attributes
-    private func createSecureEnclaveKey(keyName: String, authMode: String?, accessControl: SecAccessControl, operation: String, invoke: Invoke) -> SecKey? {
-        // Store auth mode in kSecAttrApplicationTag as Data
-        let mode = authMode ?? "pinOrBiometric"
-        guard let authModeData = mode.data(using: .utf8) else {
-            let message = "Invalid auth mode"
-            logError(operation, error: message)
-            invoke.reject(message)
-            return nil
-        }
-
+    private func createSecureEnclaveKey(keyName: String, accessControl: SecAccessControl, operation: String, invoke: Invoke) -> SecKey? {
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecAttrIsPermanent as String: true,
             kSecAttrLabel as String: keyName,
-            kSecAttrApplicationTag as String: authModeData,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
                 kSecAttrAccessControl as String: accessControl,
@@ -309,7 +299,7 @@ class SecureEnclavePlugin: Plugin {
         }
 
         // Create the Secure Enclave key
-        guard let privateKey = createSecureEnclaveKey(keyName: args.keyName, authMode: args.authMode, accessControl: accessControl, operation: "generateSecureKey", invoke: invoke) else {
+        guard let privateKey = createSecureEnclaveKey(keyName: args.keyName, accessControl: accessControl, operation: "generateSecureKey", invoke: invoke) else {
             return
         }
 
@@ -327,7 +317,6 @@ class SecureEnclavePlugin: Plugin {
 
     // MARK: - List Keys
 
-    // swiftlint:disable:next cyclomatic_complexity
     @objc func listKeys(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(ListKeysArgs.self)
 
@@ -373,30 +362,10 @@ class SecureEnclavePlugin: Plugin {
                         continue
                     }
 
-                    // Extract auth mode from kSecAttrApplicationTag
-                    var requiresAuthentication: Bool?
-                    if let authModeData = item[kSecAttrApplicationTag as String] as? Data,
-                       let authModeString = String(data: authModeData, encoding: .utf8)
-                    // swiftlint:disable:next opening_brace
-                    {
-                        switch authModeString {
-                        case "none":
-                            requiresAuthentication = false
-                        case "pinOrBiometric", "biometricOnly":
-                            requiresAuthentication = true
-                        default:
-                            // Invalid auth mode, leave as nil
-                            requiresAuthentication = nil
-                        }
-                    }
-
-                    var keyInfo: [String: Any] = [
+                    let keyInfo: [String: Any] = [
                         "keyName": keyName,
                         "publicKey": publicKeyBase64,
                     ]
-                    if let requiresAuthentication = requiresAuthentication {
-                        keyInfo["requiresAuthentication"] = requiresAuthentication
-                    }
                     keys.append(keyInfo)
                 }
             }

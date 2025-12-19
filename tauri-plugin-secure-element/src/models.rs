@@ -66,9 +66,6 @@ pub struct KeyInfo {
     pub key_name: String,
     /// The public key in base64 encoding
     pub public_key: String,
-    /// Whether this key requires authentication to use
-    /// None if it cannot be determined whether authentication is required
-    pub requires_authentication: Option<bool>,
 }
 
 /// Response containing list of keys

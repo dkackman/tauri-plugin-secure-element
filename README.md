@@ -194,7 +194,6 @@ Lists keys stored in the secure element. Can filter by key name or public key.
 interface KeyInfo {
   keyName: string;
   publicKey: string;
-  requiresAuthentication?: boolean;
 }
 ```
 
