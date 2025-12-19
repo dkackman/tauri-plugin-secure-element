@@ -62,6 +62,11 @@ pub fn validate_sign_data_size(data: &[u8]) -> Result<(), Error> {
             MAX_SIGN_DATA_SIZE, data_len
         )));
     }
+    if data_len == 0 {
+        return Err(Error::Validation(
+            "Data to sign cannot be empty".to_string(),
+        ));
+    }
 
     Ok(())
 }
