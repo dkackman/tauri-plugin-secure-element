@@ -16,11 +16,20 @@ export async function ping(value: string): Promise<string | null> {
 
 export type AuthenticationMode = "none" | "pinOrBiometric" | "biometricOnly";
 
+export type HardwareBacking = "secureEnclave" | "strongBox" | "tee";
+
+export interface GenerateSecureKeyResult {
+  publicKey: string;
+  keyName: string;
+  /** The type of hardware backing used for this key */
+  hardwareBacking: HardwareBacking;
+}
+
 export async function generateSecureKey(
   keyName: string,
   authMode: AuthenticationMode = "pinOrBiometric"
-): Promise<{ publicKey: string; keyName: string }> {
-  return await invoke<{ publicKey: string; keyName: string }>(
+): Promise<GenerateSecureKeyResult> {
+  return await invoke<GenerateSecureKeyResult>(
     "plugin:secure-element|generate_secure_key",
     {
       payload: {

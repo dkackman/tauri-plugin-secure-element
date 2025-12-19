@@ -243,6 +243,9 @@
           <strong>Key Created Successfully!</strong><br />
           <strong>Key Name:</strong>
           {createdKey.keyName}<br />
+          <strong>Hardware Backing:</strong>
+          <span class="badge bg-info ms-2">{createdKey.hardwareBacking}</span
+          ><br />
           <strong>Public Key:</strong>
           <code class="d-block mt-2 p-2 bg-body-secondary rounded small"
             >{createdKey.publicKey}</code

@@ -44,6 +44,8 @@ pub struct GenerateSecureKeyResponse {
     pub public_key: String,
     /// The key name that was used
     pub key_name: String,
+    /// The type of hardware backing used (e.g., "secureEnclave", "strongBox", "tee")
+    pub hardware_backing: String,
 }
 
 /// Request to list all available keys

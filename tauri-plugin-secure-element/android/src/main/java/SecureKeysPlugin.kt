@@ -413,12 +413,24 @@ class SecureKeysPlugin(
 
             var keyGenParameterSpec = buildKeyGenParameterSpec(alias, authMode, useSecureElement)
 
+            // Track whether we successfully used StrongBox
+            var usedStrongBox = useSecureElement
+
             try {
                 keyPairGenerator.initialize(keyGenParameterSpec)
                 keyPairGenerator.generateKeyPair()
+                if (useSecureElement) {
+                    Log.i(TAG, "generateSecureKey: Key created with StrongBox backing")
+                }
             } catch (e: Exception) {
                 // If Secure Element was requested but failed, fall back to regular hardware-backed storage
                 if (useSecureElement) {
+                    Log.w(
+                        TAG,
+                        "generateSecureKey: StrongBox key creation failed, falling back to TEE. " +
+                            "Reason: ${e.message ?: e.javaClass.simpleName}",
+                    )
+
                     // Create a new KeyPairGenerator instance since it can't be reinitialized
                     keyPairGenerator =
                         KeyPairGenerator.getInstance(
@@ -430,6 +442,8 @@ class SecureKeysPlugin(
 
                     keyPairGenerator.initialize(keyGenParameterSpec)
                     keyPairGenerator.generateKeyPair()
+                    usedStrongBox = false
+                    Log.i(TAG, "generateSecureKey: Key created with TEE backing (StrongBox fallback)")
                 } else {
                     // Re-throw if StrongBox wasn't expected
                     throw e
@@ -448,6 +462,8 @@ class SecureKeysPlugin(
             val ret = JSObject()
             ret.put("publicKey", publicKeyBase64)
             ret.put("keyName", args.keyName)
+            // Include backing type so callers can detect StrongBox vs TEE
+            ret.put("hardwareBacking", if (usedStrongBox) "strongBox" else "tee")
             invoke.resolve(ret)
         } catch (e: Exception) {
             val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"

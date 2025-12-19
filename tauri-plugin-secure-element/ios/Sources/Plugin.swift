@@ -321,6 +321,7 @@ class SecureEnclavePlugin: Plugin {
         invoke.resolve([
             "publicKey": publicKeyBase64,
             "keyName": args.keyName,
+            "hardwareBacking": "secureEnclave",
         ])
     }
 
