@@ -143,7 +143,17 @@ Generates a new secure key in the device's secure element.
 - `keyName`: Unique name for the key
 - `authMode`: Authentication mode (`'none'`, `'pinOrBiometric'`, or `'biometricOnly'`)
 
-**Returns:** `Promise<{ publicKey: string; keyName: string }>`
+**Returns:** `Promise<GenerateSecureKeyResult>`
+
+```typescript
+interface GenerateSecureKeyResult {
+  publicKey: string;
+  keyName: string;
+  hardwareBacking: "secureEnclave" | "strongBox" | "tee";
+}
+```
+
+**Note:** The `biometricOnly` mode requires Android 11 (API 30) or higher. On older Android versions, this mode will be rejected with an error. Use `checkSecureElementSupport().canEnforceBiometricOnly` to check support before creating biometric-only keys.
 
 ### `listKeys(keyName?: string, publicKey?: string)`
 
@@ -178,7 +188,30 @@ Deletes a key from the secure element. At least one parameter must be provided.
 ## Platform Support
 
 - **iOS**: Uses Secure Enclave for key generation and signing
-- **Android**: Uses Strongbox and TEE (Trusted Execution Environment) when available
+- **Android**: Uses StrongBox (when available) with fallback to TEE (Trusted Execution Environment)
+
+## Platform Limitations
+
+### Android
+
+| Feature                   | Requirement | Notes                            |
+| ------------------------- | ----------- | -------------------------------- |
+| Hardware-backed keys      | API 23+     | TEE or StrongBox required        |
+| StrongBox                 | API 28+     | Falls back to TEE if unavailable |
+| `biometricOnly` auth mode | API 30+     | Rejected on older versions       |
+
+### iOS
+
+- Secure Enclave is available on all devices with A7 chip or later (iPhone 5s+)
+- Simulator does not support Secure Enclave - test on physical devices
+
+### Authentication Modes
+
+| Mode             | iOS                               | Android                              |
+| ---------------- | --------------------------------- | ------------------------------------ |
+| `none`           | ✅ No auth required               | ✅ No auth required                  |
+| `pinOrBiometric` | ✅ Face ID, Touch ID, or passcode | ✅ Biometric or PIN/pattern/password |
+| `biometricOnly`  | ✅ Face ID or Touch ID only       | ✅ API 30+ only, biometric only      |
 
 ## License
 

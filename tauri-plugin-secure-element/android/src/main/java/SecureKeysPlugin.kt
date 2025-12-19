@@ -163,16 +163,9 @@ class SecureKeysPlugin(
                     }
 
                     "biometricOnly" -> {
+                        // Note: biometricOnly is rejected at generateSecureKey() for API < 30
                         setUserAuthenticationRequired(true)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            // API 30+: Can specify biometric-only at key level
-                            setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
-                        } else {
-                            // Pre-API 30: Cannot enforce biometric-only at key level
-                            // Will enforce at BiometricPrompt level during signing
-                            @Suppress("DEPRECATION")
-                            setUserAuthenticationValidityDurationSeconds(0)
-                        }
+                        setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
                     }
 
                     else -> {
@@ -327,6 +320,15 @@ class SecureKeysPlugin(
             // Check if Secure Element (StrongBox) is supported upfront
             val useSecureElement = isSecureElementSupported()
             val authMode = args.authMode ?: "pinOrBiometric"
+
+            // Reject biometricOnly on API < 30 - cannot enforce at key level
+            if (authMode == "biometricOnly" && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                invoke.reject(
+                    "biometricOnly authentication mode requires Android 11 (API 30) or higher. " +
+                        "Use 'pinOrBiometric' or 'none' on this device.",
+                )
+                return
+            }
 
             var keyPairGenerator =
                 KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
