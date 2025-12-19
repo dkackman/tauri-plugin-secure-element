@@ -1,6 +1,6 @@
 {
   "name": "tauri-plugin-secure-element-api",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Tauri plugin for secure element use on iOS (Secure Enclave) and Android (Strongbox and TEE).",
   "repository": "https://github.com/dkackman/tauri-plugin-secure-element",
   "license": "Apache-2.0",
