@@ -304,8 +304,7 @@ public enum SecureEnclaveCore {
                 // Extract auth mode from kSecAttrApplicationTag
                 var requiresAuthentication: Bool?
                 if let authModeData = item[kSecAttrApplicationTag as String] as? Data,
-                   let authModeString = String(data: authModeData, encoding: .utf8)
-                {
+                   let authModeString = String(data: authModeData, encoding: .utf8) {
                     switch authModeString {
                     case "none":
                         requiresAuthentication = false
@@ -408,8 +407,7 @@ public enum SecureEnclaveCore {
 
                 // Check if this key's public key matches
                 if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
-                   publicKeyBase64 == targetPublicKey
-                {
+                   publicKeyBase64 == targetPublicKey {
                     // Extract key name for deletion
                     let keyNameLabel = (item[kSecAttrLabel as String] as? String)?
                         .trimmingCharacters(in: .whitespacesAndNewlines)
