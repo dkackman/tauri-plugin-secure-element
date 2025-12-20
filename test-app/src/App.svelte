@@ -243,6 +243,9 @@
           <strong>Key Created Successfully!</strong><br />
           <strong>Key Name:</strong>
           {createdKey.keyName}<br />
+          <strong>Hardware Backing:</strong>
+          <span class="badge bg-info ms-2">{createdKey.hardwareBacking}</span
+          ><br />
           <strong>Public Key:</strong>
           <code class="d-block mt-2 p-2 bg-body-secondary rounded small"
             >{createdKey.publicKey}</code
@@ -293,15 +296,6 @@
             <div class="card mb-2">
               <div class="card-body">
                 <div class="mb-2"><strong>Name:</strong> {key.keyName}</div>
-                <div class="mb-2">
-                  <strong>Requires Authentication:</strong>
-                  {key.requiresAuthentication === undefined ||
-                  key.requiresAuthentication === null
-                    ? "Unknown"
-                    : key.requiresAuthentication
-                      ? "Yes"
-                      : "No"}
-                </div>
                 <div>
                   <strong>Public Key:</strong>
                   <code class="d-block mt-1 p-2 bg-body-secondary rounded small"

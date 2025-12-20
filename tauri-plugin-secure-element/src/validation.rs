@@ -48,12 +48,9 @@ pub fn validate_key_name(key_name: &str) -> Result<(), Error> {
 }
 
 /// Rules:
+/// - Must not be empty
 /// - Must not exceed MAX_SIGN_DATA_SIZE bytes
-/// - Must not be empty (empty data can be signed, but we require explicit intent)
 pub fn validate_sign_data_size(data: &[u8]) -> Result<(), Error> {
-    // Check minimum size (allow empty data, but document it)
-    // Empty data can be valid for some use cases, so we allow it
-
     // Check maximum size (in bytes)
     let data_len = data.len();
     if data_len > MAX_SIGN_DATA_SIZE {
@@ -61,6 +58,11 @@ pub fn validate_sign_data_size(data: &[u8]) -> Result<(), Error> {
             "Data to sign exceeds maximum size of {} bytes (got {} bytes)",
             MAX_SIGN_DATA_SIZE, data_len
         )));
+    }
+    if data_len == 0 {
+        return Err(Error::Validation(
+            "Data to sign cannot be empty".to_string(),
+        ));
     }
 
     Ok(())
@@ -211,10 +213,8 @@ mod tests {
 
     #[test]
     fn test_valid_sign_data_sizes() {
-        // Empty data is allowed
-        assert!(validate_sign_data_size(&[]).is_ok());
-
         // Small data
+        assert!(validate_sign_data_size(&[0u8; 1]).is_ok());
         assert!(validate_sign_data_size(&[0u8; 100]).is_ok());
 
         // Maximum size
@@ -224,6 +224,9 @@ mod tests {
 
     #[test]
     fn test_invalid_sign_data_sizes() {
+        // Empty data is not allowed
+        assert!(validate_sign_data_size(&[]).is_err());
+
         // Data exceeding maximum size
         let too_large = vec![0u8; MAX_SIGN_DATA_SIZE + 1];
         assert!(validate_sign_data_size(&too_large).is_err());

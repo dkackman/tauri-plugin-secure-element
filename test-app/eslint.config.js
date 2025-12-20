@@ -5,8 +5,7 @@ import globals from "globals";
 import tsParser from "@typescript-eslint/parser";
 
 export default [
-  js.configs.recommended,
-  ...svelte.configs["flat/recommended"],
+  // Ignore patterns must be first
   {
     ignores: [
       "node_modules/**",
@@ -17,8 +16,13 @@ export default [
       "*.config.js",
       "vite.config.js",
       ".eslintrc.cjs",
+      "**/*.json",
+      "**/**/*.json",
+      "*.json",
     ],
   },
+  js.configs.recommended,
+  ...svelte.configs["flat/recommended"],
   {
     languageOptions: {
       parser: svelteParser,
