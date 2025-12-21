@@ -64,6 +64,29 @@ fn main() {
 
         let out_dir = std::env::var("OUT_DIR").unwrap();
 
+        // Determine target architecture from Cargo's target configuration
+        let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_else(|_| {
+            // Fallback: try to detect from TARGET triple
+            if target.starts_with("x86_64") {
+                "x86_64".to_string()
+            } else {
+                "aarch64".to_string()
+            }
+        });
+
+        // Map Cargo arch names to Apple arch names
+        let swift_target = match target_arch.as_str() {
+            "x86_64" => "x86_64-apple-macosx10.15",
+            "aarch64" | "arm64" => "arm64-apple-macosx11.0",
+            other => {
+                println!(
+                    "cargo:warning=Unsupported architecture '{}', defaulting to arm64",
+                    other
+                );
+                "arm64-apple-macosx11.0"
+            }
+        };
+
         // Get macOS SDK path
         let sdk_output = Command::new("xcrun")
             .args(["--show-sdk-path", "--sdk", "macosx"])
@@ -94,7 +117,7 @@ fn main() {
                 "-o",
                 object_file.as_str(),
                 "-target",
-                "arm64-apple-macosx11.0",
+                swift_target,
                 "-sdk",
                 sdk_path.as_str(),
                 "-whole-module-optimization",
@@ -133,12 +156,35 @@ fn main() {
                     return;
                 }
 
-                // Get Swift toolchain path for compatibility libraries (macOS only)
-                let toolchain_swift_lib = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx";
+                // Get Swift toolchain path dynamically using xcrun
+                let toolchain_lib_path = Command::new("xcrun")
+                    .args(["--find", "swiftc"])
+                    .output()
+                    .ok()
+                    .and_then(|output| {
+                        if output.status.success() {
+                            let swiftc_path = String::from_utf8_lossy(&output.stdout)
+                                .trim()
+                                .to_string();
+                            // swiftc is at .../Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc
+                            // We need .../Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx
+                            PathBuf::from(&swiftc_path)
+                                .parent() // usr/bin
+                                .and_then(|p| p.parent()) // usr
+                                .map(|p| p.join("lib/swift/macosx"))
+                                .map(|p| p.to_string_lossy().to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        // Fallback to standard Xcode location
+                        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx".to_string()
+                    });
 
                 // Tell cargo to link the library (only for macOS)
                 println!("cargo:rustc-link-search=native={}", out_dir);
-                println!("cargo:rustc-link-search=native={}", toolchain_swift_lib);
+                println!("cargo:rustc-link-search=native={}", toolchain_lib_path);
                 println!("cargo:rustc-link-lib=static=secure_element");
                 println!("cargo:rustc-link-lib=framework=Security");
                 println!("cargo:rustc-link-lib=framework=Foundation");
