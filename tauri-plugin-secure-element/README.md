@@ -1,6 +1,6 @@
 # Tauri Plugin Secure Element
 
-A Tauri plugin for secure element functionality on iOS (Secure Enclave) and Android (Strongbox and TEE).
+A Tauri plugin for secure element functionality on macOS & iOS (Secure Enclave) and Android (Strongbox and TEE).
 
 ## Features
 
@@ -9,7 +9,7 @@ A Tauri plugin for secure element functionality on iOS (Secure Enclave) and Andr
 - List and manage secure keys
 - Check secure element support on the device
 - Support for biometric and PIN authentication modes
-- Cross-platform support for iOS and Android
+- Cross-platform support for macOS, iOS, and Android
 
 ## Installation
 
