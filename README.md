@@ -27,7 +27,7 @@ This will install dependencies, build the plugin, its js bindings and the test a
 ### iOS
 
 ```bash
-pnpm tauri ios dev
+pnpm tauri ios dev # limited functionality on the simulator
 ```
 
 ### Android
