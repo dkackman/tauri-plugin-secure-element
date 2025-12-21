@@ -425,11 +425,11 @@ public enum SecureEnclaveCore {
             return SupportResponse(
                 secureElementSupported: false,
                 teeSupported: false,
-                canEnforceBiometricOnly: true
+                canEnforceBiometricOnly: false
             )
         }
 
-        // Try to create access control
+        // Try to create access control with basic flags
         var accessError: Unmanaged<CFError>?
         let flags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence]
         guard SecAccessControlCreateWithFlags(
@@ -445,7 +445,7 @@ public enum SecureEnclaveCore {
             )
         }
 
-        // Try to create a test key
+        // Try to create a test key to verify Secure Enclave availability
         let testTag = Data("secure_element_test_\(UUID().uuidString)".utf8)
         let testAttributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
@@ -470,18 +470,29 @@ public enum SecureEnclaveCore {
             }
         }
 
-        if testKey != nil {
-            return SupportResponse(
-                secureElementSupported: true,
-                teeSupported: true,
-                canEnforceBiometricOnly: true
-            )
-        } else {
+        guard testKey != nil else {
             return SupportResponse(
                 secureElementSupported: false,
                 teeSupported: false,
                 canEnforceBiometricOnly: false
             )
         }
+
+        // Test if biometric-only access control can be created
+        // This checks if the device has biometric hardware (Touch ID / Face ID)
+        var biometricError: Unmanaged<CFError>?
+        let biometricFlags: SecAccessControlCreateFlags = [.privateKeyUsage, .biometryCurrentSet]
+        let canEnforceBiometric = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            biometricFlags,
+            &biometricError
+        ) != nil
+
+        return SupportResponse(
+            secureElementSupported: true,
+            teeSupported: true,
+            canEnforceBiometricOnly: canEnforceBiometric
+        )
     }
 }
