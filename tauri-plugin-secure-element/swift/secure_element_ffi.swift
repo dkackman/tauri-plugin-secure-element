@@ -78,7 +78,7 @@ public func secureElementGenerateSecureKey(
 
     let result = SecureEnclaveCore.generateSecureKey(keyName: keyNameStr, authMode: authModeStr)
     let json = resultToJson(result) { response in
-        ["publicKey": response.publicKey, "keyName": response.keyName]
+        ["publicKey": response.publicKey, "keyName": response.keyName, "hardwareBacking": response.hardwareBacking]
     }
 
     return toCString(json)
@@ -99,9 +99,6 @@ public func secureElementListKeys(
                 "keyName": keyInfo.keyName,
                 "publicKey": keyInfo.publicKey,
             ]
-            if let requiresAuth = keyInfo.requiresAuthentication {
-                info["requiresAuthentication"] = requiresAuth
-            }
             return info
         }
         return ["keys": keys]

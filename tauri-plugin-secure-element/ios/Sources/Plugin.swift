@@ -82,9 +82,6 @@ class SecureEnclavePlugin: Plugin {
                     "keyName": keyInfo.keyName,
                     "publicKey": keyInfo.publicKey,
                 ]
-                if let requiresAuth = keyInfo.requiresAuthentication {
-                    info["requiresAuthentication"] = requiresAuth
-                }
                 return info
             }
             invoke.resolve(["keys": keys])

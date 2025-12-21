@@ -2,19 +2,25 @@ import CryptoKit
 import Foundation
 import Security
 
+// this files is shared with symlink in the swift folder
+// so any changes to this file will be reflected in the swift folder
+// and vice versa
+// this is to accommodate the two build modes (cargo for macos vs xcode for ios)
+// yet share the implementation of the core logic
+
 // MARK: - Response Types
 
 /// Response from generating a secure key
 public struct GenerateKeyResponse {
     public let publicKey: String
     public let keyName: String
+    public let hardwareBacking: String
 }
 
 /// Information about a key in the Secure Enclave
 public struct KeyInfo {
     public let keyName: String
     public let publicKey: String
-    public let requiresAuthentication: Bool?
 }
 
 /// Response from listing keys
@@ -220,12 +226,6 @@ public enum SecureEnclaveCore {
             return .failure(.failedToCreateAccessControl("Unknown error"))
         }
 
-        // Store auth mode in kSecAttrApplicationTag as Data
-        let mode = authMode ?? "pinOrBiometric"
-        guard let authModeData = mode.data(using: .utf8) else {
-            return .failure(.invalidAuthMode)
-        }
-
         // Create the Secure Enclave key
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
@@ -233,7 +233,6 @@ public enum SecureEnclaveCore {
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
             kSecAttrIsPermanent as String: true,
             kSecAttrLabel as String: keyName,
-            kSecAttrApplicationTag as String: authModeData,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
                 kSecAttrAccessControl as String: accessControl,
@@ -251,7 +250,7 @@ public enum SecureEnclaveCore {
         // Export public key
         switch exportPublicKeyBase64(privateKey: privateKey) {
         case let .success(publicKeyBase64):
-            return .success(GenerateKeyResponse(publicKey: publicKeyBase64, keyName: keyName))
+            return .success(GenerateKeyResponse(publicKey: publicKeyBase64, keyName: keyName, hardwareBacking: "secureEnclave"))
         case let .failure(error):
             return .failure(error)
         }
@@ -301,24 +300,9 @@ public enum SecureEnclaveCore {
                     continue
                 }
 
-                // Extract auth mode from kSecAttrApplicationTag
-                var requiresAuthentication: Bool?
-                if let authModeData = item[kSecAttrApplicationTag as String] as? Data,
-                   let authModeString = String(data: authModeData, encoding: .utf8) {
-                    switch authModeString {
-                    case "none":
-                        requiresAuthentication = false
-                    case "pinOrBiometric", "biometricOnly":
-                        requiresAuthentication = true
-                    default:
-                        requiresAuthentication = nil
-                    }
-                }
-
                 keys.append(KeyInfo(
                     keyName: foundKeyName,
                     publicKey: publicKeyBase64,
-                    requiresAuthentication: requiresAuthentication
                 ))
             }
         } else if status != errSecItemNotFound {
