@@ -1,15 +1,26 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive",
-    "cSpell.words": [
-        "androidx",
-        "clippy",
-        "ktlint",
-        "naturalcycles",
-        "secp",
-        "secureelement",
-        "serde",
-        "swiftformat",
-        "swiftlint",
-        "thiserror"
-    ]
+        "java.configuration.updateBuildConfiguration": "interactive",
+        "cSpell.words": [
+                "androidx",
+                "ECSEC",
+                "libc",
+                "libsecure",
+                "rustc",
+                "secp",
+                "secureelement",
+                "strdup",
+                "swiftc",
+                "swiftlint",
+                "xcrun",
+                "xctoolchain",
+                "clippy",
+                "ktlint",
+                "naturalcycles",
+                "secp",
+                "secureelement",
+                "serde",
+                "swiftformat",
+                "swiftlint",
+                "thiserror"
+        ]
 }

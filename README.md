@@ -24,14 +24,29 @@ This will install dependencies, build the plugin, its js bindings and the test a
 
 ## Running
 
-### Run the Test App in Development Mode
+### iOS
 
 ```bash
 pnpm tauri ios dev # limited functionality on the simulator
+```
 
-or
+### Android
 
+```bash
+cd test-app
 pnpm tauri android dev
+```
+
+### macOS
+
+macOS Secure Enclave access requires special code signing setup with a provisioning profile. See the **[macOS Development Guide](docs/macos-development.md)** for detailed instructions.
+
+Quick start (after setup):
+
+```bash
+cd test-app
+./build-macos-dev.sh
+open src-tauri/target/debug/bundle/macos/test-app.app
 ```
 
 ## Using Tauri Plugin Secure Element

@@ -37,4 +37,115 @@ fn main() {
         .android_path("android")
         .ios_path("ios")
         .build();
+
+    // Compile Swift code for macOS ONLY
+    #[cfg(target_os = "macos")]
+    {
+        // Double-check target explicitly to ensure we only run for macOS, not iOS
+        let target = std::env::var("TARGET").unwrap_or_default();
+        if target.contains("apple-ios") {
+            // Explicitly skip for iOS builds
+            return;
+        }
+        use std::path::PathBuf;
+        use std::process::Command;
+
+        let swift_core = PathBuf::from("swift/SecureEnclaveCore.swift");
+        let swift_ffi = PathBuf::from("swift/secure_element_ffi.swift");
+
+        if !swift_core.exists() || !swift_ffi.exists() {
+            println!("cargo:warning=Swift files not found, skipping macOS build");
+            return;
+        }
+
+        // Tell Cargo to rerun this build script if Swift files change
+        println!("cargo:rerun-if-changed={}", swift_core.display());
+        println!("cargo:rerun-if-changed={}", swift_ffi.display());
+
+        let out_dir = std::env::var("OUT_DIR").unwrap();
+
+        // Get macOS SDK path
+        let sdk_output = Command::new("xcrun")
+            .args(["--show-sdk-path", "--sdk", "macosx"])
+            .output();
+
+        let sdk_path = match sdk_output {
+            Ok(output) => {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if path.is_empty() {
+                    println!("cargo:warning=Failed to get macOS SDK path");
+                    return;
+                }
+                path
+            }
+            Err(e) => {
+                println!("cargo:warning=Failed to run xcrun: {}", e);
+                return;
+            }
+        };
+
+        // Compile Swift files to object file (swiftc can compile multiple files at once)
+        let object_file = format!("{}/secure_element.o", out_dir);
+        let swift_status = Command::new("swiftc")
+            .args([
+                "-c",
+                swift_core.to_str().unwrap(),
+                swift_ffi.to_str().unwrap(),
+                "-o",
+                object_file.as_str(),
+                "-target",
+                "arm64-apple-macosx11.0",
+                "-sdk",
+                sdk_path.as_str(),
+                "-whole-module-optimization",
+            ])
+            .output();
+
+        match swift_status {
+            Ok(output) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    println!("cargo:warning=Swift compilation failed: {}", stderr);
+                    return;
+                }
+            }
+            Err(e) => {
+                println!("cargo:warning=Failed to run swiftc: {}", e);
+                return;
+            }
+        }
+
+        // Create static library from object file
+        let lib_path = format!("{}/libsecure_element.a", out_dir);
+        let ar_status = Command::new("ar")
+            .args(["rcs", lib_path.as_str(), object_file.as_str()])
+            .output();
+
+        if let Ok(output) = ar_status {
+            if output.status.success() {
+                // Double-check we're building for macOS (not iOS or Android)
+                let target = std::env::var("TARGET").unwrap_or_default();
+                if !target.contains("apple-darwin")
+                    || target.contains("apple-ios")
+                    || target.contains("android")
+                {
+                    // Skip linking for non-macOS targets
+                    return;
+                }
+
+                // Get Swift toolchain path for compatibility libraries (macOS only)
+                let toolchain_swift_lib = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx";
+
+                // Tell cargo to link the library (only for macOS)
+                println!("cargo:rustc-link-search=native={}", out_dir);
+                println!("cargo:rustc-link-search=native={}", toolchain_swift_lib);
+                println!("cargo:rustc-link-lib=static=secure_element");
+                println!("cargo:rustc-link-lib=framework=Security");
+                println!("cargo:rustc-link-lib=framework=Foundation");
+                // Link Swift compatibility libraries (macOS only)
+                println!("cargo:rustc-link-lib=static=swiftCompatibility56");
+                println!("cargo:rustc-link-lib=static=swiftCompatibilityConcurrency");
+            }
+        }
+    }
 }

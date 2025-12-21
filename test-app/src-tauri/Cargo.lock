@@ -3313,9 +3313,12 @@ dependencies = [
 name = "tauri-plugin-secure-element"
 version = "0.1.0-alpha.5"
 dependencies = [
+ "base64 0.22.1",
  "hex",
+ "libc",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.17",
