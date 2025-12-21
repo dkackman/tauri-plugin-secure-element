@@ -63,6 +63,7 @@ class SecureEnclavePlugin: Plugin {
             invoke.resolve([
                 "publicKey": response.publicKey,
                 "keyName": response.keyName,
+                "hardwareBacking": response.hardwareBacking,
             ])
         case let .failure(error):
             logError("generateSecureKey", error: error.localizedDescription)
