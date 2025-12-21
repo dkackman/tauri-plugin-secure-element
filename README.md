@@ -27,7 +27,7 @@ This will install dependencies, build the plugin, its js bindings and the test a
 ### Run the Test App in Development Mode
 
 ```bash
-pnpm tauri ios dev
+pnpm tauri ios dev # limited functionality on the simulator
 
 or
 
