@@ -31,6 +31,91 @@ extern "C" {
     ) -> *mut std::ffi::c_char;
 }
 
+/// Helper module for macOS FFI operations
+#[cfg(target_os = "macos")]
+mod ffi_helpers {
+    use std::ffi::CStr;
+
+    /// Converts an FFI C string pointer to a Rust String and frees the memory.
+    /// The pointer must have been allocated by Swift using malloc/strdup.
+    ///
+    /// # Safety
+    /// - `ptr` must be a valid, non-null pointer to a null-terminated C string
+    /// - `ptr` must have been allocated by malloc (will be freed with libc::free)
+    pub unsafe fn ffi_string_to_owned(ptr: *mut std::ffi::c_char) -> crate::Result<String> {
+        if ptr.is_null() {
+            return Err(crate::Error::Io(std::io::Error::other(
+                "FFI call returned null",
+            )));
+        }
+
+        // Convert to CStr and then to owned String before freeing
+        let result = CStr::from_ptr(ptr)
+            .to_str()
+            .map(|s| s.to_string())
+            .map_err(|e| {
+                crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Invalid UTF-8 in FFI result: {}", e),
+                ))
+            });
+
+        // Always free the pointer, even on error
+        libc::free(ptr as *mut libc::c_void);
+
+        let s = result?;
+        if s.is_empty() {
+            return Err(crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "FFI call returned empty string",
+            )));
+        }
+
+        Ok(s)
+    }
+
+    /// Parses a JSON response from FFI, checking for error field first.
+    /// Returns the parsed response or an error if the JSON contains an "error" field.
+    pub fn parse_ffi_response<T: serde::de::DeserializeOwned>(json: &str) -> crate::Result<T> {
+        // First check if response contains an error
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+            crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to parse JSON: {}", e),
+            ))
+        })?;
+
+        if let Some(error_msg) = value.get("error").and_then(|v| v.as_str()) {
+            return Err(crate::Error::Io(std::io::Error::other(error_msg)));
+        }
+
+        // Now deserialize to the expected type
+        serde_json::from_str(json).map_err(|e| {
+            crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to deserialize response: {}", e),
+            ))
+        })
+    }
+
+    /// Converts an optional String to a CString, returning the pointer and keeping the CString alive.
+    /// Returns (null pointer, None) if the input is None or contains null bytes.
+    pub fn optional_to_cstring(
+        s: Option<&String>,
+    ) -> (*const std::ffi::c_char, Option<std::ffi::CString>) {
+        match s {
+            Some(s) => match std::ffi::CString::new(s.as_str()) {
+                Ok(cstr) => {
+                    let ptr = cstr.as_ptr();
+                    (ptr, Some(cstr))
+                }
+                Err(_) => (std::ptr::null(), None),
+            },
+            None => (std::ptr::null(), None),
+        }
+    }
+}
+
 // initializes the Kotlin or Swift plugin classes
 pub fn init<R: Runtime, C: DeserializeOwned>(
     _app: &AppHandle<R>,
@@ -38,9 +123,6 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 ) -> crate::Result<SecureElement<R>> {
     #[cfg(target_os = "macos")]
     {
-        // On macOS, we can't use the iOS plugin APIs, so we'll use a placeholder
-        // TODO: Implement proper FFI bindings to call Swift functions directly
-        // For now, return a macOS struct that will handle calls via FFI (to be implemented)
         Ok(SecureElement(std::marker::PhantomData::<fn() -> R>))
     }
     #[cfg(target_os = "android")]
@@ -68,8 +150,6 @@ impl<R: Runtime> SecureElement<R> {
         #[cfg(target_os = "macos")]
         {
             let _ = self;
-            // TODO: Implement direct FFI call to Swift plugin
-            // For now, return a simple response
             Ok(PingResponse {
                 value: payload.value,
             })
@@ -88,9 +168,8 @@ impl<R: Runtime> SecureElement<R> {
     ) -> crate::Result<GenerateSecureKeyResponse> {
         #[cfg(target_os = "macos")]
         {
-            use std::ffi::{CStr, CString};
+            use std::ffi::CString;
 
-            // Convert key_name to C string
             let key_name_cstr = CString::new(payload.key_name.as_str()).map_err(|e| {
                 crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -98,7 +177,6 @@ impl<R: Runtime> SecureElement<R> {
                 ))
             })?;
 
-            // Convert auth_mode to C string (keep alive for FFI call)
             let auth_mode_str = match payload.auth_mode {
                 crate::models::AuthenticationMode::None => "none",
                 crate::models::AuthenticationMode::PinOrBiometric => "pinOrBiometric",
@@ -111,98 +189,12 @@ impl<R: Runtime> SecureElement<R> {
                 ))
             })?;
 
-            // Call Swift FFI function
             let result_ptr = unsafe {
                 secure_element_generate_secure_key(key_name_cstr.as_ptr(), auth_mode_cstr.as_ptr())
             };
 
-            if result_ptr.is_null() {
-                return Err(crate::Error::Io(std::io::Error::other(
-                    "FFI call returned null",
-                )));
-            }
-
-            // Convert C string to Rust string BEFORE freeing
-            let result_str = {
-                // Validate pointer is readable (check first byte)
-                unsafe {
-                    if *result_ptr == 0 {
-                        libc::free(result_ptr as *mut libc::c_void);
-                        return Err(crate::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Swift function returned empty/null string",
-                        )));
-                    }
-                }
-
-                let result_cstr = unsafe { CStr::from_ptr(result_ptr) };
-
-                // Debug: check the raw bytes before conversion
-                let len = unsafe { libc::strlen(result_ptr) };
-
-                let str_result = result_cstr.to_str().map_err(|e| {
-                    // Free before returning error
-                    unsafe {
-                        libc::free(result_ptr as *mut libc::c_void);
-                    }
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Invalid UTF-8 in FFI result: {} (pointer: {:p}, len: {})",
-                            e, result_ptr, len
-                        ),
-                    ))
-                })?;
-
-                // Copy to owned String immediately to ensure it's valid after free
-                let owned = str_result.to_string();
-                eprintln!(
-                    "DEBUG: Converted to Rust string: '{}' (len: {})",
-                    owned,
-                    owned.len()
-                );
-                owned
-            };
-
-            // Now free the C string allocated by Swift
-            unsafe {
-                libc::free(result_ptr as *mut libc::c_void);
-            }
-
-            if result_str.is_empty() {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Swift function returned empty string",
-                )));
-            }
-
-            // Parse JSON response and check for errors
-            let response: serde_json::Value = serde_json::from_str(&result_str).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to parse JSON response: {} (response was: '{}', len: {}, bytes: {:?})", 
-                        e, result_str, result_str.len(), result_str.as_bytes()),
-                ))
-            })?;
-
-            // Check for error in response
-            if let Some(error_msg) = response.get("error").and_then(|v| v.as_str()) {
-                return Err(crate::Error::Io(std::io::Error::other(error_msg)));
-            }
-
-            // Deserialize directly from the JSON string
-            let generate_response: GenerateSecureKeyResponse = serde_json::from_str(&result_str)
-                .map_err(|e| {
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Failed to deserialize GenerateSecureKeyResponse: {} (JSON was: {})",
-                            e, result_str
-                        ),
-                    ))
-                })?;
-
-            Ok(generate_response)
+            let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
+            ffi_helpers::parse_ffi_response(&json)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -215,115 +207,15 @@ impl<R: Runtime> SecureElement<R> {
     pub fn list_keys(&self, payload: ListKeysRequest) -> crate::Result<ListKeysResponse> {
         #[cfg(target_os = "macos")]
         {
-            use std::ffi::{CStr, CString};
+            let (key_name_ptr, _key_name_cstr) =
+                ffi_helpers::optional_to_cstring(payload.key_name.as_ref());
+            let (public_key_ptr, _public_key_cstr) =
+                ffi_helpers::optional_to_cstring(payload.public_key.as_ref());
 
-            // Convert optional strings to C strings (pass null pointer for None)
-            let (key_name_ptr, _key_name_cstr) = match payload.key_name.as_ref() {
-                Some(s) => {
-                    if let Ok(cstr) = CString::new(s.as_str()) {
-                        (cstr.as_ptr(), Some(cstr))
-                    } else {
-                        (std::ptr::null(), None)
-                    }
-                }
-                None => (std::ptr::null(), None),
-            };
-
-            let (public_key_ptr, _public_key_cstr) = match payload.public_key.as_ref() {
-                Some(s) => {
-                    if let Ok(cstr) = CString::new(s.as_str()) {
-                        (cstr.as_ptr(), Some(cstr))
-                    } else {
-                        (std::ptr::null(), None)
-                    }
-                }
-                None => (std::ptr::null(), None),
-            };
-
-            // Call Swift FFI function
             let result_ptr = unsafe { secure_element_list_keys(key_name_ptr, public_key_ptr) };
 
-            if result_ptr.is_null() {
-                return Err(crate::Error::Io(std::io::Error::other(
-                    "FFI call returned null",
-                )));
-            }
-
-            // Convert C string to Rust string BEFORE freeing
-            // Read the string first, then free
-            let result_str = {
-                // Validate pointer is readable (check first byte)
-                unsafe {
-                    if *result_ptr == 0 {
-                        libc::free(result_ptr as *mut libc::c_void);
-                        return Err(crate::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Swift function returned empty/null string",
-                        )));
-                    }
-                }
-
-                let result_cstr = unsafe { CStr::from_ptr(result_ptr) };
-
-                let str_result = result_cstr.to_str().map_err(|e| {
-                    // Free before returning error
-                    let len = unsafe { libc::strlen(result_ptr) };
-                    unsafe {
-                        libc::free(result_ptr as *mut libc::c_void);
-                    }
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Invalid UTF-8 in FFI result: {} (pointer: {:p}, len: {})",
-                            e, result_ptr, len
-                        ),
-                    ))
-                })?;
-
-                // Copy to owned String immediately to ensure it's valid after free
-                str_result.to_string()
-            };
-
-            // Now free the C string allocated by Swift
-            unsafe {
-                libc::free(result_ptr as *mut libc::c_void);
-            }
-
-            if result_str.is_empty() {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Swift function returned empty string",
-                )));
-            }
-
-            // Parse JSON response and check for errors
-            let response: serde_json::Value = serde_json::from_str(&result_str).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to parse JSON response: {} (response was: '{}', len: {}, bytes: {:?})", 
-                        e, result_str, result_str.len(), result_str.as_bytes()),
-                ))
-            })?;
-
-            // Check for error in response
-            if let Some(error_msg) = response.get("error").and_then(|v| v.as_str()) {
-                return Err(crate::Error::Io(std::io::Error::other(error_msg)));
-            }
-
-            // Deserialize directly from the JSON string instead of going through Value
-            // This ensures proper handling of the camelCase field names
-            let list_response: ListKeysResponse =
-                serde_json::from_str(&result_str).map_err(|e| {
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Failed to deserialize ListKeysResponse: {} (JSON was: {})",
-                            e, result_str
-                        ),
-                    ))
-                })?;
-
-            Ok(list_response)
+            let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
+            ffi_helpers::parse_ffi_response(&json)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -337,9 +229,8 @@ impl<R: Runtime> SecureElement<R> {
         #[cfg(target_os = "macos")]
         {
             use base64::Engine;
-            use std::ffi::{CStr, CString};
+            use std::ffi::CString;
 
-            // Convert key_name to C string
             let key_name_cstr = CString::new(payload.key_name.as_str()).map_err(|e| {
                 crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -347,105 +238,49 @@ impl<R: Runtime> SecureElement<R> {
                 ))
             })?;
 
-            // Convert data to base64 string, then to C string
             let data_base64 = base64::engine::general_purpose::STANDARD.encode(&payload.data);
             let data_base64_cstr = CString::new(data_base64.as_str()).map_err(|e| {
                 crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("Invalid data_base64: {}", e),
+                    format!("Invalid data: {}", e),
                 ))
             })?;
 
-            // Call Swift FFI function
             let result_ptr = unsafe {
                 secure_element_sign_with_key(key_name_cstr.as_ptr(), data_base64_cstr.as_ptr())
             };
 
-            if result_ptr.is_null() {
-                return Err(crate::Error::Io(std::io::Error::other(
-                    "FFI call returned null",
-                )));
-            }
+            let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
 
-            // Convert C string to Rust string BEFORE freeing
-            let result_str = {
-                // Validate pointer is readable (check first byte)
-                unsafe {
-                    if *result_ptr == 0 {
-                        libc::free(result_ptr as *mut libc::c_void);
-                        return Err(crate::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Swift function returned empty/null string",
-                        )));
-                    }
-                }
-
-                let result_cstr = unsafe { CStr::from_ptr(result_ptr) };
-
-                let str_result = result_cstr.to_str().map_err(|e| {
-                    // Free before returning error
-                    unsafe {
-                        libc::free(result_ptr as *mut libc::c_void);
-                    }
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Invalid UTF-8 in FFI result: {} (pointer: {:p})",
-                            e, result_ptr
-                        ),
-                    ))
-                })?;
-
-                // Copy to owned String immediately to ensure it's valid after free
-                str_result.to_string()
-            };
-
-            // Now free the C string allocated by Swift
-            unsafe {
-                libc::free(result_ptr as *mut libc::c_void);
-            }
-
-            if result_str.is_empty() {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Swift function returned empty string",
-                )));
-            }
-
-            // Parse JSON response and check for errors
-            let response: serde_json::Value = serde_json::from_str(&result_str).map_err(|e| {
+            // Parse and extract signature manually since we need to decode base64
+            let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
                 crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Failed to parse JSON response: {} (response was: '{}')",
-                        e, result_str
-                    ),
+                    format!("Failed to parse JSON: {}", e),
                 ))
             })?;
 
-            // Check for error in response
-            if let Some(error_msg) = response.get("error").and_then(|v| v.as_str()) {
+            if let Some(error_msg) = value.get("error").and_then(|v| v.as_str()) {
                 return Err(crate::Error::Io(std::io::Error::other(error_msg)));
             }
 
-            // Extract signature from JSON (it's base64 encoded)
-            let signature_base64 = response
-                .get("signature")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Missing signature in response",
-                    ))
-                })?;
+            let signature_base64 =
+                value
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        crate::Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Missing signature in response",
+                        ))
+                    })?;
 
-            // Decode base64 signature to bytes
             let signature = base64::engine::general_purpose::STANDARD
                 .decode(signature_base64)
                 .map_err(|e| {
                     crate::Error::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!("Failed to decode signature from base64: {}", e),
+                        format!("Failed to decode signature: {}", e),
                     ))
                 })?;
 
@@ -462,103 +297,28 @@ impl<R: Runtime> SecureElement<R> {
     pub fn delete_key(&self, payload: DeleteKeyRequest) -> crate::Result<DeleteKeyResponse> {
         #[cfg(target_os = "macos")]
         {
-            use std::ffi::{CStr, CString};
+            let (key_name_ptr, _key_name_cstr) =
+                ffi_helpers::optional_to_cstring(payload.key_name.as_ref());
+            let (public_key_ptr, _public_key_cstr) =
+                ffi_helpers::optional_to_cstring(payload.public_key.as_ref());
 
-            // Convert optional strings to C strings (pass null pointer for None)
-            let (key_name_ptr, _key_name_cstr) = match payload.key_name.as_ref() {
-                Some(s) => {
-                    if let Ok(cstr) = CString::new(s.as_str()) {
-                        (cstr.as_ptr(), Some(cstr))
-                    } else {
-                        (std::ptr::null(), None)
-                    }
-                }
-                None => (std::ptr::null(), None),
-            };
-
-            let (public_key_ptr, _public_key_cstr) = match payload.public_key.as_ref() {
-                Some(s) => {
-                    if let Ok(cstr) = CString::new(s.as_str()) {
-                        (cstr.as_ptr(), Some(cstr))
-                    } else {
-                        (std::ptr::null(), None)
-                    }
-                }
-                None => (std::ptr::null(), None),
-            };
-
-            // Call Swift FFI function
             let result_ptr = unsafe { secure_element_delete_key(key_name_ptr, public_key_ptr) };
 
-            if result_ptr.is_null() {
-                return Err(crate::Error::Io(std::io::Error::other(
-                    "FFI call returned null",
-                )));
-            }
+            let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
 
-            // Convert C string to Rust string BEFORE freeing
-            let result_str = {
-                // Validate pointer is readable (check first byte)
-                unsafe {
-                    if *result_ptr == 0 {
-                        libc::free(result_ptr as *mut libc::c_void);
-                        return Err(crate::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Swift function returned empty/null string",
-                        )));
-                    }
-                }
-
-                let result_cstr = unsafe { CStr::from_ptr(result_ptr) };
-
-                let str_result = result_cstr.to_str().map_err(|e| {
-                    // Free before returning error
-                    unsafe {
-                        libc::free(result_ptr as *mut libc::c_void);
-                    }
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Invalid UTF-8 in FFI result: {} (pointer: {:p})",
-                            e, result_ptr
-                        ),
-                    ))
-                })?;
-
-                // Copy to owned String immediately to ensure it's valid after free
-                str_result.to_string()
-            };
-
-            // Now free the C string allocated by Swift
-            unsafe {
-                libc::free(result_ptr as *mut libc::c_void);
-            }
-
-            if result_str.is_empty() {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Swift function returned empty string",
-                )));
-            }
-
-            // Parse JSON response and check for errors
-            let response: serde_json::Value = serde_json::from_str(&result_str).map_err(|e| {
+            // Parse and extract success field
+            let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
                 crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Failed to parse JSON response: {} (response was: '{}')",
-                        e, result_str
-                    ),
+                    format!("Failed to parse JSON: {}", e),
                 ))
             })?;
 
-            // Check for error in response
-            if let Some(error_msg) = response.get("error").and_then(|v| v.as_str()) {
+            if let Some(error_msg) = value.get("error").and_then(|v| v.as_str()) {
                 return Err(crate::Error::Io(std::io::Error::other(error_msg)));
             }
 
-            // Extract success from JSON
-            let success = response
+            let success = value
                 .get("success")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
@@ -576,95 +336,9 @@ impl<R: Runtime> SecureElement<R> {
     pub fn check_secure_element_support(&self) -> crate::Result<CheckSecureElementSupportResponse> {
         #[cfg(target_os = "macos")]
         {
-            use std::ffi::CStr;
-
-            // Call Swift FFI function
             let result_ptr = unsafe { secure_element_check_support() };
-
-            if result_ptr.is_null() {
-                return Err(crate::Error::Io(std::io::Error::other(
-                    "FFI call returned null",
-                )));
-            }
-
-            // Convert C string to Rust string BEFORE freeing
-            let result_str = {
-                // Validate pointer is readable (check first byte)
-                unsafe {
-                    if *result_ptr == 0 {
-                        libc::free(result_ptr as *mut libc::c_void);
-                        return Err(crate::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Swift function returned empty/null string",
-                        )));
-                    }
-                }
-
-                let result_cstr = unsafe { CStr::from_ptr(result_ptr) };
-
-                // Debug: check the raw bytes before conversion
-                let len = unsafe { libc::strlen(result_ptr) };
-                eprintln!("DEBUG: C string length: {}, pointer: {:p}", len, result_ptr);
-
-                let str_result = result_cstr.to_str().map_err(|e| {
-                    // Free before returning error
-                    unsafe {
-                        libc::free(result_ptr as *mut libc::c_void);
-                    }
-                    crate::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Invalid UTF-8 in FFI result: {} (pointer: {:p}, len: {})",
-                            e, result_ptr, len
-                        ),
-                    ))
-                })?;
-
-                // Copy to owned String immediately to ensure it's valid after free
-                let owned = str_result.to_string();
-                eprintln!(
-                    "DEBUG: Converted to Rust string: '{}' (len: {})",
-                    owned,
-                    owned.len()
-                );
-                owned
-            };
-
-            // Now free the C string allocated by Swift
-            unsafe {
-                libc::free(result_ptr as *mut libc::c_void);
-            }
-
-            if result_str.is_empty() {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Swift function returned empty string",
-                )));
-            }
-
-            // Parse JSON response and check for errors
-            let response: serde_json::Value = serde_json::from_str(&result_str).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to parse JSON response: {} (response was: '{}', len: {}, bytes: {:?})", 
-                        e, result_str, result_str.len(), result_str.as_bytes()),
-                ))
-            })?;
-
-            // Check for error in response
-            if let Some(error_msg) = response.get("error").and_then(|v| v.as_str()) {
-                return Err(crate::Error::Io(std::io::Error::other(error_msg)));
-            }
-
-            // Deserialize directly from the JSON string
-            let support_response: CheckSecureElementSupportResponse = serde_json::from_str(&result_str).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to deserialize CheckSecureElementSupportResponse: {} (JSON was: {})", e, result_str),
-                ))
-            })?;
-
-            Ok(support_response)
+            let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
+            ffi_helpers::parse_ffi_response(&json)
         }
         #[cfg(not(target_os = "macos"))]
         {
