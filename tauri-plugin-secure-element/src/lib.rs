@@ -5,9 +5,9 @@ use tauri::{
 
 pub use models::*;
 
-#[cfg(all(desktop, not(target_os = "macos")))]
+#[cfg(desktop)]
 mod desktop;
-#[cfg(any(mobile, target_os = "macos"))]
+#[cfg(mobile)]
 mod mobile;
 
 mod commands;
@@ -17,9 +17,9 @@ mod validation;
 
 pub use error::{Error, Result};
 
-#[cfg(all(desktop, not(target_os = "macos")))]
+#[cfg(desktop)]
 use desktop::SecureElement;
-#[cfg(any(mobile, target_os = "macos"))]
+#[cfg(mobile)]
 use mobile::SecureElement;
 
 // Provide a stub SecureElement for when neither desktop nor mobile is configured
@@ -118,12 +118,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::check_secure_element_support
         ])
         .setup(|app, api| {
-            #[cfg(any(mobile, target_os = "macos"))]
+            #[cfg(mobile)]
             {
                 let secure_element = mobile::init(app, api)?;
                 app.manage(secure_element);
             }
-            #[cfg(all(desktop, not(target_os = "macos")))]
+            #[cfg(desktop)]
             {
                 let secure_element = desktop::init(app, api)?;
                 app.manage(secure_element);
