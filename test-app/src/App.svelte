@@ -1,6 +1,13 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { Copy, Trash2 } from "lucide-svelte";
+  import {
+    ChevronDown,
+    ChevronUp,
+    Copy,
+    Key,
+    Plus,
+    Trash2,
+  } from "lucide-svelte";
   import {
     checkSecureElementSupport,
     deleteKey,
@@ -26,6 +33,7 @@
     failed: number;
     duration: number;
   } | null>(null);
+  let testSectionExpanded = $state(false);
 
   function log(message: string, type: "info" | "success" | "error" = "info") {
     const timestamp = new Date().toLocaleTimeString();
@@ -46,7 +54,6 @@
     const startTime = Date.now();
     log(`Running: ${name}`);
 
-    // Update test status to running
     testResults = testResults.map((t) =>
       t.name === name ? { ...t, status: "running" as const } : t
     );
@@ -75,6 +82,7 @@
   async function runAllTests() {
     if (isTestRunning) return;
     isTestRunning = true;
+    testSectionExpanded = true;
     clearLog();
 
     const startTime = Date.now();
@@ -83,7 +91,6 @@
     let passed = 0;
     let failed = 0;
 
-    // Define all tests
     const tests: { name: string; fn: () => Promise<void> }[] = [
       {
         name: "Check Secure Element Support",
@@ -155,13 +162,11 @@
           const encoder = new TextEncoder();
           const dataBytes = encoder.encode(message);
 
-          // Sign the message
           const signature = await signWithKey(testKeyName, dataBytes);
           if (!signature || signature.length === 0) {
             throw new Error("Empty signature returned");
           }
 
-          // Verify using Rust p256 crate (independent of plugin)
           const messageBytes = Array.from(dataBytes);
           const signatureBytes = Array.from(signature);
 
@@ -192,7 +197,6 @@
             encoder.encode("Message 2")
           );
 
-          // Compare signatures
           const sig1Hex = Array.from(sig1)
             .map((b) => b.toString(16).padStart(2, "0"))
             .join("");
@@ -239,17 +243,14 @@
         fn: async () => {
           const workflowKey = `workflow_key_${Date.now()}`;
 
-          // Create
           const { publicKey } = await generateSecureKey(workflowKey, "none");
           log(`  Created: ${workflowKey}`);
 
-          // Sign
           const encoder = new TextEncoder();
           const message = "workflow test message";
           const sig = await signWithKey(workflowKey, encoder.encode(message));
           log(`  Signed message (${sig.length} bytes)`);
 
-          // Verify using p256 crate
           const isValid = await invoke<boolean>("verify_signature", {
             publicKeyBase64: publicKey,
             message: Array.from(encoder.encode(message)),
@@ -258,11 +259,9 @@
           if (!isValid) throw new Error("Signature verification failed");
           log(`  Verified signature with p256 crate`);
 
-          // Delete
           await deleteKey(workflowKey);
           log(`  Deleted: ${workflowKey}`);
 
-          // Verify deleted
           const keys = await listKeys(workflowKey);
           if (keys && keys.length > 0) throw new Error("Key not deleted");
           log(`  Verified key is deleted`);
@@ -270,7 +269,6 @@
       },
     ];
 
-    // Initialize test results
     testResults = tests.map((t) => ({
       name: t.name,
       status: "pending" as const,
@@ -280,7 +278,6 @@
     log("Starting Integration Tests");
     log("═══════════════════════════════════════");
 
-    // Run all tests
     for (const test of tests) {
       const success = await runTest(test.name, test.fn);
       if (success) passed++;
@@ -302,39 +299,33 @@
     };
 
     isTestRunning = false;
+    _refreshKeysList();
   }
 
-  // Create Key Section
+  // Key Management
   let newKeyName = $state("");
   let createdKey = $state(null);
   let createKeyError = $state("");
-
-  // List Keys Section
-  let filterKeyName = $state("");
-  let filterPublicKey = $state("");
+  let showCreateForm = $state(false);
   let keysList = $state([]);
   let listKeysError = $state("");
+  let authMode = $state<AuthenticationMode>("pinOrBiometric");
 
-  // Sign Message Section
-  let signKeyName = $state("");
+  // Sign & Verify
+  let selectedKeyName = $state("");
   let messageToSign = $state("");
   let signature = $state<Uint8Array | null>(null);
   let signError = $state("");
-
-  // Verify Signature Section (within Sign Message)
   let verifyPublicKey = $state("");
   let verifyResult = $state<boolean | null>(null);
   let verifyError = $state("");
   let isVerifying = $state(false);
 
-  // Secure Element Support
+  // Hardware Support
   let secureElementSupported = $state(null);
   let teeSupported = $state(null);
   let canEnforceBiometricOnly = $state(null);
   let secureElementCheckError = $state("");
-
-  // Authentication Mode
-  let authMode = $state<AuthenticationMode>("pinOrBiometric");
 
   function _createKey() {
     if (!newKeyName.trim()) {
@@ -347,6 +338,7 @@
       .then((result) => {
         createdKey = result;
         newKeyName = "";
+        showCreateForm = false;
         _refreshKeysList();
       })
       .catch((err) => {
@@ -356,9 +348,7 @@
 
   function _refreshKeysList() {
     listKeysError = "";
-    const keyNameFilter = filterKeyName.trim() || undefined;
-    const publicKeyFilter = filterPublicKey.trim() || undefined;
-    listKeys(keyNameFilter, publicKeyFilter)
+    listKeys()
       .then((keys) => {
         keysList = keys;
       })
@@ -368,8 +358,8 @@
   }
 
   function _signMessage() {
-    if (!signKeyName.trim()) {
-      signError = "Please enter a key name";
+    if (!selectedKeyName.trim()) {
+      signError = "Please select a key";
       return;
     }
     if (!messageToSign.trim()) {
@@ -380,12 +370,17 @@
     signature = null;
     verifyResult = null;
     verifyError = "";
-    // Convert string to Uint8Array for signing
+
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(messageToSign);
-    signWithKey(signKeyName.trim(), dataBytes)
+    signWithKey(selectedKeyName.trim(), dataBytes)
       .then((sig) => {
         signature = sig;
+        // Auto-populate verify public key from selected key
+        const selectedKey = keysList.find((k) => k.keyName === selectedKeyName);
+        if (selectedKey) {
+          verifyPublicKey = selectedKey.publicKey;
+        }
       })
       .catch((err) => {
         signError = err.toString();
@@ -394,15 +389,15 @@
 
   async function _verifySignature() {
     if (!signature) {
-      verifyError = "No signature to verify. Sign a message first.";
+      verifyError = "No signature to verify";
       return;
     }
     if (!verifyPublicKey.trim()) {
-      verifyError = "Please enter the public key for verification";
+      verifyError = "Please enter the public key";
       return;
     }
     if (!messageToSign.trim()) {
-      verifyError = "Please enter the message that was signed";
+      verifyError = "Message is required";
       return;
     }
 
@@ -433,23 +428,31 @@
     try {
       const success = await deleteKey(keyName);
       if (success) {
+        if (selectedKeyName === keyName) {
+          selectedKeyName = "";
+          signature = null;
+        }
         _refreshKeysList();
       }
     } catch (err) {
-      // Error handling - could show a toast or update listKeysError
-      console.error("Failed to delete key:", err);
       listKeysError = err instanceof Error ? err.message : String(err);
     }
   }
 
-  async function _copyPublicKey(publicKey: string) {
+  async function _copyToClipboard(text: string) {
     try {
-      await navigator.clipboard.writeText(publicKey);
-      // Visual feedback could be added here (toast, icon change, etc.)
+      await navigator.clipboard.writeText(text);
     } catch (err) {
-      console.error("Failed to copy public key:", err);
-      listKeysError = err instanceof Error ? err.message : String(err);
+      console.error("Failed to copy:", err);
     }
+  }
+
+  function _selectKey(keyName: string) {
+    selectedKeyName = keyName;
+    signature = null;
+    verifyResult = null;
+    signError = "";
+    verifyError = "";
   }
 
   function formatSignature(sig: Uint8Array | null) {
@@ -460,17 +463,14 @@
   }
 
   function _checkSecureElementSupport() {
-    console.log("[App] _checkSecureElementSupport called");
     secureElementCheckError = "";
     checkSecureElementSupport()
       .then((result) => {
-        console.log("[App] checkSecureElementSupport success:", result);
         secureElementSupported = result.secureElementSupported;
         teeSupported = result.teeSupported;
         canEnforceBiometricOnly = result.canEnforceBiometricOnly;
       })
       .catch((err) => {
-        console.error("[App] checkSecureElementSupport error:", err);
         secureElementCheckError = err.toString();
         secureElementSupported = false;
         teeSupported = false;
@@ -478,63 +478,373 @@
       });
   }
 
-  // Reset authMode if biometricOnly is selected but not supported
   $effect(() => {
     if (authMode === "biometricOnly" && canEnforceBiometricOnly === false) {
       authMode = "pinOrBiometric";
     }
   });
 
-  // Load keys and check secure element support on mount
+  // Initialize
   _refreshKeysList();
   _checkSecureElementSupport();
 </script>
 
-<main class="container my-4">
-  <h1 class="mb-4 pb-2 border-bottom">Secure Key Manager</h1>
-
-  <!-- Integration Test Runner -->
-  <section class="card mb-4 border-primary">
-    <div
-      class="card-header bg-primary text-white d-flex justify-content-between align-items-center"
-    >
-      <h5 class="mb-0">Integration Test Runner</h5>
-      {#if testSummary}
+<main class="container py-3">
+  <!-- Header with Hardware Status -->
+  <div
+    class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-4 pb-3 border-bottom"
+  >
+    <h1 class="h3 mb-2 mb-md-0">Secure Key Manager</h1>
+    <div class="d-flex flex-wrap gap-2">
+      {#if secureElementCheckError}
+        <span class="badge bg-danger">Hardware Error</span>
+      {:else if secureElementSupported !== null}
         <span
-          class="badge {testSummary.failed === 0 ? 'bg-success' : 'bg-danger'}"
+          class="badge {secureElementSupported ? 'bg-success' : 'bg-secondary'}"
         >
-          {testSummary.passed}/{testSummary.total} passed
+          SE: {secureElementSupported ? "Yes" : "No"}
         </span>
+        <span class="badge {teeSupported ? 'bg-success' : 'bg-secondary'}">
+          TEE: {teeSupported ? "Yes" : "No"}
+        </span>
+        {#if canEnforceBiometricOnly}
+          <span class="badge bg-info">Bio-Only</span>
+        {/if}
+      {:else}
+        <span class="badge bg-secondary">Checking...</span>
       {/if}
     </div>
-    <div class="card-body">
-      <div class="d-flex gap-2 mb-3">
-        <button
-          onclick={runAllTests}
-          class="btn btn-primary"
-          disabled={isTestRunning}
-        >
-          {#if isTestRunning}
-            <span class="spinner-border spinner-border-sm me-2" role="status"
-            ></span>
-            Running Tests...
-          {:else}
-            Run All Tests
-          {/if}
-        </button>
-        <button
-          onclick={clearLog}
-          class="btn btn-outline-secondary"
-          disabled={isTestRunning}
-        >
-          Clear
-        </button>
-      </div>
+  </div>
 
-      <!-- Test Status Grid -->
-      {#if testResults.length > 0}
-        <div class="mb-3">
-          <div class="d-flex flex-wrap gap-2">
+  <div class="row g-4">
+    <!-- Left Column: Keys -->
+    <div class="col-12 col-lg-5">
+      <section class="card h-100">
+        <div
+          class="card-header d-flex justify-content-between align-items-center"
+        >
+          <h2 class="h5 mb-0">
+            <Key size={18} class="me-2" />
+            Your Keys
+          </h2>
+          <button
+            onclick={() => (showCreateForm = !showCreateForm)}
+            class="btn btn-sm {showCreateForm
+              ? 'btn-outline-secondary'
+              : 'btn-success'}"
+          >
+            {#if showCreateForm}
+              Cancel
+            {:else}
+              <Plus size={16} class="me-1" /> New Key
+            {/if}
+          </button>
+        </div>
+        <div class="card-body">
+          <!-- Create Key Form (collapsible) -->
+          {#if showCreateForm}
+            <div class="border rounded p-3 mb-3 bg-light">
+              <div class="mb-2">
+                <input
+                  type="text"
+                  class="form-control form-control-sm"
+                  bind:value={newKeyName}
+                  placeholder="Key name"
+                  onkeydown={(e) => e.key === "Enter" && _createKey()}
+                />
+              </div>
+              <div class="mb-2">
+                <select
+                  bind:value={authMode}
+                  class="form-select form-select-sm"
+                >
+                  <option value="none">No Authentication</option>
+                  <option value="pinOrBiometric">PIN or Biometric</option>
+                  {#if canEnforceBiometricOnly === true}
+                    <option value="biometricOnly">Biometric Only</option>
+                  {/if}
+                </select>
+              </div>
+              <button onclick={_createKey} class="btn btn-success btn-sm w-100">
+                Create Key
+              </button>
+              {#if createKeyError}
+                <div class="alert alert-danger mt-2 mb-0 py-1 px-2 small">
+                  {createKeyError}
+                </div>
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Success message for created key -->
+          {#if createdKey}
+            <div class="alert alert-success py-2 px-3 small">
+              <strong>Created:</strong>
+              {createdKey.keyName}
+              <span class="badge bg-info ms-1"
+                >{createdKey.hardwareBacking}</span
+              >
+            </div>
+          {/if}
+
+          <!-- Keys List -->
+          {#if listKeysError}
+            <div class="alert alert-danger py-2">{listKeysError}</div>
+          {/if}
+
+          {#if keysList.length === 0}
+            <div class="text-center text-muted py-4">
+              <Key size={32} class="mb-2 opacity-50" />
+              <p class="mb-0">No keys yet</p>
+              <small>Create your first secure key</small>
+            </div>
+          {:else}
+            <div class="list-group list-group-flush">
+              {#each keysList as key}
+                <div
+                  class="list-group-item px-0 {selectedKeyName === key.keyName
+                    ? 'bg-primary-subtle'
+                    : ''}"
+                >
+                  <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1 min-width-0">
+                      <button
+                        onclick={() => _selectKey(key.keyName)}
+                        class="btn btn-link p-0 text-start text-decoration-none fw-medium"
+                      >
+                        {key.keyName}
+                      </button>
+                      <div
+                        class="small text-muted text-truncate"
+                        style="max-width: 200px;"
+                        title={key.publicKey}
+                      >
+                        {key.publicKey.slice(0, 20)}...
+                      </div>
+                    </div>
+                    <div class="d-flex gap-1 ms-2">
+                      <button
+                        onclick={() => _copyToClipboard(key.publicKey)}
+                        class="btn btn-outline-secondary btn-sm p-1"
+                        title="Copy public key"
+                      >
+                        <Copy size={14} />
+                      </button>
+                      <button
+                        onclick={() => _deleteKeyByName(key.keyName)}
+                        class="btn btn-outline-danger btn-sm p-1"
+                        title="Delete key"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </section>
+    </div>
+
+    <!-- Right Column: Sign & Verify -->
+    <div class="col-12 col-lg-7">
+      <section class="card h-100">
+        <div class="card-header">
+          <h2 class="h5 mb-0">Sign & Verify</h2>
+        </div>
+        <div class="card-body">
+          {#if keysList.length === 0}
+            <div class="text-center text-muted py-4">
+              <p class="mb-0">Create a key first to sign messages</p>
+            </div>
+          {:else}
+            <!-- Key Selection -->
+            <div class="mb-3">
+              <label for="keySelect" class="form-label small fw-medium"
+                >Select Key</label
+              >
+              <select
+                id="keySelect"
+                bind:value={selectedKeyName}
+                class="form-select"
+                onchange={() => {
+                  signature = null;
+                  verifyResult = null;
+                }}
+              >
+                <option value="">Choose a key...</option>
+                {#each keysList as key}
+                  <option value={key.keyName}>{key.keyName}</option>
+                {/each}
+              </select>
+            </div>
+
+            <!-- Message Input -->
+            <div class="mb-3">
+              <label for="message" class="form-label small fw-medium"
+                >Message</label
+              >
+              <textarea
+                id="message"
+                class="form-control"
+                bind:value={messageToSign}
+                placeholder="Enter message to sign"
+                rows="3"
+                disabled={!selectedKeyName}
+              ></textarea>
+            </div>
+
+            <!-- Sign Button -->
+            <button
+              onclick={_signMessage}
+              class="btn btn-success w-100 mb-3"
+              disabled={!selectedKeyName || !messageToSign.trim()}
+            >
+              Sign Message
+            </button>
+
+            {#if signError}
+              <div class="alert alert-danger py-2">{signError}</div>
+            {/if}
+
+            <!-- Signature Result & Verification -->
+            {#if signature}
+              <div class="border rounded p-3 bg-light">
+                <div class="mb-3">
+                  <div
+                    class="d-flex justify-content-between align-items-center mb-1"
+                  >
+                    <span class="small fw-medium">Signature</span>
+                    <button
+                      onclick={() =>
+                        _copyToClipboard(formatSignature(signature))}
+                      class="btn btn-outline-secondary btn-sm p-1"
+                      title="Copy signature"
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                  <code
+                    class="d-block p-2 bg-body-secondary rounded small"
+                    style="word-break: break-all; max-height: 80px; overflow-y: auto;"
+                  >
+                    {formatSignature(signature)}
+                  </code>
+                </div>
+
+                <hr />
+
+                <!-- Verification -->
+                <div class="mb-2">
+                  <label for="verifyPk" class="form-label small fw-medium">
+                    Verify with Public Key
+                  </label>
+                  <textarea
+                    id="verifyPk"
+                    class="form-control form-control-sm"
+                    bind:value={verifyPublicKey}
+                    placeholder="Public key (base64)"
+                    rows="3"
+                  ></textarea>
+                  <small class="text-muted">
+                    Uses p256 crate (independent of plugin)
+                  </small>
+                </div>
+
+                <button
+                  onclick={_verifySignature}
+                  class="btn btn-info btn-sm w-100"
+                  disabled={isVerifying || !verifyPublicKey.trim()}
+                >
+                  {#if isVerifying}
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                    Verifying...
+                  {:else}
+                    Verify Signature
+                  {/if}
+                </button>
+
+                {#if verifyError}
+                  <div class="alert alert-danger mt-2 mb-0 py-1 small">
+                    {verifyError}
+                  </div>
+                {/if}
+
+                {#if verifyResult !== null}
+                  <div
+                    class="alert mt-2 mb-0 py-2 {verifyResult
+                      ? 'alert-success'
+                      : 'alert-danger'}"
+                  >
+                    {verifyResult ? "✓ Valid Signature" : "✗ Invalid Signature"}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          {/if}
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Integration Tests (Collapsible) -->
+  <section class="card mt-4">
+    <div
+      class="card-header d-flex justify-content-between align-items-center"
+      style="cursor: pointer;"
+      onclick={() => (testSectionExpanded = !testSectionExpanded)}
+      onkeydown={(e) =>
+        e.key === "Enter" && (testSectionExpanded = !testSectionExpanded)}
+      role="button"
+      tabindex="0"
+    >
+      <div class="d-flex align-items-center gap-2">
+        <h2 class="h6 mb-0">Integration Tests</h2>
+        {#if testSummary}
+          <span
+            class="badge {testSummary.failed === 0
+              ? 'bg-success'
+              : 'bg-danger'}"
+          >
+            {testSummary.passed}/{testSummary.total}
+          </span>
+        {/if}
+      </div>
+      {#if testSectionExpanded}
+        <ChevronUp size={20} />
+      {:else}
+        <ChevronDown size={20} />
+      {/if}
+    </div>
+
+    {#if testSectionExpanded}
+      <div class="card-body">
+        <div class="d-flex gap-2 mb-3">
+          <button
+            onclick={runAllTests}
+            class="btn btn-primary btn-sm"
+            disabled={isTestRunning}
+          >
+            {#if isTestRunning}
+              <span class="spinner-border spinner-border-sm me-1"></span>
+              Running...
+            {:else}
+              Run All Tests
+            {/if}
+          </button>
+          <button
+            onclick={clearLog}
+            class="btn btn-outline-secondary btn-sm"
+            disabled={isTestRunning}
+          >
+            Clear
+          </button>
+        </div>
+
+        <!-- Test Status Badges -->
+        {#if testResults.length > 0}
+          <div class="d-flex flex-wrap gap-1 mb-3">
             {#each testResults as test}
               <span
                 class="badge {test.status === 'passed'
@@ -545,6 +855,7 @@
                       ? 'bg-warning text-dark'
                       : 'bg-secondary'}"
                 title={test.message || test.name}
+                style="font-size: 0.7rem;"
               >
                 {test.status === "running"
                   ? "..."
@@ -553,325 +864,51 @@
                     : test.status === "failed"
                       ? "✗"
                       : "○"}
-                {test.name.length > 25
-                  ? test.name.slice(0, 25) + "..."
-                  : test.name}
               </span>
             {/each}
           </div>
-        </div>
-      {/if}
+        {/if}
 
-      <!-- Console Output -->
-      <div
-        class="bg-dark text-light p-3 rounded font-monospace"
-        style="height: 300px; overflow-y: auto; font-size: 0.85rem;"
-      >
-        {#if testLog.length === 0}
-          <span class="text-muted"
-            >Click "Run All Tests" to start integration tests...</span
+        <!-- Console -->
+        <div
+          class="bg-dark text-light p-2 rounded font-monospace"
+          style="height: 200px; overflow-y: auto; font-size: 0.75rem;"
+        >
+          {#if testLog.length === 0}
+            <span class="text-muted">Click "Run All Tests" to start...</span>
+          {:else}
+            {#each testLog as line}
+              <div
+                class={line.includes("PASSED")
+                  ? "text-success"
+                  : line.includes("FAILED")
+                    ? "text-danger"
+                    : line.includes("═")
+                      ? "text-info"
+                      : "text-light"}
+              >
+                {line}
+              </div>
+            {/each}
+          {/if}
+        </div>
+
+        {#if testSummary}
+          <div
+            class="mt-2 small {testSummary.failed === 0
+              ? 'text-success'
+              : 'text-danger'}"
           >
-        {:else}
-          {#each testLog as line}
-            <div
-              class={line.includes("PASSED")
-                ? "text-success"
-                : line.includes("FAILED")
-                  ? "text-danger"
-                  : line.includes("═")
-                    ? "text-info"
-                    : "text-light"}
-            >
-              {line}
-            </div>
-          {/each}
+            {testSummary.passed} passed, {testSummary.failed} failed in {testSummary.duration}ms
+          </div>
         {/if}
       </div>
-
-      <!-- Summary -->
-      {#if testSummary}
-        <div
-          class="mt-3 alert {testSummary.failed === 0
-            ? 'alert-success'
-            : 'alert-danger'} mb-0"
-        >
-          <strong>Test Summary:</strong>
-          {testSummary.passed} passed, {testSummary.failed} failed ({testSummary.total}
-          total) in {testSummary.duration}ms
-        </div>
-      {/if}
-    </div>
-  </section>
-
-  <!-- Secure Element Status -->
-  <div class="card mb-4">
-    <div class="card-body">
-      <h5 class="card-title mb-3">Hardware Security Status</h5>
-      {#if secureElementCheckError}
-        <div class="alert alert-danger mb-0">
-          <strong>Hardware Security:</strong> Error checking support
-        </div>
-      {:else if secureElementSupported !== null}
-        <div class="d-flex flex-column gap-2">
-          <div>
-            <strong>Secure Element:</strong>
-            <span
-              class="badge {secureElementSupported
-                ? 'bg-success'
-                : 'bg-warning'} ms-2"
-            >
-              {secureElementSupported ? "✓ Supported" : "✗ Not Supported"}
-            </span>
-          </div>
-          <div>
-            <strong>TEE:</strong>
-            <span
-              class="badge {teeSupported ? 'bg-success' : 'bg-warning'} ms-2"
-            >
-              {teeSupported ? "✓ Supported" : "✗ Not Supported"}
-            </span>
-          </div>
-          <div>
-            <strong>Biometric-Only Enforcement:</strong>
-            <span
-              class="badge {canEnforceBiometricOnly
-                ? 'bg-success'
-                : 'bg-warning'} ms-2"
-            >
-              {canEnforceBiometricOnly ? "✓ Supported" : "✗ Not Supported"}
-            </span>
-          </div>
-        </div>
-      {:else}
-        <div class="alert alert-info mb-0">
-          <strong>Hardware Security:</strong> Checking...
-        </div>
-      {/if}
-    </div>
-  </div>
-
-  <!-- Create Key Section -->
-  <section class="card mb-4">
-    <div class="card-body">
-      <h2 class="card-title h5 mb-3">Create New Key</h2>
-      <div class="mb-3">
-        <label for="newKeyName" class="form-label">Key Name:</label>
-        <input
-          id="newKeyName"
-          type="text"
-          class="form-control"
-          bind:value={newKeyName}
-          placeholder="Enter unique key name"
-          onkeydown={(e) => e.key === "Enter" && _createKey()}
-        />
-      </div>
-      <div class="mb-3">
-        <label for="authMode" class="form-label"
-          >Authentication Mode (for this key):</label
-        >
-        <select id="authMode" bind:value={authMode} class="form-select">
-          <option value="none">None</option>
-          <option value="pinOrBiometric">PIN or Biometric (Default)</option>
-          {#if canEnforceBiometricOnly === true}
-            <option value="biometricOnly">Biometric Only</option>
-          {/if}
-        </select>
-      </div>
-      <button onclick={_createKey} class="btn btn-success">Create Key</button>
-      {#if createKeyError}
-        <div class="alert alert-danger mt-3 mb-0">Error: {createKeyError}</div>
-      {/if}
-      {#if createdKey}
-        <div class="alert alert-success mt-3 mb-0">
-          <strong>Key Created Successfully!</strong><br />
-          <strong>Key Name:</strong>
-          {createdKey.keyName}<br />
-          <strong>Hardware Backing:</strong>
-          <span class="badge bg-info ms-2">{createdKey.hardwareBacking}</span
-          ><br />
-          <strong>Public Key:</strong>
-          <code class="d-block mt-2 p-2 bg-body-secondary rounded small"
-            >{createdKey.publicKey}</code
-          >
-        </div>
-      {/if}
-    </div>
-  </section>
-
-  <!-- List Keys Section -->
-  <section class="card mb-4">
-    <div class="card-body">
-      <h2 class="card-title h5 mb-3">List Keys</h2>
-      <div class="mb-3">
-        <label for="filterKeyName" class="form-label"
-          >Filter by Key Name (optional):</label
-        >
-        <input
-          id="filterKeyName"
-          type="text"
-          class="form-control"
-          bind:value={filterKeyName}
-          placeholder="Key name filter"
-        />
-      </div>
-      <div class="mb-3">
-        <label for="filterPublicKey" class="form-label"
-          >Filter by Public Key (optional):</label
-        >
-        <input
-          id="filterPublicKey"
-          type="text"
-          class="form-control"
-          bind:value={filterPublicKey}
-          placeholder="Public key filter"
-        />
-      </div>
-      <button onclick={_refreshKeysList} class="btn btn-primary"
-        >Refresh List</button
-      >
-      {#if listKeysError}
-        <div class="alert alert-danger mt-3 mb-0">Error: {listKeysError}</div>
-      {/if}
-      {#if keysList.length > 0}
-        <div class="mt-3">
-          <h3 class="h6 mb-3">Found {keysList.length} key(s):</h3>
-          {#each keysList as key}
-            <div class="card mb-2">
-              <div class="card-body">
-                <div
-                  class="d-flex justify-content-between align-items-center mb-2"
-                >
-                  <div><strong>Name:</strong> {key.keyName}</div>
-                  <div class="d-flex gap-2">
-                    <button
-                      onclick={() => _copyPublicKey(key.publicKey)}
-                      class="btn btn-outline-secondary btn-sm"
-                      title="Copy public key"
-                    >
-                      <Copy size={16} />
-                    </button>
-                    <button
-                      onclick={() => _deleteKeyByName(key.keyName)}
-                      class="btn btn-outline-danger btn-sm"
-                      title="Delete key"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <strong>Public Key:</strong>
-                  <code
-                    class="d-block mt-1 p-2 bg-body-secondary rounded small text-break"
-                    style="word-break: break-all; overflow-wrap: break-word;"
-                    >{key.publicKey}</code
-                  >
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {:else if !listKeysError}
-        <div class="alert alert-info mt-3 mb-0">No keys found</div>
-      {/if}
-    </div>
-  </section>
-
-  <!-- Sign Message Section -->
-  <section class="card mb-4">
-    <div class="card-body">
-      <h2 class="card-title h5 mb-3">Sign Message</h2>
-      <div class="mb-3">
-        <label for="signKeyName" class="form-label">Key Name:</label>
-        <input
-          id="signKeyName"
-          type="text"
-          class="form-control"
-          bind:value={signKeyName}
-          placeholder="Enter key name to use"
-        />
-      </div>
-      <div class="mb-3">
-        <label for="messageToSign" class="form-label">Message to Sign:</label>
-        <textarea
-          id="messageToSign"
-          class="form-control"
-          bind:value={messageToSign}
-          placeholder="Enter message to sign"
-          rows="3"
-        ></textarea>
-      </div>
-      <button onclick={_signMessage} class="btn btn-success"
-        >Sign Message</button
-      >
-      {#if signError}
-        <div class="alert alert-danger mt-3 mb-0">Error: {signError}</div>
-      {/if}
-      {#if signature}
-        <div class="alert alert-success mt-3 mb-0">
-          <strong>Signature Generated:</strong><br />
-          <code class="d-block mt-2 p-2 bg-body-secondary rounded small"
-            >{formatSignature(signature)}</code
-          >
-        </div>
-
-        <!-- Verify Signature Sub-section -->
-        <div class="card mt-3 border-info">
-          <div class="card-body">
-            <h3 class="card-title h6 mb-3">
-              Verify Signature (using p256 crate)
-            </h3>
-            <div class="mb-3">
-              <label for="verifyPublicKey" class="form-label"
-                >Public Key (base64):</label
-              >
-              <input
-                id="verifyPublicKey"
-                type="text"
-                class="form-control"
-                bind:value={verifyPublicKey}
-                placeholder="Paste the public key to verify against"
-              />
-              <small class="form-text text-muted">
-                This verifies the signature using Rust's p256 crate, independent
-                of the plugin.
-              </small>
-            </div>
-            <button
-              onclick={_verifySignature}
-              class="btn btn-info"
-              disabled={isVerifying}
-            >
-              {#if isVerifying}
-                <span
-                  class="spinner-border spinner-border-sm me-2"
-                  role="status"
-                ></span>
-                Verifying...
-              {:else}
-                Verify Signature
-              {/if}
-            </button>
-            {#if verifyError}
-              <div class="alert alert-danger mt-3 mb-0">
-                Error: {verifyError}
-              </div>
-            {/if}
-            {#if verifyResult !== null}
-              <div
-                class="alert {verifyResult
-                  ? 'alert-success'
-                  : 'alert-danger'} mt-3 mb-0"
-              >
-                <strong>Verification Result:</strong>
-                {verifyResult
-                  ? "✓ Signature is VALID"
-                  : "✗ Signature is INVALID"}
-              </div>
-            {/if}
-          </div>
-        </div>
-      {/if}
-    </div>
+    {/if}
   </section>
 </main>
+
+<style>
+  .min-width-0 {
+    min-width: 0;
+  }
+</style>
