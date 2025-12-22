@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  import { Copy, Trash2 } from "lucide-svelte";
   import {
     checkSecureElementSupport,
     deleteKey,
@@ -7,7 +9,6 @@
     signWithKey,
     type AuthenticationMode,
   } from "tauri-plugin-secure-element-api";
-  import { invoke } from "@tauri-apps/api/core";
 
   // Test Runner Section
   type TestResult = {
@@ -326,12 +327,6 @@
   let verifyError = $state("");
   let isVerifying = $state(false);
 
-  // Delete Key Section
-  let deleteKeyName = $state("");
-  let deletePublicKey = $state("");
-  let deleteError = $state("");
-  let deleteSuccess = $state(false);
-
   // Secure Element Support
   let secureElementSupported = $state(null);
   let teeSupported = $state(null);
@@ -434,29 +429,27 @@
     }
   }
 
-  function _deleteKey() {
-    const keyName = deleteKeyName.trim() || undefined;
-    const publicKey = deletePublicKey.trim() || undefined;
-
-    if (!keyName && !publicKey) {
-      deleteError = "Please enter either a key name or public key";
-      return;
+  async function _deleteKeyByName(keyName: string) {
+    try {
+      const success = await deleteKey(keyName);
+      if (success) {
+        _refreshKeysList();
+      }
+    } catch (err) {
+      // Error handling - could show a toast or update listKeysError
+      console.error("Failed to delete key:", err);
+      listKeysError = err instanceof Error ? err.message : String(err);
     }
+  }
 
-    deleteError = "";
-    deleteSuccess = false;
-    deleteKey(keyName, publicKey)
-      .then((success) => {
-        deleteSuccess = success;
-        if (success) {
-          deleteKeyName = "";
-          deletePublicKey = "";
-          _refreshKeysList();
-        }
-      })
-      .catch((err) => {
-        deleteError = err.toString();
-      });
+  async function _copyPublicKey(publicKey: string) {
+    try {
+      await navigator.clipboard.writeText(publicKey);
+      // Visual feedback could be added here (toast, icon change, etc.)
+    } catch (err) {
+      console.error("Failed to copy public key:", err);
+      listKeysError = err instanceof Error ? err.message : String(err);
+    }
   }
 
   function formatSignature(sig: Uint8Array | null) {
@@ -745,10 +738,32 @@
           {#each keysList as key}
             <div class="card mb-2">
               <div class="card-body">
-                <div class="mb-2"><strong>Name:</strong> {key.keyName}</div>
+                <div
+                  class="d-flex justify-content-between align-items-center mb-2"
+                >
+                  <div><strong>Name:</strong> {key.keyName}</div>
+                  <div class="d-flex gap-2">
+                    <button
+                      onclick={() => _copyPublicKey(key.publicKey)}
+                      class="btn btn-outline-secondary btn-sm"
+                      title="Copy public key"
+                    >
+                      <Copy size={16} />
+                    </button>
+                    <button
+                      onclick={() => _deleteKeyByName(key.keyName)}
+                      class="btn btn-outline-danger btn-sm"
+                      title="Delete key"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
                 <div>
                   <strong>Public Key:</strong>
-                  <code class="d-block mt-1 p-2 bg-body-secondary rounded small"
+                  <code
+                    class="d-block mt-1 p-2 bg-body-secondary rounded small text-break"
+                    style="word-break: break-all; overflow-wrap: break-word;"
                     >{key.publicKey}</code
                   >
                 </div>
@@ -855,51 +870,6 @@
               </div>
             {/if}
           </div>
-        </div>
-      {/if}
-    </div>
-  </section>
-
-  <!-- Delete Key Section -->
-  <section class="card mb-4">
-    <div class="card-body">
-      <h2 class="card-title h5 mb-3">Delete Key</h2>
-      <div class="mb-3">
-        <label for="deleteKeyName" class="form-label"
-          >Key Name (optional):</label
-        >
-        <input
-          id="deleteKeyName"
-          type="text"
-          class="form-control"
-          bind:value={deleteKeyName}
-          placeholder="Enter key name to delete"
-          onkeydown={(e) => e.key === "Enter" && _deleteKey()}
-        />
-      </div>
-      <div class="mb-3">
-        <label for="deletePublicKey" class="form-label"
-          >Public Key (optional):</label
-        >
-        <input
-          id="deletePublicKey"
-          type="text"
-          class="form-control"
-          bind:value={deletePublicKey}
-          placeholder="Enter public key (base64) to delete"
-          onkeydown={(e) => e.key === "Enter" && _deleteKey()}
-        />
-        <small class="form-text text-muted"
-          >At least one of key name or public key must be provided.</small
-        >
-      </div>
-      <button onclick={_deleteKey} class="btn btn-danger">Delete Key</button>
-      {#if deleteError}
-        <div class="alert alert-danger mt-3 mb-0">Error: {deleteError}</div>
-      {/if}
-      {#if deleteSuccess}
-        <div class="alert alert-success mt-3 mb-0">
-          Key deleted successfully!
         </div>
       {/if}
     </div>

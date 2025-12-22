@@ -41,6 +41,9 @@ importers:
       bootstrap:
         specifier: ^5.3.8
         version: 5.3.8(@popperjs/core@2.11.8)
+      lucide-svelte:
+        specifier: ^0.562.0
+        version: 0.562.0(svelte@5.45.5)
       tauri-plugin-secure-element-api:
         specifier: file:../tauri-plugin-secure-element
         version: link:../tauri-plugin-secure-element
@@ -890,6 +893,11 @@ packages:
 
   lodash.merge@4.6.2:
     resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
+
+  lucide-svelte@0.562.0:
+    resolution: {integrity: sha512-kSJDH/55lf0mun/o4nqWBXOcq0fWYzPeIjbTD97ywoeumAB9kWxtM06gC7oynqjtK3XhAljWSz5RafIzPEYIQA==}
+    peerDependencies:
+      svelte: ^3 || ^4 || ^5.0.0-next.42
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -1848,6 +1856,10 @@ snapshots:
       p-locate: 5.0.0
 
   lodash.merge@4.6.2: {}
+
+  lucide-svelte@0.562.0(svelte@5.45.5):
+    dependencies:
+      svelte: 5.45.5
 
   magic-string@0.30.21:
     dependencies:
