@@ -24,6 +24,7 @@ import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
 import java.security.interfaces.ECPrivateKey
+import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.util.UUID
 import java.util.concurrent.Executor
@@ -91,10 +92,54 @@ class SecureKeysPlugin(
 
     private fun getKeyEntry(keyName: String): KeyStore.PrivateKeyEntry? = keyStore.getEntry(keyName, null) as? KeyStore.PrivateKeyEntry
 
+    /**
+     * Exports the public key in X9.62 uncompressed point format (65 bytes).
+     * Format: 0x04 + X coordinate (32 bytes) + Y coordinate (32 bytes)
+     * This matches the iOS/macOS SecKeyCopyExternalRepresentation format.
+     */
     private fun exportPublicKeyBase64(entry: KeyStore.PrivateKeyEntry): String? {
-        val publicKey = entry.certificate?.publicKey ?: return null
-        val publicKeyBytes = publicKey.encoded
-        return Base64.encodeToString(publicKeyBytes, Base64.NO_WRAP)
+        val publicKey = entry.certificate?.publicKey as? ECPublicKey ?: return null
+        val point = publicKey.w
+
+        // Get X and Y as byte arrays, ensuring exactly 32 bytes each
+        val xBytes = bigIntegerTo32Bytes(point.affineX)
+        val yBytes = bigIntegerTo32Bytes(point.affineY)
+
+        // Build uncompressed point: 0x04 + X + Y
+        val uncompressedPoint = ByteArray(65)
+        uncompressedPoint[0] = 0x04
+        System.arraycopy(xBytes, 0, uncompressedPoint, 1, 32)
+        System.arraycopy(yBytes, 0, uncompressedPoint, 33, 32)
+
+        return Base64.encodeToString(uncompressedPoint, Base64.NO_WRAP)
+    }
+
+    /**
+     * Converts a BigInteger to exactly 32 bytes.
+     * Handles both cases:
+     * - BigInteger has leading zero byte (sign bit) that needs trimming
+     * - BigInteger has fewer than 32 bytes and needs left-padding with zeros
+     */
+    private fun bigIntegerTo32Bytes(value: java.math.BigInteger): ByteArray {
+        val bytes = value.toByteArray()
+        return when {
+            bytes.size == 32 -> {
+                bytes
+            }
+
+            bytes.size > 32 -> {
+                // BigInteger prepends a zero byte if high bit is set (to indicate positive)
+                // For P-256 coordinates, this means 33 bytes with leading 0x00
+                bytes.copyOfRange(bytes.size - 32, bytes.size)
+            }
+
+            else -> {
+                // Pad with leading zeros
+                val padded = ByteArray(32)
+                System.arraycopy(bytes, 0, padded, 32 - bytes.size, bytes.size)
+                padded
+            }
+        }
     }
 
     private fun checkKeyNotExists(

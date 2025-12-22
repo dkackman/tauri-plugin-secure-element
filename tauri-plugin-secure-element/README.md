@@ -185,6 +185,18 @@ Deletes a key from the secure element. At least one parameter must be provided.
 
 **Returns:** `Promise<boolean>` - Success status
 
+## Public Key Format
+
+Public keys are returned as base64-encoded strings in **X9.62 uncompressed point format** (65 bytes), consistent across all platforms:
+
+| Byte(s) | Content                 |
+| ------- | ----------------------- |
+| 0       | `0x04` (uncompressed)   |
+| 1-32    | X coordinate (32 bytes) |
+| 33-64   | Y coordinate (32 bytes) |
+
+All keys use the **secp256r1 (P-256)** elliptic curve.
+
 ## Platform Support
 
 - **iOS**: Uses Secure Enclave for key generation and signing
