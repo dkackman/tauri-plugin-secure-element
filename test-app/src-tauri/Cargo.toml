@@ -20,4 +20,6 @@ tauri-build = { version = "2.5.3", default-features = false , features = [] }
 [dependencies]
 tauri = { version = "2.9.4", features = [] }
 tauri-plugin-secure-element = { path = "../../tauri-plugin-secure-element" }
+p256 = { version = "0.13", features = ["ecdsa"] }
+base64 = "0.22"
 

@@ -7,6 +7,7 @@
     signWithKey,
     type AuthenticationMode,
   } from "tauri-plugin-secure-element-api";
+  import { invoke } from "@tauri-apps/api/core";
 
   // Test Runner Section
   type TestResult = {
@@ -147,6 +148,37 @@
         },
       },
       {
+        name: "Verify Signature (p256 crate)",
+        fn: async () => {
+          const message = "Test message for p256 verification";
+          const encoder = new TextEncoder();
+          const dataBytes = encoder.encode(message);
+
+          // Sign the message
+          const signature = await signWithKey(testKeyName, dataBytes);
+          if (!signature || signature.length === 0) {
+            throw new Error("Empty signature returned");
+          }
+
+          // Verify using Rust p256 crate (independent of plugin)
+          const messageBytes = Array.from(dataBytes);
+          const signatureBytes = Array.from(signature);
+
+          const isValid = await invoke<boolean>("verify_signature", {
+            publicKeyBase64: testPublicKey,
+            message: messageBytes,
+            signatureDer: signatureBytes,
+          });
+
+          if (!isValid) {
+            throw new Error(
+              "Signature verification failed - signature is invalid"
+            );
+          }
+          log(`  Signature verified successfully using p256 crate`);
+        },
+      },
+      {
         name: "Sign Different Message - Produces Different Signature",
         fn: async () => {
           const encoder = new TextEncoder();
@@ -202,21 +234,28 @@
         },
       },
       {
-        name: "Full Workflow - Create, Sign, Delete",
+        name: "Full Workflow - Create, Sign, Verify, Delete",
         fn: async () => {
           const workflowKey = `workflow_key_${Date.now()}`;
 
           // Create
-          await generateSecureKey(workflowKey, "none");
+          const { publicKey } = await generateSecureKey(workflowKey, "none");
           log(`  Created: ${workflowKey}`);
 
           // Sign
           const encoder = new TextEncoder();
-          const sig = await signWithKey(
-            workflowKey,
-            encoder.encode("workflow test")
-          );
+          const message = "workflow test message";
+          const sig = await signWithKey(workflowKey, encoder.encode(message));
           log(`  Signed message (${sig.length} bytes)`);
+
+          // Verify using p256 crate
+          const isValid = await invoke<boolean>("verify_signature", {
+            publicKeyBase64: publicKey,
+            message: Array.from(encoder.encode(message)),
+            signatureDer: Array.from(sig),
+          });
+          if (!isValid) throw new Error("Signature verification failed");
+          log(`  Verified signature with p256 crate`);
 
           // Delete
           await deleteKey(workflowKey);
@@ -281,6 +320,12 @@
   let signature = $state<Uint8Array | null>(null);
   let signError = $state("");
 
+  // Verify Signature Section (within Sign Message)
+  let verifyPublicKey = $state("");
+  let verifyResult = $state<boolean | null>(null);
+  let verifyError = $state("");
+  let isVerifying = $state(false);
+
   // Delete Key Section
   let deleteKeyName = $state("");
   let deletePublicKey = $state("");
@@ -338,6 +383,8 @@
     }
     signError = "";
     signature = null;
+    verifyResult = null;
+    verifyError = "";
     // Convert string to Uint8Array for signing
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(messageToSign);
@@ -348,6 +395,43 @@
       .catch((err) => {
         signError = err.toString();
       });
+  }
+
+  async function _verifySignature() {
+    if (!signature) {
+      verifyError = "No signature to verify. Sign a message first.";
+      return;
+    }
+    if (!verifyPublicKey.trim()) {
+      verifyError = "Please enter the public key for verification";
+      return;
+    }
+    if (!messageToSign.trim()) {
+      verifyError = "Please enter the message that was signed";
+      return;
+    }
+
+    verifyError = "";
+    verifyResult = null;
+    isVerifying = true;
+
+    try {
+      const encoder = new TextEncoder();
+      const messageBytes = Array.from(encoder.encode(messageToSign));
+      const signatureBytes = Array.from(signature);
+
+      const result = await invoke<boolean>("verify_signature", {
+        publicKeyBase64: verifyPublicKey.trim(),
+        message: messageBytes,
+        signatureDer: signatureBytes,
+      });
+
+      verifyResult = result;
+    } catch (err) {
+      verifyError = err instanceof Error ? err.message : String(err);
+    } finally {
+      isVerifying = false;
+    }
   }
 
   function _deleteKey() {
@@ -714,6 +798,63 @@
           <code class="d-block mt-2 p-2 bg-body-secondary rounded small"
             >{formatSignature(signature)}</code
           >
+        </div>
+
+        <!-- Verify Signature Sub-section -->
+        <div class="card mt-3 border-info">
+          <div class="card-body">
+            <h3 class="card-title h6 mb-3">
+              Verify Signature (using p256 crate)
+            </h3>
+            <div class="mb-3">
+              <label for="verifyPublicKey" class="form-label"
+                >Public Key (base64):</label
+              >
+              <input
+                id="verifyPublicKey"
+                type="text"
+                class="form-control"
+                bind:value={verifyPublicKey}
+                placeholder="Paste the public key to verify against"
+              />
+              <small class="form-text text-muted">
+                This verifies the signature using Rust's p256 crate, independent
+                of the plugin.
+              </small>
+            </div>
+            <button
+              onclick={_verifySignature}
+              class="btn btn-info"
+              disabled={isVerifying}
+            >
+              {#if isVerifying}
+                <span
+                  class="spinner-border spinner-border-sm me-2"
+                  role="status"
+                ></span>
+                Verifying...
+              {:else}
+                Verify Signature
+              {/if}
+            </button>
+            {#if verifyError}
+              <div class="alert alert-danger mt-3 mb-0">
+                Error: {verifyError}
+              </div>
+            {/if}
+            {#if verifyResult !== null}
+              <div
+                class="alert {verifyResult
+                  ? 'alert-success'
+                  : 'alert-danger'} mt-3 mb-0"
+              >
+                <strong>Verification Result:</strong>
+                {verifyResult
+                  ? "✓ Signature is VALID"
+                  : "✗ Signature is INVALID"}
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
