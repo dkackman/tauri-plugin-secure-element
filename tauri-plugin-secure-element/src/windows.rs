@@ -8,6 +8,34 @@ use windows::Win32::Security::Cryptography::{
 
 use crate::windows_hello;
 
+/// Error sanitization helpers - expose detailed errors only in debug builds
+/// to avoid leaking sensitive information in production (aligns with Android pattern)
+mod error_sanitize {
+    /// Returns detailed error message in debug builds, generic message in release builds
+    #[cfg(debug_assertions)]
+    pub fn sanitize_error(detailed: &str, _generic: &str) -> String {
+        detailed.to_string()
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn sanitize_error(_detailed: &str, generic: &str) -> String {
+        generic.to_string()
+    }
+
+    /// Returns "operation: key_name" in debug builds, just "operation" in release builds
+    #[cfg(debug_assertions)]
+    pub fn sanitize_error_with_key_name(key_name: &str, operation: &str) -> String {
+        format!("{}: {}", operation, key_name)
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn sanitize_error_with_key_name(_key_name: &str, operation: &str) -> String {
+        operation.to_string()
+    }
+}
+
+use error_sanitize::{sanitize_error, sanitize_error_with_key_name};
+
 /// Microsoft Platform Crypto Provider - uses TPM when available
 pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provider";
 /// Key name prefix to namespace our keys
@@ -74,9 +102,9 @@ pub fn open_provider() -> crate::Result<ProviderHandle> {
 
         NCryptOpenStorageProvider(&mut provider, PCWSTR(provider_name.as_ptr()), 0).map_err(
             |e| {
-                crate::Error::Io(std::io::Error::other(format!(
-                    "Failed to open Platform Crypto Provider: {}",
-                    e
+                crate::Error::Io(std::io::Error::other(sanitize_error(
+                    &format!("Failed to open Platform Crypto Provider: {}", e),
+                    "Failed to open Platform Crypto Provider",
                 )))
             },
         )?;
@@ -134,9 +162,9 @@ pub fn open_key(provider: &ProviderHandle, key_name: &str) -> crate::Result<KeyH
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to open key '{}': {}",
-                key_name, e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to open key '{}': {}", key_name, e),
+                "Failed to open key",
             )))
         })?;
 
@@ -187,9 +215,9 @@ pub fn create_key(
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to create key '{}': {}",
-                key_name, e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to create key '{}': {}", key_name, e),
+                "Failed to create key",
             )))
         })?;
 
@@ -205,9 +233,9 @@ pub fn create_key(
             NCRYPT_FLAGS(0),
         ) {
             let _ = NCryptFreeObject(key_handle);
-            return Err(crate::Error::Io(std::io::Error::other(format!(
-                "Failed to set key usage: {}",
-                e
+            return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to set key usage: {}", e),
+                "Failed to set key usage",
             ))));
         }
 
@@ -244,9 +272,12 @@ pub fn create_key(
                     NCRYPT_FLAGS(0),
                 ) {
                     let _ = NCryptFreeObject(key_handle);
-                    return Err(crate::Error::Io(std::io::Error::other(format!(
-                        "Failed to set UI policy for Windows Hello authentication: {}",
-                        e
+                    return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                        &format!(
+                            "Failed to set UI policy for Windows Hello authentication: {}",
+                            e
+                        ),
+                        "Failed to set UI policy for Windows Hello authentication",
                     ))));
                 }
             }
@@ -255,9 +286,9 @@ pub fn create_key(
         // Finalize the key
         if let Err(e) = NCryptFinalizeKey(key_handle, NCRYPT_FLAGS(0)) {
             let _ = NCryptFreeObject(key_handle);
-            return Err(crate::Error::Io(std::io::Error::other(format!(
-                "Failed to finalize key: {}",
-                e
+            return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to finalize key: {}", e),
+                "Failed to finalize key",
             ))));
         }
 
@@ -282,9 +313,9 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to get public key size: {}",
-                e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to get public key size: {}", e),
+                "Failed to get public key size",
             )))
         })?;
 
@@ -300,9 +331,9 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to export public key: {}",
-                e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to export public key: {}", e),
+                "Failed to export public key",
             )))
         })?;
 
@@ -310,9 +341,12 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
         // BCRYPT_ECCKEY_BLOB header is 8 bytes: dwMagic (4) + cbKey (4)
         // For P-256: header (8) + X (32) + Y (32) = 72 bytes
         if blob.len() < 72 {
-            return Err(crate::Error::Io(std::io::Error::other(format!(
-                "Public key blob too small: {} bytes, expected at least 72",
-                blob.len()
+            return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!(
+                    "Public key blob too small: {} bytes, expected at least 72",
+                    blob.len()
+                ),
+                "Failed to export public key",
             ))));
         }
 
@@ -346,9 +380,9 @@ pub fn sign_hash(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
 
         // Get required signature size
         NCryptSignHash(key.0, None, hash, None, &mut sig_size, NCRYPT_FLAGS(0)).map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to get signature size: {}",
-                e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to get signature size: {}", e),
+                "Failed to sign",
             )))
         })?;
 
@@ -362,7 +396,12 @@ pub fn sign_hash(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
             &mut sig_size,
             NCRYPT_FLAGS(0),
         )
-        .map_err(|e| crate::Error::Io(std::io::Error::other(format!("Failed to sign: {}", e))))?;
+        .map_err(|e| {
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to sign: {}", e),
+                "Failed to sign",
+            )))
+        })?;
 
         signature.truncate(sig_size as usize);
 
@@ -377,9 +416,9 @@ pub fn sign_hash(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
 /// Converts raw ECDSA signature (R||S) to DER format
 fn raw_ecdsa_to_der(raw: &[u8]) -> crate::Result<Vec<u8>> {
     if raw.len() != 64 {
-        return Err(crate::Error::Io(std::io::Error::other(format!(
-            "Invalid raw signature length: {}, expected 64",
-            raw.len()
+        return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+            &format!("Invalid raw signature length: {}, expected 64", raw.len()),
+            "Failed to sign",
         ))));
     }
 
