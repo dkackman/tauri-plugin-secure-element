@@ -6,7 +6,7 @@ use windows::Win32::Security::Cryptography::{
     NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
 };
 use windows::Win32::System::Registry::{
-    RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD,
+    RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
 };
 
 /// Microsoft Platform Crypto Provider - uses TPM when available
@@ -106,29 +106,78 @@ pub fn extract_key_name(full_name: &str) -> Option<&str> {
 
 /// Checks if Windows Hello is configured/enrolled on the system
 /// Returns true if Windows Hello PIN or biometric is set up
-/// This is a simplified check - in practice, Windows Hello enrollment is required
-/// for keys with UI policy to work, so we check if the registry key exists
+/// Checks multiple registry locations to determine if Windows Hello is available
 fn is_windows_hello_configured() -> bool {
     unsafe {
-        // Check if Windows Hello biometric service registry key exists
-        // This is a simplified check - the presence of the key indicates Windows Hello is available
-        let key_path = HSTRING::from(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\Biometrics");
-        let value_name = HSTRING::from("Enabled");
+        // Check 1: Windows Hello biometric service
+        let biometric_key = HSTRING::from(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\Biometrics");
+        let biometric_value = HSTRING::from("Enabled");
         let mut data_size: u32 = 0;
 
-        // First call to check if the value exists and get its size
-        let result = RegGetValueW(
+        let biometric_result = RegGetValueW(
             HKEY_LOCAL_MACHINE,
-            PCWSTR::from_raw(key_path.as_ptr()),
-            PCWSTR::from_raw(value_name.as_ptr()),
+            PCWSTR::from_raw(biometric_key.as_ptr()),
+            PCWSTR::from_raw(biometric_value.as_ptr()),
             RRF_RT_REG_DWORD,
             None,
             None,
             Some(&mut data_size),
         );
 
-        // If the value exists and is a DWORD (4 bytes), Windows Hello is likely configured
-        result.is_ok() && data_size == 4
+        eprintln!("[secure-element] Windows Hello check 1 (Biometrics): result={:?}, size={}", biometric_result.is_ok(), data_size);
+        if biometric_result.is_ok() && data_size == 4 {
+            eprintln!("[secure-element] Windows Hello detected via biometric registry key");
+            return true;
+        }
+
+        // Check 2: Windows Hello PIN enrollment (NGC folder presence check via registry)
+        // Check if NGC (Next Generation Credentials) is available
+        let ngc_key = HSTRING::from(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{D6886603-9D2F-4EB2-B667-1971041FA96B}");
+        let ngc_value = HSTRING::from("Enabled");
+        data_size = 0;
+
+        let ngc_result = RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR::from_raw(ngc_key.as_ptr()),
+            PCWSTR::from_raw(ngc_value.as_ptr()),
+            RRF_RT_REG_DWORD,
+            None,
+            None,
+            Some(&mut data_size),
+        );
+
+        eprintln!("[secure-element] Windows Hello check 2 (NGC Provider): result={:?}, size={}", ngc_result.is_ok(), data_size);
+        if ngc_result.is_ok() && data_size == 4 {
+            eprintln!("[secure-element] Windows Hello detected via NGC provider registry key");
+            return true;
+        }
+
+        // Check 3: Alternative location for Windows Hello PIN
+        let pin_key = HSTRING::from(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI");
+        let pin_value = HSTRING::from("LastLoggedOnProvider");
+        data_size = 0;
+
+        let pin_result = RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR::from_raw(pin_key.as_ptr()),
+            PCWSTR::from_raw(pin_value.as_ptr()),
+            RRF_RT_REG_SZ,
+            None,
+            None,
+            Some(&mut data_size),
+        );
+
+        eprintln!("[secure-element] Windows Hello check 3 (LastLoggedOnProvider): result={:?}, size={}", pin_result.is_ok(), data_size);
+        
+        // If any of these keys exist, Windows Hello might be configured
+        // But the most reliable check is if NGC provider is enabled
+        let result = pin_result.is_ok() && data_size > 0;
+        if result {
+            eprintln!("[secure-element] Windows Hello detected via LastLoggedOnProvider");
+        } else {
+            eprintln!("[secure-element] Windows Hello not detected - all checks failed");
+        }
+        result
     }
 }
 
@@ -211,7 +260,10 @@ pub fn create_key(
             }
             crate::models::AuthenticationMode::PinOrBiometric => {
                 // Check if Windows Hello is configured before allowing PinOrBiometric
-                if !is_windows_hello_configured() {
+                eprintln!("[secure-element] Checking Windows Hello configuration for PinOrBiometric...");
+                let hello_configured = is_windows_hello_configured();
+                eprintln!("[secure-element] Windows Hello configured: {}", hello_configured);
+                if !hello_configured {
                     let _ = NCryptFreeObject(key_handle);
                     return Err(crate::Error::Io(std::io::Error::new(
                         std::io::ErrorKind::Unsupported,
