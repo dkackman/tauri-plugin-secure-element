@@ -213,15 +213,15 @@ pub fn create_key(
         }
 
         // Set UI policy based on auth mode
+        // Note: BiometricOnly is rejected earlier in this function, so we only handle None and PinOrBiometric
         match auth_mode {
             crate::models::AuthenticationMode::None => {
                 // No UI policy - silent operation
             }
-            crate::models::AuthenticationMode::PinOrBiometric
-            | crate::models::AuthenticationMode::BiometricOnly => {
-                // Note: Windows Hello doesn't distinguish between PIN and biometric at the API level.
-                // Both modes use the same NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG which requires
-                // Windows Hello authentication (PIN, fingerprint, or face - user's choice).
+            crate::models::AuthenticationMode::PinOrBiometric => {
+                // Windows Hello doesn't distinguish between PIN and biometric at the API level.
+                // NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG requires Windows Hello authentication
+                // (PIN, fingerprint, or face - user's choice).
                 let ui_policy_property = HSTRING::from("UI Policy");
 
                 // Create the proper NCRYPT_UI_POLICY structure
@@ -253,6 +253,10 @@ pub fn create_key(
                         "Failed to set UI policy for Windows Hello authentication",
                     ))));
                 }
+            }
+            crate::models::AuthenticationMode::BiometricOnly => {
+                // This case is unreachable - BiometricOnly is rejected at the start of this function
+                unreachable!("BiometricOnly should have been rejected earlier");
             }
         }
 
@@ -504,11 +508,9 @@ pub fn list_keys(
     Ok(keys)
 }
 
-/// Checks if Windows Hello biometric is available and can be enforced
+/// Checks if Windows Hello biometric-only mode is available
 pub fn can_enforce_biometric_only() -> bool {
-    // This is a simplified check - a full implementation would query
-    // Windows Hello enrollment status via WinRT APIs
-    // For now, we return true if TPM is available (conservative approach)
-    // The actual enforcement happens at sign time
+    // Windows Hello doesn't distinguish between PIN and biometric at the API level,
+    // so biometricOnly mode is not supported. Always return false.
     false
 }
