@@ -361,10 +361,13 @@ impl<R: Runtime> SecureElement<R> {
             let key_name = if let Some(name) = &payload.key_name {
                 name.clone()
             } else if let Some(public_key) = &payload.public_key {
-                // Find key by public key
-                let keys = windows::list_keys(&provider, None, Some(public_key))?;
+                // Find key by public key - fail silently if not found
+                let keys = match windows::list_keys(&provider, None, Some(public_key)) {
+                    Ok(keys) => keys,
+                    Err(_) => return Ok(DeleteKeyResponse { success: true }),
+                };
                 if keys.is_empty() {
-                    return Ok(DeleteKeyResponse { success: false });
+                    return Ok(DeleteKeyResponse { success: true });
                 }
                 keys[0].key_name.clone()
             } else {
@@ -374,7 +377,11 @@ impl<R: Runtime> SecureElement<R> {
                 )));
             };
 
-            let key = windows::open_key(&provider, &key_name)?;
+            // Open key - fail silently if key not found
+            let key = match windows::open_key(&provider, &key_name) {
+                Ok(key) => key,
+                Err(_) => return Ok(DeleteKeyResponse { success: true }),
+            };
             let success = windows::delete_key(key)?;
 
             Ok(DeleteKeyResponse { success })

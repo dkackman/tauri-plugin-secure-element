@@ -383,20 +383,17 @@ fn raw_ecdsa_to_der(raw: &[u8]) -> crate::Result<Vec<u8>> {
 }
 
 /// Deletes a key
+/// Fails silently - returns Ok(false) if deletion fails instead of an error
 pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
     unsafe {
         // NCryptDeleteKey takes ownership and invalidates the handle
         let handle = key.0;
         std::mem::forget(key); // Don't run Drop since NCryptDeleteKey frees the handle
 
-        NCryptDeleteKey(handle, 0u32).map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to delete key: {}",
-                e
-            )))
-        })?;
-
-        Ok(true)
+        match NCryptDeleteKey(handle, 0u32) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false), // Fail silently
+        }
     }
 }
 
