@@ -66,6 +66,7 @@ libc = "0.2"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
+    "Security_Credentials_UI",
 ] }
 winver = "1"
 

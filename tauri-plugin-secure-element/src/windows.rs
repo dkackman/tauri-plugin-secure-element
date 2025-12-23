@@ -6,6 +6,8 @@ use windows::Win32::Security::Cryptography::{
     NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
 };
 
+use crate::windows_hello;
+
 /// Microsoft Platform Crypto Provider - uses TPM when available
 pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provider";
 /// Key name prefix to namespace our keys
@@ -148,6 +150,27 @@ pub fn create_key(
     key_name: &str,
     auth_mode: &crate::models::AuthenticationMode,
 ) -> crate::Result<KeyHandle> {
+    // Validate Windows Hello requirements before creating the key
+    match auth_mode {
+        crate::models::AuthenticationMode::BiometricOnly => {
+            return Err(crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "biometricOnly authentication mode is not supported on Windows. Use 'pinOrBiometric' instead.",
+            )));
+        }
+        crate::models::AuthenticationMode::PinOrBiometric => {
+            if !windows_hello::is_windows_hello_configured() {
+                return Err(crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating keys with authentication.",
+                )));
+            }
+        }
+        crate::models::AuthenticationMode::None => {
+            // No Windows Hello required for None mode
+        }
+    }
+
     unsafe {
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
         let full_name = make_key_name(key_name);
