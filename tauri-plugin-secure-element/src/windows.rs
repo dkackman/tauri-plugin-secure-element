@@ -397,6 +397,29 @@ pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
     }
 }
 
+/// RAII guard for NCrypt enumeration state to prevent memory leaks
+struct EnumStateGuard(*mut std::ffi::c_void);
+
+impl EnumStateGuard {
+    fn new() -> Self {
+        Self(std::ptr::null_mut())
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut *mut std::ffi::c_void {
+        &mut self.0
+    }
+}
+
+impl Drop for EnumStateGuard {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                let _ = NCryptFreeBuffer(self.0);
+            }
+        }
+    }
+}
+
 /// Lists all keys with our prefix
 pub fn list_keys(
     provider: &ProviderHandle,
@@ -407,7 +430,8 @@ pub fn list_keys(
     let mut keys = Vec::new();
 
     unsafe {
-        let mut enum_state: *mut std::ffi::c_void = std::ptr::null_mut();
+        // Use RAII guard to ensure enum_state is always freed
+        let mut enum_state_guard = EnumStateGuard::new();
         let scope = PCWSTR::null();
 
         loop {
@@ -417,7 +441,7 @@ pub fn list_keys(
                 provider.0,
                 scope,
                 &mut key_name_ptr,
-                &mut enum_state,
+                enum_state_guard.as_mut_ptr(),
                 NCRYPT_SILENT_FLAG,
             );
 
@@ -470,11 +494,7 @@ pub fn list_keys(
             // Free the key name structure
             let _ = NCryptFreeBuffer(key_name_ptr as *mut std::ffi::c_void);
         }
-
-        // Free enumeration state
-        if !enum_state.is_null() {
-            let _ = NCryptFreeBuffer(enum_state);
-        }
+        // enum_state_guard dropped here, automatically freeing enumeration state
     }
 
     Ok(keys)
