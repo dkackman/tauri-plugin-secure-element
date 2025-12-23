@@ -193,18 +193,13 @@ pub fn create_key(
                 );
             }
             crate::models::AuthenticationMode::BiometricOnly => {
-                // Set UI policy to require biometric only
-                // NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG = 0x2
-                // Combined with Windows Hello biometric enrollment
-                let ui_policy_property = HSTRING::from("UI Policy");
-                let policy_flags: u32 = 0x2;
-                let policy_bytes = policy_flags.to_le_bytes();
-                let _ = NCryptSetProperty(
-                    key_handle,
-                    PCWSTR(ui_policy_property.as_ptr()),
-                    policy_bytes.as_slice(),
-                    NCRYPT_FLAGS(0),
-                );
+                // Windows Hello does not support biometric-only mode
+                // It requires PIN or biometric, not biometric-only
+                let _ = NCryptFreeObject(key_handle);
+                return Err(crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "BiometricOnly authentication mode is not supported on Windows. Use PinOrBiometric instead.",
+                )));
             }
         }
 
@@ -482,9 +477,7 @@ pub fn list_keys(
 
 /// Checks if Windows Hello biometric is available and can be enforced
 pub fn can_enforce_biometric_only() -> bool {
-    // This is a simplified check - a full implementation would query
-    // Windows Hello enrollment status via WinRT APIs
-    // For now, we return true if TPM is available (conservative approach)
-    // The actual enforcement happens at sign time
-    true
+    // Windows Hello does not differentiate between biometric and PIN
+    // PIN is always available, so we return false
+    false
 }

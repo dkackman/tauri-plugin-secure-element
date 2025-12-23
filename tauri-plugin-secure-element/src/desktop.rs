@@ -357,7 +357,7 @@ impl<R: Runtime> SecureElement<R> {
 
             // If key_name is provided, delete by name
             // If public_key is provided, find the key with that public key first
-            // If neither, return error
+            // If neither,just return
             let key_name = if let Some(name) = &payload.key_name {
                 name.clone()
             } else if let Some(public_key) = &payload.public_key {
