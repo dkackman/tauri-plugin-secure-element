@@ -6,24 +6,8 @@ use windows::Win32::Security::Cryptography::{
     NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
 };
 
+use crate::error_sanitize::sanitize_error;
 use crate::windows_hello;
-
-/// Error sanitization helpers - expose detailed errors only in debug builds
-/// to avoid leaking sensitive information in production (aligns with Android pattern)
-mod error_sanitize {
-    /// Returns detailed error message in debug builds, generic message in release builds
-    #[cfg(debug_assertions)]
-    pub fn sanitize_error(detailed: &str, _generic: &str) -> String {
-        detailed.to_string()
-    }
-
-    #[cfg(not(debug_assertions))]
-    pub fn sanitize_error(_detailed: &str, generic: &str) -> String {
-        generic.to_string()
-    }
-}
-
-use error_sanitize::sanitize_error;
 
 /// Microsoft Platform Crypto Provider - uses TPM when available
 pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provider";
@@ -396,62 +380,10 @@ pub fn sign_hash(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
 
         // NCrypt returns raw R||S format for ECDSA P-256 (64 bytes)
         // We need to convert to DER format for compatibility with other platforms
-        let der_signature = raw_ecdsa_to_der(&signature)?;
+        let der_signature = crate::der::raw_ecdsa_to_der(&signature)?;
 
         Ok(der_signature)
     }
-}
-
-/// Converts raw ECDSA signature (R||S) to DER format
-fn raw_ecdsa_to_der(raw: &[u8]) -> crate::Result<Vec<u8>> {
-    if raw.len() != 64 {
-        return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
-            &format!("Invalid raw signature length: {}, expected 64", raw.len()),
-            "Failed to sign",
-        ))));
-    }
-
-    let r = &raw[0..32];
-    let s = &raw[32..64];
-
-    fn encode_integer(value: &[u8]) -> Vec<u8> {
-        // Remove leading zeros but keep at least one byte
-        let mut start = 0;
-        while start < value.len() - 1 && value[start] == 0 {
-            start += 1;
-        }
-        let trimmed = &value[start..];
-
-        // Add leading zero if high bit is set (to indicate positive number)
-        let needs_padding = trimmed[0] & 0x80 != 0;
-        let len = trimmed.len() + if needs_padding { 1 } else { 0 };
-
-        let mut result = vec![0x02, len as u8]; // INTEGER tag + length
-        if needs_padding {
-            result.push(0x00);
-        }
-        result.extend_from_slice(trimmed);
-        result
-    }
-
-    let r_der = encode_integer(r);
-    let s_der = encode_integer(s);
-
-    let seq_len = r_der.len() + s_der.len();
-    let mut der = vec![0x30]; // SEQUENCE tag
-
-    // Length encoding
-    if seq_len < 128 {
-        der.push(seq_len as u8);
-    } else {
-        der.push(0x81);
-        der.push(seq_len as u8);
-    }
-
-    der.extend_from_slice(&r_der);
-    der.extend_from_slice(&s_der);
-
-    Ok(der)
 }
 
 /// Deletes a key

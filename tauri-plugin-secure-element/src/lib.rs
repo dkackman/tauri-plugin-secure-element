@@ -15,7 +15,9 @@ mod windows;
 mod windows_hello;
 
 mod commands;
+mod der;
 mod error;
+mod error_sanitize;
 mod models;
 mod validation;
 
