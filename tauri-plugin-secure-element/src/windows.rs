@@ -101,6 +101,22 @@ pub fn extract_key_name(full_name: &str) -> Option<&str> {
     full_name.strip_prefix(KEY_STORAGE_PREFIX)
 }
 
+/// NCRYPT_UI_POLICY structure for setting Windows Hello authentication requirements
+/// See: https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/ns-ncrypt-ncrypt_ui_policy
+#[repr(C)]
+struct NcryptUiPolicy {
+    dw_version: u32,
+    dw_flags: u32,
+    psz_creation_title: PCWSTR,
+    psz_friendly_name: PCWSTR,
+    psz_description: PCWSTR,
+}
+
+/// UI Policy version constant
+const NCRYPT_UI_POLICY_VERSION: u32 = 1;
+/// Force high protection - requires Windows Hello (PIN, fingerprint, or face)
+const NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG: u32 = 0x2;
+
 /// Opens an existing key by name
 pub fn open_key(provider: &ProviderHandle, key_name: &str) -> crate::Result<KeyHandle> {
     unsafe {
@@ -173,38 +189,43 @@ pub fn create_key(
         }
 
         // Set UI policy based on auth mode
-        // NCRYPT_UI_POLICY structure: { dwVersion: u32, dwFlags: u32, pszCreationTitle: PCWSTR, pszFriendlyName: PCWSTR, pszDescription: PCWSTR }
         match auth_mode {
             crate::models::AuthenticationMode::None => {
                 // No UI policy - silent operation
             }
-            crate::models::AuthenticationMode::PinOrBiometric => {
-                // Set UI policy to force consent - allows PIN or biometric
+            crate::models::AuthenticationMode::PinOrBiometric
+            | crate::models::AuthenticationMode::BiometricOnly => {
+                // Note: Windows Hello doesn't distinguish between PIN and biometric at the API level.
+                // Both modes use the same NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG which requires
+                // Windows Hello authentication (PIN, fingerprint, or face - user's choice).
                 let ui_policy_property = HSTRING::from("UI Policy");
-                // NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG = 0x2 - requires Windows Hello
-                let policy_flags: u32 = 0x2;
-                let policy_bytes = policy_flags.to_le_bytes();
-                // Note: This is simplified - full UI policy would need proper struct
-                let _ = NCryptSetProperty(
+
+                // Create the proper NCRYPT_UI_POLICY structure
+                let policy = NcryptUiPolicy {
+                    dw_version: NCRYPT_UI_POLICY_VERSION,
+                    dw_flags: NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG,
+                    psz_creation_title: PCWSTR::null(),
+                    psz_friendly_name: PCWSTR::null(),
+                    psz_description: PCWSTR::null(),
+                };
+
+                let policy_bytes = std::slice::from_raw_parts(
+                    &policy as *const NcryptUiPolicy as *const u8,
+                    std::mem::size_of::<NcryptUiPolicy>(),
+                );
+
+                if let Err(e) = NCryptSetProperty(
                     key_handle,
                     PCWSTR(ui_policy_property.as_ptr()),
-                    policy_bytes.as_slice(),
+                    policy_bytes,
                     NCRYPT_FLAGS(0),
-                );
-            }
-            crate::models::AuthenticationMode::BiometricOnly => {
-                // Set UI policy to require biometric only
-                // NCRYPT_UI_FORCE_HIGH_PROTECTION_FLAG = 0x2
-                // Combined with Windows Hello biometric enrollment
-                let ui_policy_property = HSTRING::from("UI Policy");
-                let policy_flags: u32 = 0x2;
-                let policy_bytes = policy_flags.to_le_bytes();
-                let _ = NCryptSetProperty(
-                    key_handle,
-                    PCWSTR(ui_policy_property.as_ptr()),
-                    policy_bytes.as_slice(),
-                    NCRYPT_FLAGS(0),
-                );
+                ) {
+                    let _ = NCryptFreeObject(key_handle);
+                    return Err(crate::Error::Io(std::io::Error::other(format!(
+                        "Failed to set UI policy for Windows Hello authentication: {}",
+                        e
+                    ))));
+                }
             }
         }
 
