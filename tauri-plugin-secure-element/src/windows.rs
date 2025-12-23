@@ -21,20 +21,9 @@ mod error_sanitize {
     pub fn sanitize_error(_detailed: &str, generic: &str) -> String {
         generic.to_string()
     }
-
-    /// Returns "operation: key_name" in debug builds, just "operation" in release builds
-    #[cfg(debug_assertions)]
-    pub fn sanitize_error_with_key_name(key_name: &str, operation: &str) -> String {
-        format!("{}: {}", operation, key_name)
-    }
-
-    #[cfg(not(debug_assertions))]
-    pub fn sanitize_error_with_key_name(_key_name: &str, operation: &str) -> String {
-        operation.to_string()
-    }
 }
 
-use error_sanitize::{sanitize_error, sanitize_error_with_key_name};
+use error_sanitize::sanitize_error;
 
 /// Microsoft Platform Crypto Provider - uses TPM when available
 pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provider";
