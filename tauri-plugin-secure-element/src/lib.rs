@@ -9,6 +9,8 @@ pub use models::*;
 mod desktop;
 #[cfg(mobile)]
 mod mobile;
+#[cfg(target_os = "windows")]
+mod windows;
 
 mod commands;
 mod error;
