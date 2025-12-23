@@ -589,5 +589,5 @@ pub fn can_enforce_biometric_only() -> bool {
     // Windows Hello enrollment status via WinRT APIs
     // For now, we return true if TPM is available (conservative approach)
     // The actual enforcement happens at sign time
-    true
+    false
 }
