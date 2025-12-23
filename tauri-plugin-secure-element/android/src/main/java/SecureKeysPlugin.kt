@@ -1,6 +1,8 @@
 package net.kackman.secureelement
 
 import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
@@ -314,6 +316,58 @@ class SecureKeysPlugin(
         }
     }
 
+    /**
+     * Check if the device has a secure lock screen (PIN, pattern, or password).
+     * Returns null if a secure lock is configured, or an error message if not.
+     */
+    private fun checkDeviceSecure(): String? {
+        val keyguardManager =
+            activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                ?: return "Unable to check device security status."
+
+        // isDeviceSecure() returns true if the device has a secure lock screen
+        // (PIN, pattern, password, or biometric that requires one of these as backup)
+        return if (keyguardManager.isDeviceSecure) {
+            null // Device is secure
+        } else {
+            "No secure lock screen is configured. Please set up a PIN, pattern, or password in Settings."
+        }
+    }
+
+    /**
+     * Check if strong biometric authentication is available and enrolled.
+     * Returns null if biometrics are available, or an error message if not.
+     */
+    private fun checkBiometricAvailability(): String? {
+        val biometricManager = BiometricManager.from(activity)
+        return when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+            BiometricManager.BIOMETRIC_SUCCESS -> {
+                null
+            }
+
+            // Biometrics available
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> {
+                "Biometric hardware is not available on this device."
+            }
+
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> {
+                "Biometric hardware is currently unavailable."
+            }
+
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
+                "No biometric authentication is enrolled. Please set up fingerprint or face authentication in Settings."
+            }
+
+            BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> {
+                "A security update is required before biometric authentication can be used."
+            }
+
+            else -> {
+                "Biometric authentication is not available on this device."
+            }
+        }
+    }
+
     @Command
     fun ping(invoke: Invoke) {
         val args = invoke.parseArgs(PingArgs::class.java)
@@ -362,13 +416,38 @@ class SecureKeysPlugin(
             val useSecureElement = isSecureElementSupported()
             val authMode = args.authMode ?: "pinOrBiometric"
 
-            // Reject biometricOnly on API < 30 - cannot enforce at key level
-            if (authMode == "biometricOnly" && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                invoke.reject(
-                    "biometricOnly authentication mode requires Android 11 (API 30) or higher. " +
-                        "Use 'pinOrBiometric' or 'none' on this device.",
-                )
-                return
+            // Validate authentication mode requirements
+            when (authMode) {
+                "biometricOnly" -> {
+                    // Reject biometricOnly on API < 30 - cannot enforce at key level
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                        invoke.reject(
+                            "biometricOnly authentication mode requires Android 11 (API 30) or higher. " +
+                                "Use 'pinOrBiometric' or 'none' on this device.",
+                        )
+                        return
+                    }
+                    // Check that biometrics are available and enrolled
+                    val biometricError = checkBiometricAvailability()
+                    if (biometricError != null) {
+                        invoke.reject(
+                            "biometricOnly authentication mode requires biometric authentication. $biometricError",
+                        )
+                        return
+                    }
+                }
+
+                "pinOrBiometric" -> {
+                    // Check that device has a secure lock screen
+                    val securityError = checkDeviceSecure()
+                    if (securityError != null) {
+                        invoke.reject(
+                            "pinOrBiometric authentication mode requires a secure lock screen. $securityError",
+                        )
+                        return
+                    }
+                }
+                // "none" - no validation required
             }
 
             var keyPairGenerator =

@@ -1,4 +1,6 @@
 packages:
-  - 'tauri-plugin-secure-element'
-  - 'test-app'
+  - tauri-plugin-secure-element
+  - test-app
 
+onlyBuiltDependencies:
+  - esbuild

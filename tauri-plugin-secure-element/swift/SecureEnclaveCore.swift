@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import Security
 
 // this files is shared with symlink in the swift folder
@@ -56,6 +57,7 @@ public enum SecureEnclaveError: Error, LocalizedError {
     case failedToQueryKeys(Int32)
     case invalidAuthMode
     case invalidData(String)
+    case biometricNotAvailable(String)
 
     public var errorDescription: String? {
         switch self {
@@ -115,6 +117,8 @@ public enum SecureEnclaveError: Error, LocalizedError {
             return "Invalid auth mode"
         case let .invalidData(detail):
             return "Invalid data: \(detail)"
+        case let .biometricNotAvailable(detail):
+            return "biometricOnly authentication mode requires biometric authentication (Face ID/Touch ID) to be available and enrolled. \(detail)"
         }
     }
 }
@@ -191,6 +195,33 @@ public enum SecureEnclaveCore {
         #endif
     }
 
+    /// Checks if biometric authentication is available and enrolled on the device
+    /// Returns nil if available, or an error message describing why it's not available
+    public static func checkBiometricAvailability() -> String? {
+        let context = LAContext()
+        var error: NSError?
+
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+            return nil // Biometrics available
+        }
+
+        // Biometrics not available - determine why
+        if let laError = error {
+            switch laError.code {
+            case LAError.biometryNotAvailable.rawValue:
+                return "Biometric hardware is not available on this device."
+            case LAError.biometryNotEnrolled.rawValue:
+                return "No biometric authentication is enrolled. Please set up Face ID or Touch ID in Settings."
+            case LAError.biometryLockout.rawValue:
+                return "Biometric authentication is locked out due to too many failed attempts."
+            default:
+                return "Biometric authentication is not available: \(laError.localizedDescription)"
+            }
+        }
+
+        return "Biometric authentication is not available on this device."
+    }
+
     // MARK: - Core Operations
 
     /// Generate a new secure key in the Secure Enclave
@@ -198,6 +229,14 @@ public enum SecureEnclaveCore {
         // Check for simulator
         if isSimulator {
             return .failure(.simulatorNotSupported)
+        }
+
+        // Check biometric availability if biometricOnly mode is requested
+        let mode = authMode ?? "pinOrBiometric"
+        if mode == "biometricOnly" {
+            if let biometricError = checkBiometricAvailability() {
+                return .failure(.biometricNotAvailable(biometricError))
+            }
         }
 
         // Check if key already exists
@@ -478,16 +517,9 @@ public enum SecureEnclaveCore {
             )
         }
 
-        // Test if biometric-only access control can be created
-        // This checks if the device has biometric hardware (Touch ID / Face ID)
-        var biometricError: Unmanaged<CFError>?
-        let biometricFlags: SecAccessControlCreateFlags = [.privateKeyUsage, .biometryCurrentSet]
-        let canEnforceBiometric = SecAccessControlCreateWithFlags(
-            kCFAllocatorDefault,
-            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            biometricFlags,
-            &biometricError
-        ) != nil
+        // Check if biometric authentication is available and enrolled
+        // This uses LAContext to verify both hardware availability AND enrollment
+        let canEnforceBiometric = checkBiometricAvailability() == nil
 
         return SupportResponse(
             secureElementSupported: true,
