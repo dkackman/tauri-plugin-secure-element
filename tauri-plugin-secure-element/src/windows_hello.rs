@@ -16,11 +16,6 @@ fn check_windows_hello_availability() -> Result<bool, windows::core::Error> {
     let availability_async = UserConsentVerifier::CheckAvailabilityAsync()?;
     let availability = availability_async.get()?;
 
-    eprintln!(
-        "[secure-element] UserConsentVerifier availability: {:?}",
-        availability
-    );
-
     // Windows Hello is only considered configured if it returns Available
     // Other states like DeviceNotPresent, NotConfiguredForUser, DisabledByPolicy mean it's not usable
     match availability {
