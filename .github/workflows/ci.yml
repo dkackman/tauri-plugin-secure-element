@@ -121,3 +121,65 @@ jobs:
 
       - name: Run ktlint
         run: pnpm lint:kotlin
+
+  rust-windows:
+    name: Rust Checks (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: tauri-plugin-secure-element
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tauri-plugin-secure-element/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Check compilation
+        run: cargo check
+
+  rust-macos:
+    name: Rust Checks (macOS)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: tauri-plugin-secure-element
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tauri-plugin-secure-element/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Check compilation
+        run: cargo check
