@@ -11,6 +11,8 @@ mod desktop;
 mod mobile;
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "windows")]
+mod windows_hello;
 
 mod commands;
 mod error;
