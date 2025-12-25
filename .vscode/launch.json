@@ -5,10 +5,10 @@
       "name": "Launch Tauri App (Debug)",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app/src-tauri/target/debug/tauri-app",
+      "program": "${workspaceFolder}/test-app/src-tauri/target/debug/test-app",
       "args": [],
-      "cwd": "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app/src-tauri",
-      "preLaunchTask": "build-tauri-app",
+      "cwd": "${workspaceFolder}/test-app/src-tauri",
+      "preLaunchTask": "build-test-app",
       "console": "externalTerminal",
       "stopOnEntry": false,
       "sourceLanguages": [
@@ -36,7 +36,7 @@
         "tauri",
         "dev"
       ],
-      "cwd": "${workspaceFolder}/tauri-plugin-secure-element/examples/tauri-app",
+      "cwd": "${workspaceFolder}/test-app",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "skipFiles": [
@@ -52,7 +52,7 @@
         "Attach to Tauri App"
       ],
       "stopAll": true,
-      "preLaunchTask": "build-tauri-app"
+      "preLaunchTask": "build-test-app"
     }
   ]
 }
