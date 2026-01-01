@@ -4,7 +4,60 @@ use windows::Win32::Security::Cryptography::{
     NCryptFreeBuffer, NCryptFreeObject, NCryptKeyName, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE,
 };
 
-pub struct HLocalGuard(HLOCAL);
+/// Macro to define RAII wrapper types with automatic cleanup
+macro_rules! define_raii_handle {
+    // Basic version: pub struct with Drop
+    ($(#[$meta:meta])* $vis:vis $name:ident($field_vis:vis $handle_type:ty), $cleanup_fn:path, $check:ident) => {
+        $(#[$meta])*
+        $vis struct $name($field_vis $handle_type);
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                if !self.0.$check() {
+                    unsafe {
+                        let _ = $cleanup_fn(self.0);
+                    }
+                }
+            }
+        }
+    };
+
+    // With Deref/DerefMut for transparent handle access
+    ($(#[$meta:meta])* $vis:vis $name:ident($field_vis:vis $handle_type:ty), $cleanup_fn:path, $check:ident, deref) => {
+        define_raii_handle!($(#[$meta])* $vis $name($field_vis $handle_type), $cleanup_fn, $check);
+
+        impl Deref for $name {
+            type Target = $handle_type;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+    };
+
+    // With cast for cleanup (needed when cleanup function expects different type)
+    ($(#[$meta:meta])* $vis:vis $name:ident($field_vis:vis $handle_type:ty), $cleanup_fn:path, $check:ident, cast: $cast_type:ty) => {
+        $(#[$meta])*
+        $vis struct $name($field_vis $handle_type);
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                if !self.0.$check() {
+                    unsafe {
+                        let _ = $cleanup_fn(self.0 as $cast_type);
+                    }
+                }
+            }
+        }
+    };
+}
+
+define_raii_handle!(pub HLocalGuard(HLOCAL), LocalFree, is_invalid);
 
 impl HLocalGuard {
     /// Creates a new guard with an invalid handle
@@ -20,17 +73,10 @@ impl HLocalGuard {
     }
 }
 
-impl Drop for HLocalGuard {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            unsafe {
-                let _ = LocalFree(self.0);
-            }
-        }
-    }
-}
-
-pub struct WindowsHandleGuard(pub HANDLE);
+define_raii_handle!(
+    /// RAII wrapper for HANDLE that automatically calls CloseHandle on drop
+    pub WindowsHandleGuard(pub HANDLE), CloseHandle, is_invalid, deref
+);
 
 impl WindowsHandleGuard {
     /// Creates a new guard with an invalid handle
@@ -40,58 +86,15 @@ impl WindowsHandleGuard {
     }
 }
 
-impl Deref for WindowsHandleGuard {
-    type Target = HANDLE;
+define_raii_handle!(
+    /// RAII wrapper for NCRYPT_PROV_HANDLE that automatically calls NCryptFreeObject on drop
+    pub ProviderHandle(pub NCRYPT_PROV_HANDLE), NCryptFreeObject, is_invalid, deref
+);
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for WindowsHandleGuard {
-    fn deref_mut(&mut self) -> &mut HANDLE {
-        &mut self.0
-    }
-}
-
-impl Drop for WindowsHandleGuard {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
-    }
-}
-/// RAII wrapper for NCRYPT_PROV_HANDLE
-pub struct ProviderHandle(pub NCRYPT_PROV_HANDLE);
-
-impl Deref for ProviderHandle {
-    type Target = NCRYPT_PROV_HANDLE;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ProviderHandle {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Drop for ProviderHandle {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            unsafe {
-                let _ = NCryptFreeObject(self.0);
-            }
-        }
-    }
-}
-
-/// RAII wrapper for NCRYPT_KEY_HANDLE
-pub struct KeyHandle(pub NCRYPT_KEY_HANDLE);
+define_raii_handle!(
+    /// RAII wrapper for NCRYPT_KEY_HANDLE that automatically calls NCryptFreeObject on drop
+    pub KeyHandle(pub NCRYPT_KEY_HANDLE), NCryptFreeObject, is_invalid, deref
+);
 
 impl KeyHandle {
     /// Takes ownership of the inner handle, preventing Drop from being called
@@ -103,32 +106,10 @@ impl KeyHandle {
     }
 }
 
-impl Deref for KeyHandle {
-    type Target = NCRYPT_KEY_HANDLE;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for KeyHandle {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Drop for KeyHandle {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            unsafe {
-                let _ = NCryptFreeObject(self.0);
-            }
-        }
-    }
-}
-
-/// RAII guard for NCrypt enumeration state to prevent memory leaks
-pub struct EnumStateGuard(*mut std::ffi::c_void);
+define_raii_handle!(
+    /// RAII guard for NCrypt enumeration state that automatically calls NCryptFreeBuffer on drop
+    pub EnumStateGuard(*mut std::ffi::c_void), NCryptFreeBuffer, is_null
+);
 
 impl EnumStateGuard {
     pub fn new() -> Self {
@@ -140,18 +121,10 @@ impl EnumStateGuard {
     }
 }
 
-impl Drop for EnumStateGuard {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe {
-                let _ = NCryptFreeBuffer(self.0);
-            }
-        }
-    }
-}
-
-/// RAII guard for NCrypt key name buffer to prevent memory leaks
-pub struct KeyNameBufferGuard(*mut NCryptKeyName);
+define_raii_handle!(
+    /// RAII guard for NCrypt key name buffer that automatically calls NCryptFreeBuffer on drop
+    pub KeyNameBufferGuard(*mut NCryptKeyName), NCryptFreeBuffer, is_null, cast: *mut std::ffi::c_void
+);
 
 impl KeyNameBufferGuard {
     /// Creates a new guard from a key name pointer
@@ -165,15 +138,5 @@ impl KeyNameBufferGuard {
     /// Must be called from an unsafe context. The pointer must be valid and non-null.
     pub fn as_ref(&self) -> &NCryptKeyName {
         unsafe { &*self.0 }
-    }
-}
-
-impl Drop for KeyNameBufferGuard {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe {
-                let _ = NCryptFreeBuffer(self.0 as *mut std::ffi::c_void);
-            }
-        }
     }
 }
