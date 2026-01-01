@@ -110,6 +110,9 @@ mod ffi_helpers {
     }
 }
 
+#[cfg(target_os = "windows")]
+use crate::windows;
+
 pub fn init<R: Runtime, C: DeserializeOwned>(
     app: &AppHandle<R>,
     _api: PluginApi<R, C>,
@@ -121,10 +124,30 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct SecureElement<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> SecureElement<R> {
+    /// Gets the application identifier for key scoping
+    #[cfg(target_os = "windows")]
+    fn get_app_id(&self) -> String {
+        self.0.config().identifier.clone()
+    }
+}
+
+impl<R: Runtime> SecureElement<R> {
     pub fn ping(&self, payload: PingRequest) -> crate::Result<PingResponse> {
         Ok(PingResponse {
             value: payload.value,
         })
+    }
+
+    /// Gets the HWND from the main window for Windows Hello UI parenting
+    #[cfg(target_os = "windows")]
+    fn get_main_window_hwnd(&self) -> Option<isize> {
+        use raw_window_handle::HasWindowHandle;
+        use tauri::Manager;
+
+        let webview_windows = self.0.webview_windows();
+        let window = webview_windows.values().next()?;
+        let handle = window.window_handle().ok()?;
+        windows::hwnd_from_raw(handle.as_raw())
     }
 
     pub fn generate_secure_key(
@@ -161,12 +184,37 @@ impl<R: Runtime> SecureElement<R> {
             let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
             ffi_helpers::parse_ffi_response(&json)
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            use base64::Engine;
+
+            let app_id = self.get_app_id();
+
+            // Create the key with the appropriate provider based on auth mode
+            let key = windows::create_key(&app_id, &payload.key_name, &payload.auth_mode)?;
+
+            // Export the public key
+            let public_key_bytes = windows::export_public_key(&key)?;
+            let public_key = base64::engine::general_purpose::STANDARD.encode(&public_key_bytes);
+
+            // Determine hardware backing based on auth mode
+            let hardware_backing = match payload.auth_mode {
+                crate::models::AuthenticationMode::PinOrBiometric => "ngc", // Windows Hello NGC
+                _ => "tpm", // Platform Crypto Provider with TPM
+            };
+
+            Ok(GenerateSecureKeyResponse {
+                key_name: payload.key_name,
+                public_key,
+                hardware_backing: hardware_backing.to_string(),
+            })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = payload;
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "Secure Enclave not available on this platform",
+                "Secure element not available on this platform",
             )))
         }
     }
@@ -184,12 +232,25 @@ impl<R: Runtime> SecureElement<R> {
             let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
             ffi_helpers::parse_ffi_response(&json)
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            let app_id = self.get_app_id();
+
+            // List keys from both providers
+            let keys = windows::list_keys(
+                &app_id,
+                payload.key_name.as_deref(),
+                payload.public_key.as_deref(),
+            )?;
+
+            Ok(ListKeysResponse { keys })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = payload;
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "Secure Enclave not available on this platform",
+                "Secure element not available on this platform",
             )))
         }
     }
@@ -255,12 +316,37 @@ impl<R: Runtime> SecureElement<R> {
 
             Ok(SignWithKeyResponse { signature })
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            let app_id = self.get_app_id();
+
+            // Open the key and detect which provider it's from
+            let (key, provider_type) = windows::open_key_auto(&app_id, &payload.key_name)?;
+
+            // Hash the data first (NCrypt expects pre-hashed data for ECDSA)
+            let hash = windows::sha256_hash(&payload.data)?;
+
+            // Sign the hash - use Windows Hello for NGC keys
+            let signature = match provider_type {
+                windows::KeyProviderType::Ngc => {
+                    // Get HWND for Windows Hello dialog parenting
+                    let hwnd = self.get_main_window_hwnd();
+                    windows::sign_hash_with_window(&key, &hash, hwnd)?
+                }
+                windows::KeyProviderType::Tpm => {
+                    // Silent signing for TPM keys
+                    windows::sign_hash(&key, &hash)?
+                }
+            };
+
+            Ok(SignWithKeyResponse { signature })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = payload;
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "Secure Enclave not available on this platform",
+                "Secure element not available on this platform",
             )))
         }
     }
@@ -296,12 +382,48 @@ impl<R: Runtime> SecureElement<R> {
 
             Ok(DeleteKeyResponse { success })
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            let app_id = self.get_app_id();
+
+            // If key_name is provided, delete by name
+            // If public_key is provided, find the key with that public key first
+            // If neither, return error
+            let key_name = if let Some(name) = &payload.key_name {
+                name.clone()
+            } else if let Some(public_key) = &payload.public_key {
+                // Find key by public key - fail silently if not found
+                let keys = match windows::list_keys(&app_id, None, Some(public_key)) {
+                    Ok(keys) => keys,
+                    Err(_) => return Ok(DeleteKeyResponse { success: true }),
+                };
+                if keys.is_empty() {
+                    return Ok(DeleteKeyResponse { success: true });
+                }
+                keys[0].key_name.clone()
+            } else {
+                return Err(crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Either key_name or public_key must be provided",
+                )));
+            };
+
+            // Open key - fail silently if key not found
+            // Use open_key_auto to find the key in either provider
+            let (key, _provider_type) = match windows::open_key_auto(&app_id, &key_name) {
+                Ok(result) => result,
+                Err(_) => return Ok(DeleteKeyResponse { success: true }),
+            };
+            let success = windows::delete_key(key)?;
+
+            Ok(DeleteKeyResponse { success })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             let _ = payload;
             Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
-                "Secure Enclave not available on this platform",
+                "Secure element not available on this platform",
             )))
         }
     }
@@ -313,7 +435,26 @@ impl<R: Runtime> SecureElement<R> {
             let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
             ffi_helpers::parse_ffi_response(&json)
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            match windows::open_provider() {
+                Ok(provider) => {
+                    let tpm_available = windows::is_tpm_available(&provider);
+                    Ok(CheckSecureElementSupportResponse {
+                        secure_element_supported: tpm_available,
+                        tee_supported: tpm_available,
+                        can_enforce_biometric_only: tpm_available
+                            && windows::can_enforce_biometric_only(),
+                    })
+                }
+                Err(_) => Ok(CheckSecureElementSupportResponse {
+                    secure_element_supported: false,
+                    tee_supported: false,
+                    can_enforce_biometric_only: false,
+                }),
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             // On unsupported desktop platforms, return that secure element is not supported
             Ok(CheckSecureElementSupportResponse {

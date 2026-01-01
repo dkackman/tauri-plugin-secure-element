@@ -59,11 +59,12 @@
     "@tauri-apps/api": "^2.0.0"
   },
   "devDependencies": {
-    "@rollup/plugin-typescript": "^12.0.0",
     "@naturalcycles/ktlint": "^1.16.0",
+    "@rollup/plugin-typescript": "^12.0.0",
+    "@rollup/rollup-win32-arm64-msvc": "^4.54.0",
     "prettier": "^3.7.4",
     "rollup": "^4.9.6",
-    "typescript": "^5.3.3",
-    "tslib": "^2.6.2"
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.3"
   }
 }

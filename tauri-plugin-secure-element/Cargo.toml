@@ -57,9 +57,22 @@ thiserror = "2"
 rand = "0.8"
 hex = "0.4"
 base64 = "0.22"
+sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_System_Threading",
+    "Security_Credentials_UI",
+] }
+winver = "1"
+raw-window-handle = "0.6"
 
 [build-dependencies]
 tauri-plugin = { version = "2.5.2", features = ["build"] }

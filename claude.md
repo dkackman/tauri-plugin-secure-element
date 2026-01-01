@@ -1,23 +1,25 @@
 # Tauri Plugin Secure Element
 
-A Tauri plugin providing secure element functionality for iOS, Android, and macOS platforms.
+A Tauri plugin providing secure element functionality for iOS, Android, macOS, and Windows platforms.
 
 ## Project Structure
 
 This is a **pnpm workspace monorepo** with the following structure:
 
-```
+```bash
 tauri-plugin-secure-element/          # Root monorepo
 ├── tauri-plugin-secure-element/      # Main plugin code
 │   ├── src/                          # Rust plugin implementation
 │   ├── guest-js/                     # TypeScript guest bindings
-│   ├── ios/                          # Swift implementation
+│   ├── swift/                        # Shared Swift code (Secure Enclave, FFI)
+│   ├── ios/                          # Swift iOS plugin wrapper
 │   ├── android/                      # Kotlin implementation
 │   ├── permissions/                  # Plugin permissions
 │   └── dist-js/                      # Built JavaScript bindings (generated)
-└── test-app/                         # Example Tauri application
-    ├── src/                          # Svelte frontend
-    └── src-tauri/                    # Tauri backend
+├── test-app/                         # Example Tauri application
+│   ├── src/                          # Svelte frontend
+│   └── src-tauri/                    # Tauri backend
+└── docs/                             # Additional documentation
 ```
 
 ## Tech Stack
@@ -43,6 +45,8 @@ Ensure these are installed before starting:
 - Platform-specific dependencies:
   - iOS: Xcode, swiftformat, swiftlint
   - Android: Android Studio, Android SDK, ktlint (installed via pnpm)
+  - macOS: Xcode (for Secure Enclave FFI), provisioning profile (see docs/)
+  - Windows: Visual Studio Build Tools, Windows SDK (for Windows Hello/TPM)
 
 ### Setup
 
@@ -93,11 +97,16 @@ pnpm tauri android dev
 # macOS (requires special setup - see docs/macos-development.md)
 ./build-macos-dev.sh
 open src-tauri/target/debug/bundle/macos/test-app.app
+
+# Windows
+pnpm tauri dev
 ```
 
 Note: The `predev` script automatically builds the plugin before running.
 
 **macOS Note:** Secure Enclave access on macOS requires a provisioning profile and special code signing. See `docs/macos-development.md` for setup instructions.
+
+**Windows Note:** Windows Hello integration requires a TPM 2.0 compatible device and Windows 10/11. On Windows, run `setup-msvc-env.ps1` from the repo root if you encounter build issues with the Windows SDK.
 
 ### Code Quality
 
@@ -126,35 +135,48 @@ pnpm lint:kotlin         # Lint Kotlin only
 
 ### Important Files
 
-- `tauri-plugin-secure-element/src/lib.rs` - Main Rust plugin entry point
+**Rust Core:**
+
+- `tauri-plugin-secure-element/src/lib.rs` - Main plugin entry point
 - `tauri-plugin-secure-element/src/commands.rs` - Tauri command implementations
+- `tauri-plugin-secure-element/src/models.rs` - Data models and types
 - `tauri-plugin-secure-element/src/mobile.rs` - Mobile platform interface
-- `tauri-plugin-secure-element/src/desktop.rs` - Desktop platform stub
+- `tauri-plugin-secure-element/src/desktop.rs` - Desktop platform implementation (macOS/Windows)
+- `tauri-plugin-secure-element/src/windows.rs` - Windows Hello/TPM implementation
 - `tauri-plugin-secure-element/guest-js/index.ts` - JavaScript API
-- `tauri-plugin-secure-element/ios/` - Swift iOS implementation
-- `tauri-plugin-secure-element/android/` - Kotlin Android implementation
+
+**Platform Implementations:**
+
+- `tauri-plugin-secure-element/swift/SecureEnclaveCore.swift` - Shared Secure Enclave logic (iOS/macOS)
+- `tauri-plugin-secure-element/swift/secure_element_ffi.swift` - Swift FFI bindings for macOS
+- `tauri-plugin-secure-element/ios/Sources/Plugin.swift` - iOS Tauri plugin wrapper
+- `tauri-plugin-secure-element/android/src/main/java/SecureKeysPlugin.kt` - Android Keystore implementation
 
 ## Debugging
 
 Use the VS Code launch configurations defined in `.vscode/launch.json` for debugging:
 
-- Debug on iOS
-- Debug on Android
-- Debug test app
+- **Launch Tauri App (Debug)** - Launch with LLDB debugger attached
+- **Attach to Tauri App** - Attach debugger to running process
+- **Launch Tauri App (Tauri Dev)** - Run `pnpm tauri dev` in terminal
+- **Launch Tauri App (Full Debug)** - Combined launch with debugger
 
-View Android logs: `./view-adb-logs.sh`
+View Android logs: `./adb-logs.sh`
 
 ## Common Tasks
 
 ### Adding a new plugin command
 
 1. Define the command in `tauri-plugin-secure-element/src/commands.rs`
-2. Add mobile interface in `src/mobile.rs`
-3. Implement platform-specific code:
-   - iOS: `ios/Sources/`
-   - Android: `android/src/`
-4. Export JavaScript API in `guest-js/index.ts`
-5. Rebuild: `cd tauri-plugin-secure-element && pnpm build`
+2. Add mobile interface in `src/mobile.rs` (for iOS/Android)
+3. Add desktop implementation in `src/desktop.rs` (for macOS/Windows)
+4. Implement platform-specific code:
+   - iOS: `ios/Sources/Plugin.swift` and `swift/SecureEnclaveCore.swift`
+   - Android: `android/src/main/java/SecureKeysPlugin.kt`
+   - macOS: `swift/SecureEnclaveCore.swift` (via FFI)
+   - Windows: `src/windows.rs`
+5. Export JavaScript API in `guest-js/index.ts`
+6. Rebuild: `cd tauri-plugin-secure-element && pnpm build`
 
 ### Testing changes
 
@@ -172,13 +194,16 @@ pnpm build               # Ensure everything builds
 
 ## Dependencies
 
-**Main plugin**:
+**Main plugin (Rust)**:
 
 - `tauri` 2.9.4
-- `serde` 1.0
+- `serde` / `serde_json` 1.0
 - `thiserror` 2
 - `rand` 0.8
 - `hex` 0.4
+- `base64` 0.22
+- `sha2` 0.10
+- Platform-specific: `libc` (macOS), `windows` + `winver` (Windows)
 
 **Guest JS**:
 
@@ -193,14 +218,15 @@ pnpm build               # Ensure everything builds
 ## Platform Support
 
 - **iOS**: Uses Secure Enclave via Swift (Tauri mobile plugin)
-- **Android**: Uses Android StrongBox Keystore via Kotlin (Tauri mobile plugin)
+- **Android**: Uses Android StrongBox/TEE Keystore via Kotlin (Tauri mobile plugin)
 - **macOS**: Uses Secure Enclave via Swift FFI bindings (requires provisioning profile setup)
+- **Windows**: Uses Windows Hello with TPM 2.0 for key storage and biometric/PIN authentication
 
 ## Notes
 
-- macOS support requires additional setup (provisioning profile) - see `docs/macos-development.md`
 - The test app's prebuild/predev scripts ensure the plugin is built before running
 - Swift tooling (swiftformat, swiftlint) is optional but recommended for iOS/macOS development
 - Kotlin formatting uses ktlint (installed via pnpm)
 - All commands should be run from the appropriate directory (root, plugin, or test-app)
-- Security and correctness are paramount
+- Secure element features require physical devices - simulators/emulators lack hardware security modules
+- Run `pnpm test` from root to run all tests, or `pnpm test:rust` for Rust unit tests only
