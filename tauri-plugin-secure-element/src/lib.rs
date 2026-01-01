@@ -13,6 +13,8 @@ mod mobile;
 mod windows;
 #[cfg(target_os = "windows")]
 mod windows_hello;
+#[cfg(target_os = "windows")]
+mod windows_raii;
 
 mod commands;
 mod der;

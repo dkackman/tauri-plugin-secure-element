@@ -1,13 +1,17 @@
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Security::Cryptography::{
     NCryptCreatePersistedKey, NCryptDeleteKey, NCryptEnumKeys, NCryptExportKey, NCryptFinalizeKey,
-    NCryptFreeBuffer, NCryptFreeObject, NCryptKeyName, NCryptOpenKey, NCryptOpenStorageProvider,
-    NCryptSetProperty, NCryptSignHash, CERT_KEY_SPEC, NCRYPT_ALLOW_SIGNING_FLAG, NCRYPT_FLAGS,
-    NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
+    NCryptFreeObject, NCryptKeyName, NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty,
+    NCryptSignHash, CERT_KEY_SPEC, NCRYPT_ALLOW_SIGNING_FLAG, NCRYPT_FLAGS, NCRYPT_KEY_HANDLE,
+    NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
 };
+use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 
 use crate::error_sanitize::sanitize_error;
 use crate::windows_hello;
+use crate::windows_raii::{EnumStateGuard, KeyHandle, KeyNameBufferGuard, ProviderHandle, HLocalGuard, WindowsHandleGuard};
 
 /// Microsoft Platform Crypto Provider - uses TPM when available (for keys without Windows Hello)
 pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provider";
@@ -27,9 +31,6 @@ const NCRYPT_WINDOW_HANDLE_PROPERTY: &str = "HWND Handle";
 /// Use context property for custom UI messages
 const NCRYPT_USE_CONTEXT_PROPERTY: &str = "Use Context";
 
-/// Checks if the current system is running Windows 11 (build 22000 or higher)
-/// Uses winver crate which handles all the pitfalls of Windows version detection
-/// See: https://docs.rs/winver/latest/winver/
 fn is_windows_11() -> crate::Result<bool> {
     let version = winver::WindowsVersion::detect().ok_or_else(|| {
         crate::Error::Io(std::io::Error::other("Failed to detect Windows version"))
@@ -41,7 +42,6 @@ fn is_windows_11() -> crate::Result<bool> {
     Ok(version >= windows_11_min)
 }
 
-/// Verifies that the system is running Windows 11, returns an error if not
 fn require_windows_11() -> crate::Result<()> {
     match is_windows_11() {
         Ok(true) => Ok(()),
@@ -50,32 +50,6 @@ fn require_windows_11() -> crate::Result<()> {
             "This plugin requires Windows 11 (build 22000 or higher)",
         ))),
         Err(e) => Err(e),
-    }
-}
-
-/// RAII wrapper for NCRYPT_PROV_HANDLE
-pub struct ProviderHandle(pub NCRYPT_PROV_HANDLE);
-
-impl Drop for ProviderHandle {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            unsafe {
-                let _ = NCryptFreeObject(self.0);
-            }
-        }
-    }
-}
-
-/// RAII wrapper for NCRYPT_KEY_HANDLE
-pub struct KeyHandle(pub NCRYPT_KEY_HANDLE);
-
-impl Drop for KeyHandle {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            unsafe {
-                let _ = NCryptFreeObject(self.0);
-            }
-        }
     }
 }
 
@@ -89,7 +63,6 @@ pub fn open_ngc_provider() -> crate::Result<ProviderHandle> {
     open_provider_by_name(MS_NGC_KEY_STORAGE_PROVIDER)
 }
 
-/// Opens a storage provider by name
 fn open_provider_by_name(provider_name: &str) -> crate::Result<ProviderHandle> {
     require_windows_11()?;
 
@@ -114,11 +87,9 @@ fn open_provider_by_name(provider_name: &str) -> crate::Result<ProviderHandle> {
 pub fn is_tpm_available(provider: &ProviderHandle) -> bool {
     // Try to get provider properties - if Platform Crypto Provider opened successfully
     // and we can interact with it, TPM should be available
-    // A more thorough check would create a test key, but this is faster
     !provider.0.is_invalid()
 }
 
-/// Determines the provider type from a key name based on its prefix
 pub enum KeyProviderType {
     /// NGC (Windows Hello) protected key
     Ngc,
@@ -145,7 +116,6 @@ pub fn open_key_auto(key_name: &str) -> crate::Result<(KeyHandle, KeyProviderTyp
     Ok((key, KeyProviderType::Tpm))
 }
 
-/// Opens an existing key by full name from a specific provider
 fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Result<KeyHandle> {
     unsafe {
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
@@ -169,9 +139,7 @@ fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Resul
     }
 }
 
-/// Checks if a key with the given name already exists in either provider
 fn key_exists(key_name: &str) -> bool {
-    // Check NGC provider
     if let Ok(sid) = get_current_user_sid() {
         let ngc_full_name = format!("{}//tauri_se//{}", sid, key_name);
         if let Ok(ngc_provider) = open_ngc_provider() {
@@ -181,7 +149,6 @@ fn key_exists(key_name: &str) -> bool {
         }
     }
 
-    // Check TPM provider
     let tpm_full_name = format!("{}{}", KEY_PREFIX_TPM, key_name);
     if let Ok(tpm_provider) = open_provider() {
         if open_key_internal(&tpm_provider, &tpm_full_name).is_ok() {
@@ -226,15 +193,10 @@ pub fn create_key(
     }
 }
 
-/// Gets the current user's SID as a string
 fn get_current_user_sid() -> crate::Result<String> {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
-    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
-    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-
     unsafe {
-        let mut token_handle = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token_handle).map_err(|e| {
+        let mut token_handle_guard = WindowsHandleGuard::new();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, std::ptr::addr_of_mut!(token_handle_guard.0)).map_err(|e| {
             crate::Error::Io(std::io::Error::other(format!(
                 "Failed to open process token: {}",
                 e
@@ -243,20 +205,15 @@ fn get_current_user_sid() -> crate::Result<String> {
 
         // Get required buffer size
         let mut size_needed: u32 = 0;
-        let _ = GetTokenInformation(token_handle, TokenUser, None, 0, &mut size_needed);
-
-        // Allocate buffer and get token info
+        let _ = GetTokenInformation(token_handle_guard.0, TokenUser, None, 0, &mut size_needed);
         let mut buffer = vec![0u8; size_needed as usize];
         let result = GetTokenInformation(
-            token_handle,
+            token_handle_guard.0,
             TokenUser,
             Some(buffer.as_mut_ptr() as *mut _),
             size_needed,
             &mut size_needed,
         );
-
-        // Close token handle now that we're done with it
-        let _ = CloseHandle(token_handle);
 
         result.map_err(|e| {
             crate::Error::Io(std::io::Error::other(format!(
@@ -266,9 +223,6 @@ fn get_current_user_sid() -> crate::Result<String> {
         })?;
 
         let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
-
-        // Convert SID to string
-        use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
         let mut sid_string_ptr = windows::core::PWSTR::null();
         ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string_ptr).map_err(|e| {
             crate::Error::Io(std::io::Error::other(format!(
@@ -277,27 +231,23 @@ fn get_current_user_sid() -> crate::Result<String> {
             )))
         })?;
 
+        let mut sid_string_guard = HLocalGuard::new();
+        sid_string_guard.set_from_pwstr(sid_string_ptr);
+
         let sid_string = sid_string_ptr.to_string().map_err(|e| {
-            // Free the SID string before returning error
-            let _ = LocalFree(HLOCAL(sid_string_ptr.as_ptr() as *mut _));
             crate::Error::Io(std::io::Error::other(format!(
                 "Failed to read SID string: {}",
                 e
             )))
         })?;
 
-        // Free the SID string allocated by ConvertSidToStringSidW
-        let _ = LocalFree(HLOCAL(sid_string_ptr.as_ptr() as *mut _));
-
         Ok(sid_string)
     }
 }
 
-/// Creates a key in the NGC (Windows Hello) provider
 fn create_ngc_key(key_name: &str) -> crate::Result<KeyHandle> {
     let provider = open_ngc_provider()?;
 
-    // Get current user SID for the key name format required by Passport KSP
     let sid = get_current_user_sid()?;
 
     // Format: [SID]//[Domain]/[SubDomain]/[KeyName]
@@ -308,10 +258,8 @@ fn create_ngc_key(key_name: &str) -> crate::Result<KeyHandle> {
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
         let key_name_h = HSTRING::from(full_name.as_str());
 
-        // Use ECDSA P-256 for cross-platform consistency
         let algorithm = HSTRING::from("ECDSA_P256");
 
-        // Create the key - dwLegacyKeySpec is ignored for CNG, use 0
         NCryptCreatePersistedKey(
             provider.0,
             &mut key_handle,
@@ -344,8 +292,6 @@ fn create_ngc_key(key_name: &str) -> crate::Result<KeyHandle> {
             ))));
         }
 
-        // Finalize the key with NCRYPT_SILENT_FLAG to prevent Windows Hello prompt
-        // The prompt should only appear during signing, not creation
         if let Err(e) = NCryptFinalizeKey(key_handle, NCRYPT_SILENT_FLAG) {
             let _ = NCryptFreeObject(key_handle);
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
@@ -354,15 +300,10 @@ fn create_ngc_key(key_name: &str) -> crate::Result<KeyHandle> {
             ))));
         }
 
-        // Note: We intentionally do NOT set NgcCacheType here.
-        // The Passport KSP already triggers Windows Hello during signing operations
-        // by default when keys are stored in the NGC container.
-
         Ok(KeyHandle(key_handle))
     }
 }
 
-/// Creates a key in the TPM provider (no Windows Hello)
 fn create_tpm_key(key_name: &str) -> crate::Result<KeyHandle> {
     let provider = open_provider()?;
 
@@ -381,7 +322,6 @@ fn create_tpm_key(key_name: &str) -> crate::Result<KeyHandle> {
         let key_name_h = HSTRING::from(full_name.as_str());
         let algorithm = HSTRING::from("ECDSA_P256");
 
-        // Create the key
         NCryptCreatePersistedKey(
             provider.0,
             &mut key_handle,
@@ -414,9 +354,6 @@ fn create_tpm_key(key_name: &str) -> crate::Result<KeyHandle> {
             ))));
         }
 
-        // No UI policy for TPM keys - silent operation
-
-        // Finalize the key
         if let Err(e) = NCryptFinalizeKey(key_handle, NCRYPT_FLAGS(0)) {
             let _ = NCryptFreeObject(key_handle);
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
@@ -435,7 +372,6 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
         let blob_type = HSTRING::from("ECCPUBLICBLOB");
         let mut blob_size: u32 = 0;
 
-        // Get required size
         NCryptExportKey(
             key.0,
             NCRYPT_KEY_HANDLE::default(),
@@ -452,7 +388,6 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
             )))
         })?;
 
-        // Export the key
         let mut blob = vec![0u8; blob_size as usize];
         NCryptExportKey(
             key.0,
@@ -497,7 +432,6 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
     }
 }
 
-/// Computes SHA-256 hash using BCrypt
 pub fn sha256_hash(data: &[u8]) -> crate::Result<[u8; 32]> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -520,7 +454,6 @@ pub fn sign_hash_with_window(
     hwnd: Option<isize>,
 ) -> crate::Result<Vec<u8>> {
     unsafe {
-        // Set window handle for UI parenting if provided
         if let Some(handle) = hwnd {
             let hwnd_property = HSTRING::from(NCRYPT_WINDOW_HANDLE_PROPERTY);
             let hwnd_bytes = handle.to_ne_bytes();
@@ -535,7 +468,6 @@ pub fn sign_hash_with_window(
             );
         }
 
-        // Set use context for a custom message
         let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
         let context_message = HSTRING::from("Authenticate to sign data");
         let context_bytes: Vec<u8> = context_message
@@ -564,11 +496,9 @@ pub fn sign_hash_with_window(
         );
     }
 
-    // Now perform the actual signing - this should trigger Windows Hello
     sign_hash_internal(key, hash)
 }
 
-/// Internal signing function
 fn sign_hash_internal(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
     unsafe {
         let mut sig_size: u32 = 0;
@@ -581,7 +511,6 @@ fn sign_hash_internal(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
             )))
         })?;
 
-        // Sign the hash
         let mut signature = vec![0u8; sig_size as usize];
         NCryptSignHash(
             key.0,
@@ -608,8 +537,6 @@ fn sign_hash_internal(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
     }
 }
 
-/// Deletes a key
-/// Fails silently - returns Ok(false) if deletion fails instead of an error
 pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
     unsafe {
         // NCryptDeleteKey takes ownership and invalidates the handle
@@ -619,29 +546,6 @@ pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
         match NCryptDeleteKey(handle, 0u32) {
             Ok(_) => Ok(true),
             Err(_) => Ok(false), // Fail silently
-        }
-    }
-}
-
-/// RAII guard for NCrypt enumeration state to prevent memory leaks
-struct EnumStateGuard(*mut std::ffi::c_void);
-
-impl EnumStateGuard {
-    fn new() -> Self {
-        Self(std::ptr::null_mut())
-    }
-
-    fn as_mut_ptr(&mut self) -> *mut *mut std::ffi::c_void {
-        &mut self.0
-    }
-}
-
-impl Drop for EnumStateGuard {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe {
-                let _ = NCryptFreeBuffer(self.0);
-            }
         }
     }
 }
@@ -657,7 +561,6 @@ fn extract_ngc_key_name(full_name: &str) -> Option<&str> {
         .map(|pos| &full_name[pos + NGC_KEY_MARKER.len()..])
 }
 
-/// Lists keys from a specific provider with the given prefix (for TPM keys)
 fn list_keys_from_provider(
     provider: &ProviderHandle,
     prefix: &str,
@@ -690,7 +593,9 @@ fn list_keys_from_provider(
                 break;
             }
 
-            let key_name_struct = &*key_name_ptr;
+            // Wrap in RAII guard to ensure cleanup even on panic
+            let key_name_guard = KeyNameBufferGuard::new(key_name_ptr);
+            let key_name_struct = key_name_guard.as_ref();
             let key_name_wide = key_name_struct.pszName;
 
             if !key_name_wide.is_null() {
@@ -722,15 +627,13 @@ fn list_keys_from_provider(
                     }
                 }
             }
-
-            let _ = NCryptFreeBuffer(key_name_ptr as *mut std::ffi::c_void);
+            // key_name_guard is dropped here, freeing the buffer
         }
     }
 
     Ok(keys)
 }
 
-/// Lists keys from the NGC provider (keys have format {SID}/{GUID}/tauri_se//{key_name})
 fn list_ngc_keys(
     provider: &ProviderHandle,
     filter_key_name: Option<&str>,
@@ -762,7 +665,9 @@ fn list_ngc_keys(
                 break;
             }
 
-            let key_name_struct = &*key_name_ptr;
+            // Wrap in RAII guard to ensure cleanup even on panic
+            let key_name_guard = KeyNameBufferGuard::new(key_name_ptr);
+            let key_name_struct = key_name_guard.as_ref();
             let key_name_wide = key_name_struct.pszName;
 
             if !key_name_wide.is_null() {
@@ -773,7 +678,6 @@ fn list_ngc_keys(
                     let name_matches = filter_key_name.map(|f| user_name == f).unwrap_or(true);
 
                     if name_matches {
-                        // Try to open the key and get public key
                         if let Ok(key_handle) = open_key_internal(provider, &full_name) {
                             if let Ok(public_key_bytes) = export_public_key(&key_handle) {
                                 let public_key_b64 = base64::engine::general_purpose::STANDARD
@@ -794,22 +698,19 @@ fn list_ngc_keys(
                     }
                 }
             }
-
-            let _ = NCryptFreeBuffer(key_name_ptr as *mut std::ffi::c_void);
+            // key_name_guard is dropped here, freeing the buffer
         }
     }
 
     Ok(keys)
 }
 
-/// Lists all keys from both providers
 pub fn list_keys(
     filter_key_name: Option<&str>,
     filter_public_key: Option<&str>,
 ) -> crate::Result<Vec<crate::models::KeyInfo>> {
     let mut all_keys = Vec::new();
 
-    // List keys from TPM provider
     if let Ok(tpm_provider) = open_provider() {
         if let Ok(tpm_keys) = list_keys_from_provider(
             &tpm_provider,
@@ -821,7 +722,6 @@ pub fn list_keys(
         }
     }
 
-    // List keys from NGC provider (uses different key name format)
     if let Ok(ngc_provider) = open_ngc_provider() {
         if let Ok(ngc_keys) = list_ngc_keys(&ngc_provider, filter_key_name, filter_public_key) {
             all_keys.extend(ngc_keys);
@@ -831,7 +731,6 @@ pub fn list_keys(
     Ok(all_keys)
 }
 
-/// Checks if Windows Hello biometric-only mode is available
 pub fn can_enforce_biometric_only() -> bool {
     // Windows Hello doesn't distinguish between PIN and biometric at the API level,
     // so biometricOnly mode is not supported. Always return false.
