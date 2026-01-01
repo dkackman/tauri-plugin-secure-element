@@ -1,6 +1,6 @@
 # Tauri Plugin Secure Element
 
-A Tauri plugin for secure element functionality on macOS & iOS (Secure Enclave) and Android (Strongbox and TEE).
+A Tauri plugin for secure element functionality on macOS & iOS (Secure Enclave) and Android (StrongBox and TEE).
 
 ## Features
 
@@ -9,7 +9,7 @@ A Tauri plugin for secure element functionality on macOS & iOS (Secure Enclave) 
 - List and manage secure keys
 - Check secure element support on the device
 - Support for biometric and PIN authentication modes
-- Cross-platform support for macOS, iOS, and Android
+- Cross-platform support for macOS, Windows, iOS, and Android
 
 ## Installation
 
@@ -27,7 +27,7 @@ yarn add tauri-plugin-secure-element-api
 
 ```toml
 [dependencies]
-tauri-plugin-secure-element = "0.1.0"
+tauri-plugin-secure-element = "0.1.0-beta.1"
 ```
 
 ## Setup
@@ -200,9 +200,20 @@ All keys use the **secp256r1 (P-256)** elliptic curve.
 ## Platform Support
 
 - **iOS**: Uses Secure Enclave for key generation and signing
-- **Android**: Uses StrongBox (when available) with fallback to TEE (Trusted Execution Environment)
+- **Android**: Uses StrongBox and TEE (Trusted Execution Environment) when available
+- **Windows**: Uses TPM 2.0 for key generation and signing
+- **macOS**: Uses Secure Enclave for key generation and signing
 
 ## Platform Limitations
+
+### Windows
+
+- Windows 11 (build 22000 or higher) requires TPM 2.0
+- TPM 2.0 is supported on Windows 10 (since version 1507)
+
+### macOS
+
+- Secure Enclave is available on Macs with Apple Silicon (M1/M2/M3/M4) or T2 chip
 
 ### Android
 
@@ -219,11 +230,11 @@ All keys use the **secp256r1 (P-256)** elliptic curve.
 
 ### Authentication Modes
 
-| Mode             | iOS                               | Android                              |
-| ---------------- | --------------------------------- | ------------------------------------ |
-| `none`           | ✅ No auth required               | ✅ No auth required                  |
-| `pinOrBiometric` | ✅ Face ID, Touch ID, or passcode | ✅ Biometric or PIN/pattern/password |
-| `biometricOnly`  | ✅ Face ID or Touch ID only       | ✅ API 30+ only, biometric only      |
+| Mode             | iOS/MacOS                         | Android                              | Windows             |
+| ---------------- | --------------------------------- | ------------------------------------ | ------------------- |
+| `none`           | ✅ No auth required               | ✅ No auth required                  | ✅ No auth required |
+| `pinOrBiometric` | ✅ Face ID, Touch ID, or passcode | ✅ Biometric or PIN/pattern/password | ✅ Windows Hello    |
+| `biometricOnly`  | ❌ Not supported                  | ✅ API 30+ only, biometric only      | ❌ Not supported    |
 
 ## License
 

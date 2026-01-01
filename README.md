@@ -10,7 +10,6 @@ A Tauri plugin for secure element functionality.
 - [Rust](https://www.rust-lang.org/) (latest stable version)
 - [Node.js](https://nodejs.org/) (version 20.19+ or 22.12+)
 - [pnpm](https://pnpm.io/) (package manager)
-- [Tauri CLI](https://tauri.app/v1/guides/getting-started/prerequisites) (installed via pnpm)
 - [Setup system dependencies for Tauri](https://v2.tauri.app/start/prerequisites/)
 
 ## Install and Build
@@ -20,7 +19,7 @@ pnpm install
 pnpm build
 ```
 
-This will install dependencies, build the plugin, its js bindings and the test app front-end.
+This will install dependencies, build the plugin, its JS bindings, and the test app frontend.
 
 ## Running
 
@@ -40,7 +39,7 @@ pnpm tauri android dev
 
 ### macOS
 
-macOS Secure Enclave access requires special code signing setup with a provisioning profile. See the **[macOS Development Guide](docs/macos-development.md)** for detailed instructions.
+macOS Secure Enclave access requires special code signing setup with a provisioning profile. See the **[macOS Development Guide](docs/macos-development.md)** for detailed instructions. `pnpm tauri dev` will not work for Secure Enclave development because it runs the raw binary without a bundle structure or signed provisioning profile.
 
 Quick start (after setup):
 
@@ -50,9 +49,16 @@ cd test-app
 open src-tauri/target/debug/bundle/macos/test-app.app
 ```
 
+### Windows
+
+```bash
+cd test-app
+pnpm tauri dev
+```
+
 ## Using Tauri Plugin Secure Element
 
-A Tauri plugin for secure element functionality on macOS & iOS (Secure Enclave) and Android (Strongbox and TEE).
+A Tauri plugin for secure element functionality on Windows (TPM 2.0), macOS & iOS (Secure Enclave) and Android (StrongBox & TEE).
 
 ## Features
 
@@ -61,7 +67,7 @@ A Tauri plugin for secure element functionality on macOS & iOS (Secure Enclave) 
 - List and manage secure keys
 - Check secure element support on the device
 - Support for biometric and PIN authentication modes
-- Cross-platform support for macOS, iOS, and Android
+- Cross-platform support for macOS, Windows, iOS, and Android
 
 ### Installation
 
@@ -79,7 +85,7 @@ yarn add tauri-plugin-secure-element-api
 
 ```toml
 [dependencies]
-tauri-plugin-secure-element = "0.1.0"
+tauri-plugin-secure-element = "0.1.0-beta.1"
 ```
 
 ### Setup
@@ -245,7 +251,9 @@ All keys use the **secp256r1 (P-256)** elliptic curve.
 ## Platform Support
 
 - **iOS**: Uses Secure Enclave for key generation and signing
-- **Android**: Uses Strongbox and TEE (Trusted Execution Environment) when available
+- **Android**: Uses StrongBox and TEE (Trusted Execution Environment) when available
+- **Windows**: Uses TPM 2.0 for key generation and signing
+- **macOS**: Uses Secure Enclave for key generation and signing
 
 ## License
 
