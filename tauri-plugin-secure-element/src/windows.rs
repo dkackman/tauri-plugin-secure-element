@@ -228,7 +228,7 @@ pub fn create_key(
 
 /// Gets the current user's SID as a string
 fn get_current_user_sid() -> crate::Result<String> {
-    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
     use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -247,14 +247,18 @@ fn get_current_user_sid() -> crate::Result<String> {
 
         // Allocate buffer and get token info
         let mut buffer = vec![0u8; size_needed as usize];
-        GetTokenInformation(
+        let result = GetTokenInformation(
             token_handle,
             TokenUser,
             Some(buffer.as_mut_ptr() as *mut _),
             size_needed,
             &mut size_needed,
-        )
-        .map_err(|e| {
+        );
+
+        // Close token handle now that we're done with it
+        let _ = CloseHandle(token_handle);
+
+        result.map_err(|e| {
             crate::Error::Io(std::io::Error::other(format!(
                 "Failed to get token information: {}",
                 e
@@ -274,14 +278,16 @@ fn get_current_user_sid() -> crate::Result<String> {
         })?;
 
         let sid_string = sid_string_ptr.to_string().map_err(|e| {
+            // Free the SID string before returning error
+            let _ = LocalFree(HLOCAL(sid_string_ptr.as_ptr() as *mut _));
             crate::Error::Io(std::io::Error::other(format!(
                 "Failed to read SID string: {}",
                 e
             )))
         })?;
 
-        // Note: sid_string_ptr should be freed with LocalFree, but the type conversion
-        // is complex. This is a small one-time leak per key creation - acceptable for now.
+        // Free the SID string allocated by ConvertSidToStringSidW
+        let _ = LocalFree(HLOCAL(sid_string_ptr.as_ptr() as *mut _));
 
         Ok(sid_string)
     }
