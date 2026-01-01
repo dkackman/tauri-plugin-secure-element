@@ -66,6 +66,20 @@ impl Drop for WindowsHandleGuard {
 /// RAII wrapper for NCRYPT_PROV_HANDLE
 pub struct ProviderHandle(pub NCRYPT_PROV_HANDLE);
 
+impl Deref for ProviderHandle {
+    type Target = NCRYPT_PROV_HANDLE;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ProviderHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl Drop for ProviderHandle {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
@@ -78,6 +92,30 @@ impl Drop for ProviderHandle {
 
 /// RAII wrapper for NCRYPT_KEY_HANDLE
 pub struct KeyHandle(pub NCRYPT_KEY_HANDLE);
+
+impl KeyHandle {
+    /// Takes ownership of the inner handle, preventing Drop from being called
+    /// This is useful when another API takes ownership of the handle (e.g., NCryptDeleteKey)
+    pub fn take(self) -> NCRYPT_KEY_HANDLE {
+        let handle = self.0;
+        std::mem::forget(self);
+        handle
+    }
+}
+
+impl Deref for KeyHandle {
+    type Target = NCRYPT_KEY_HANDLE;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for KeyHandle {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 impl Drop for KeyHandle {
     fn drop(&mut self) {

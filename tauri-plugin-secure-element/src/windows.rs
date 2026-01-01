@@ -540,10 +540,8 @@ fn sign_hash_internal(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
 pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
     unsafe {
         // NCryptDeleteKey takes ownership and invalidates the handle
-        let handle = key.0;
-        std::mem::forget(key); // Don't run Drop since NCryptDeleteKey frees the handle
-
-        match NCryptDeleteKey(handle, 0u32) {
+        // Use take() to extract the handle and prevent Drop from being called
+        match NCryptDeleteKey(key.take(), 0u32) {
             Ok(_) => Ok(true),
             Err(_) => Ok(false), // Fail silently
         }
