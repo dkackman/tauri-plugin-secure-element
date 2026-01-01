@@ -19,8 +19,52 @@ pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provide
 /// Microsoft Passport Key Storage Provider - for Windows Hello protected keys
 pub const MS_NGC_KEY_STORAGE_PROVIDER: &str = "Microsoft Passport Key Storage Provider";
 
-/// Key name prefix for TPM keys without Windows Hello protection
-pub const KEY_PREFIX_TPM: &str = "tauri_se_tpm_";
+/// Key name prefix base for TPM keys without Windows Hello protection
+/// Full format: tauri_se_tpm_{app_id}_{key_name}
+const KEY_PREFIX_TPM_BASE: &str = "tauri_se_tpm_";
+
+/// Domain for NGC keys
+const NGC_DOMAIN: &str = "tauri_se";
+
+/// Sanitizes an app identifier for use in key names.
+/// Replaces dots, slashes, and other problematic characters with underscores.
+fn sanitize_app_id(app_id: &str) -> String {
+    app_id
+        .chars()
+        .map(|c| match c {
+            '.' | '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect()
+}
+
+/// Builds the TPM key prefix including the app identifier
+fn tpm_key_prefix(app_id: &str) -> String {
+    format!("{}{}_", KEY_PREFIX_TPM_BASE, sanitize_app_id(app_id))
+}
+
+/// Builds the full TPM key name
+fn tpm_key_name(app_id: &str, key_name: &str) -> String {
+    format!("{}{}", tpm_key_prefix(app_id), key_name)
+}
+
+/// Builds the NGC key marker for the given app identifier
+/// Format: /tauri_se/{app_id}//
+fn ngc_key_marker(app_id: &str) -> String {
+    format!("/{}/{}/", NGC_DOMAIN, sanitize_app_id(app_id))
+}
+
+/// Builds the full NGC key name
+/// Format: {SID}//tauri_se/{app_id}/{key_name}
+fn ngc_key_name(sid: &str, app_id: &str, key_name: &str) -> String {
+    format!(
+        "{}//{}/{}/{}",
+        sid,
+        NGC_DOMAIN,
+        sanitize_app_id(app_id),
+        key_name
+    )
+}
 
 /// Property to require gesture (biometric/PIN) for each operation
 const NCRYPT_PIN_CACHE_IS_GESTURE_REQUIRED_PROPERTY: &str = "PinCacheIsGestureRequired";
@@ -98,10 +142,10 @@ pub enum KeyProviderType {
 }
 
 /// Opens an existing key by name, automatically detecting the correct provider
-pub fn open_key_auto(key_name: &str) -> crate::Result<(KeyHandle, KeyProviderType)> {
-    // Try NGC provider first (keys have format {SID}//tauri_se//{key_name})
+pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, KeyProviderType)> {
+    // Try NGC provider first (keys have format {SID}//tauri_se/{app_id}/{key_name})
     if let Ok(sid) = get_current_user_sid() {
-        let ngc_full_name = format!("{}//tauri_se//{}", sid, key_name);
+        let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
         if let Ok(ngc_provider) = open_ngc_provider() {
             if let Ok(key) = open_key_internal(&ngc_provider, &ngc_full_name) {
                 return Ok((key, KeyProviderType::Ngc));
@@ -110,7 +154,7 @@ pub fn open_key_auto(key_name: &str) -> crate::Result<(KeyHandle, KeyProviderTyp
     }
 
     // Try TPM provider
-    let tpm_full_name = format!("{}{}", KEY_PREFIX_TPM, key_name);
+    let tpm_full_name = tpm_key_name(app_id, key_name);
     let tpm_provider = open_provider()?;
     let key = open_key_internal(&tpm_provider, &tpm_full_name)?;
     Ok((key, KeyProviderType::Tpm))
@@ -139,9 +183,9 @@ fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Resul
     }
 }
 
-fn key_exists(key_name: &str) -> bool {
+fn key_exists(app_id: &str, key_name: &str) -> bool {
     if let Ok(sid) = get_current_user_sid() {
-        let ngc_full_name = format!("{}//tauri_se//{}", sid, key_name);
+        let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
         if let Ok(ngc_provider) = open_ngc_provider() {
             if open_key_internal(&ngc_provider, &ngc_full_name).is_ok() {
                 return true;
@@ -149,7 +193,7 @@ fn key_exists(key_name: &str) -> bool {
         }
     }
 
-    let tpm_full_name = format!("{}{}", KEY_PREFIX_TPM, key_name);
+    let tpm_full_name = tpm_key_name(app_id, key_name);
     if let Ok(tpm_provider) = open_provider() {
         if open_key_internal(&tpm_provider, &tpm_full_name).is_ok() {
             return true;
@@ -161,11 +205,12 @@ fn key_exists(key_name: &str) -> bool {
 
 /// Creates a new P-256 ECDSA key with the appropriate provider based on auth mode
 pub fn create_key(
+    app_id: &str,
     key_name: &str,
     auth_mode: &crate::models::AuthenticationMode,
 ) -> crate::Result<KeyHandle> {
     // Check if a key with this name already exists in either provider
-    if key_exists(key_name) {
+    if key_exists(app_id, key_name) {
         return Err(crate::Error::Io(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             format!("A key with name '{}' already exists", key_name),
@@ -187,9 +232,9 @@ pub fn create_key(
                     "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating keys with authentication.",
                 )));
             }
-            create_ngc_key(key_name)
+            create_ngc_key(app_id, key_name)
         }
-        crate::models::AuthenticationMode::None => create_tpm_key(key_name),
+        crate::models::AuthenticationMode::None => create_tpm_key(app_id, key_name),
     }
 }
 
@@ -245,14 +290,14 @@ fn get_current_user_sid() -> crate::Result<String> {
     }
 }
 
-fn create_ngc_key(key_name: &str) -> crate::Result<KeyHandle> {
+fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
     let provider = open_ngc_provider()?;
 
     let sid = get_current_user_sid()?;
 
     // Format: [SID]//[Domain]/[SubDomain]/[KeyName]
-    // Domain = "tauri_se", SubDomain = "", KeyName = user's key name
-    let full_name = format!("{}//tauri_se//{}", sid, key_name);
+    // Domain = "tauri_se", SubDomain = sanitized app_id, KeyName = user's key name
+    let full_name = ngc_key_name(&sid, app_id, key_name);
 
     unsafe {
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
@@ -304,7 +349,7 @@ fn create_ngc_key(key_name: &str) -> crate::Result<KeyHandle> {
     }
 }
 
-fn create_tpm_key(key_name: &str) -> crate::Result<KeyHandle> {
+fn create_tpm_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
     let provider = open_provider()?;
 
     // Check if TPM is available
@@ -315,7 +360,7 @@ fn create_tpm_key(key_name: &str) -> crate::Result<KeyHandle> {
         )));
     }
 
-    let full_name = format!("{}{}", KEY_PREFIX_TPM, key_name);
+    let full_name = tpm_key_name(app_id, key_name);
 
     unsafe {
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
@@ -548,15 +593,12 @@ pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
     }
 }
 
-/// NGC key marker in the key name format: {SID}/{GUID}/tauri_se//{key_name}
-/// Windows inserts a GUID between SID and our domain, so we look for /tauri_se//
-const NGC_KEY_MARKER: &str = "/tauri_se//";
-
-/// Extracts user key name from NGC format: {SID}//tauri_se//{key_name} -> key_name
-fn extract_ngc_key_name(full_name: &str) -> Option<&str> {
+/// Extracts user key name from NGC format: {SID}//tauri_se/{app_id}/{key_name} -> key_name
+fn extract_ngc_key_name<'a>(full_name: &'a str, app_id: &str) -> Option<&'a str> {
+    let marker = ngc_key_marker(app_id);
     full_name
-        .find(NGC_KEY_MARKER)
-        .map(|pos| &full_name[pos + NGC_KEY_MARKER.len()..])
+        .find(&marker)
+        .map(|pos| &full_name[pos + marker.len()..])
 }
 
 fn list_keys_from_provider(
@@ -634,6 +676,7 @@ fn list_keys_from_provider(
 
 fn list_ngc_keys(
     provider: &ProviderHandle,
+    app_id: &str,
     filter_key_name: Option<&str>,
     filter_public_key: Option<&str>,
 ) -> crate::Result<Vec<crate::models::KeyInfo>> {
@@ -671,8 +714,8 @@ fn list_ngc_keys(
             if !key_name_wide.is_null() {
                 let full_name = key_name_wide.to_string().unwrap_or_default();
 
-                // Check for our NGC key marker: /tauri_se//
-                if let Some(user_name) = extract_ngc_key_name(&full_name) {
+                // Check for our NGC key marker: /tauri_se/{app_id}/
+                if let Some(user_name) = extract_ngc_key_name(&full_name, app_id) {
                     let name_matches = filter_key_name.map(|f| user_name == f).unwrap_or(true);
 
                     if name_matches {
@@ -704,15 +747,17 @@ fn list_ngc_keys(
 }
 
 pub fn list_keys(
+    app_id: &str,
     filter_key_name: Option<&str>,
     filter_public_key: Option<&str>,
 ) -> crate::Result<Vec<crate::models::KeyInfo>> {
     let mut all_keys = Vec::new();
 
+    let tpm_prefix = tpm_key_prefix(app_id);
     if let Ok(tpm_provider) = open_provider() {
         if let Ok(tpm_keys) = list_keys_from_provider(
             &tpm_provider,
-            KEY_PREFIX_TPM,
+            &tpm_prefix,
             filter_key_name,
             filter_public_key,
         ) {
@@ -721,7 +766,9 @@ pub fn list_keys(
     }
 
     if let Ok(ngc_provider) = open_ngc_provider() {
-        if let Ok(ngc_keys) = list_ngc_keys(&ngc_provider, filter_key_name, filter_public_key) {
+        if let Ok(ngc_keys) =
+            list_ngc_keys(&ngc_provider, app_id, filter_key_name, filter_public_key)
+        {
             all_keys.extend(ngc_keys);
         }
     }

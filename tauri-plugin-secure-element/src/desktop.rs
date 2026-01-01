@@ -124,6 +124,14 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct SecureElement<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> SecureElement<R> {
+    /// Gets the application identifier for key scoping
+    #[cfg(target_os = "windows")]
+    fn get_app_id(&self) -> String {
+        self.0.config().identifier.clone()
+    }
+}
+
+impl<R: Runtime> SecureElement<R> {
     pub fn ping(&self, payload: PingRequest) -> crate::Result<PingResponse> {
         Ok(PingResponse {
             value: payload.value,
@@ -136,7 +144,8 @@ impl<R: Runtime> SecureElement<R> {
         use raw_window_handle::HasWindowHandle;
         use tauri::Manager;
 
-        let window = self.0.get_webview_window("main")?;
+        let webview_windows = self.0.webview_windows();
+        let window = webview_windows.values().next()?;
         let handle = window.window_handle().ok()?;
         windows::hwnd_from_raw(handle.as_raw())
     }
@@ -179,8 +188,10 @@ impl<R: Runtime> SecureElement<R> {
         {
             use base64::Engine;
 
+            let app_id = self.get_app_id();
+
             // Create the key with the appropriate provider based on auth mode
-            let key = windows::create_key(&payload.key_name, &payload.auth_mode)?;
+            let key = windows::create_key(&app_id, &payload.key_name, &payload.auth_mode)?;
 
             // Export the public key
             let public_key_bytes = windows::export_public_key(&key)?;
@@ -223,9 +234,14 @@ impl<R: Runtime> SecureElement<R> {
         }
         #[cfg(target_os = "windows")]
         {
+            let app_id = self.get_app_id();
+
             // List keys from both providers
-            let keys =
-                windows::list_keys(payload.key_name.as_deref(), payload.public_key.as_deref())?;
+            let keys = windows::list_keys(
+                &app_id,
+                payload.key_name.as_deref(),
+                payload.public_key.as_deref(),
+            )?;
 
             Ok(ListKeysResponse { keys })
         }
@@ -302,8 +318,10 @@ impl<R: Runtime> SecureElement<R> {
         }
         #[cfg(target_os = "windows")]
         {
+            let app_id = self.get_app_id();
+
             // Open the key and detect which provider it's from
-            let (key, provider_type) = windows::open_key_auto(&payload.key_name)?;
+            let (key, provider_type) = windows::open_key_auto(&app_id, &payload.key_name)?;
 
             // Hash the data first (NCrypt expects pre-hashed data for ECDSA)
             let hash = windows::sha256_hash(&payload.data)?;
@@ -366,6 +384,8 @@ impl<R: Runtime> SecureElement<R> {
         }
         #[cfg(target_os = "windows")]
         {
+            let app_id = self.get_app_id();
+
             // If key_name is provided, delete by name
             // If public_key is provided, find the key with that public key first
             // If neither, return error
@@ -373,7 +393,7 @@ impl<R: Runtime> SecureElement<R> {
                 name.clone()
             } else if let Some(public_key) = &payload.public_key {
                 // Find key by public key - fail silently if not found
-                let keys = match windows::list_keys(None, Some(public_key)) {
+                let keys = match windows::list_keys(&app_id, None, Some(public_key)) {
                     Ok(keys) => keys,
                     Err(_) => return Ok(DeleteKeyResponse { success: true }),
                 };
@@ -390,7 +410,7 @@ impl<R: Runtime> SecureElement<R> {
 
             // Open key - fail silently if key not found
             // Use open_key_auto to find the key in either provider
-            let (key, _provider_type) = match windows::open_key_auto(&key_name) {
+            let (key, _provider_type) = match windows::open_key_auto(&app_id, &key_name) {
                 Ok(result) => result,
                 Err(_) => return Ok(DeleteKeyResponse { success: true }),
             };
