@@ -130,6 +130,17 @@ impl<R: Runtime> SecureElement<R> {
         })
     }
 
+    /// Gets the HWND from the main window for Windows Hello UI parenting
+    #[cfg(target_os = "windows")]
+    fn get_main_window_hwnd(&self) -> Option<isize> {
+        use raw_window_handle::HasWindowHandle;
+        use tauri::Manager;
+
+        let window = self.0.get_webview_window("main")?;
+        let handle = window.window_handle().ok()?;
+        windows::hwnd_from_raw(handle.as_raw())
+    }
+
     pub fn generate_secure_key(
         &self,
         payload: GenerateSecureKeyRequest,
@@ -168,27 +179,23 @@ impl<R: Runtime> SecureElement<R> {
         {
             use base64::Engine;
 
-            let provider = windows::open_provider()?;
-
-            // Check if TPM is available
-            if !windows::is_tpm_available(&provider) {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
-                    "TPM 2.0 not available on this system",
-                )));
-            }
-
-            // Create the key
-            let key = windows::create_key(&provider, &payload.key_name, &payload.auth_mode)?;
+            // Create the key with the appropriate provider based on auth mode
+            let key = windows::create_key(&payload.key_name, &payload.auth_mode)?;
 
             // Export the public key
             let public_key_bytes = windows::export_public_key(&key)?;
             let public_key = base64::engine::general_purpose::STANDARD.encode(&public_key_bytes);
 
+            // Determine hardware backing based on auth mode
+            let hardware_backing = match payload.auth_mode {
+                crate::models::AuthenticationMode::PinOrBiometric => "ngc", // Windows Hello NGC
+                _ => "tpm", // Platform Crypto Provider with TPM
+            };
+
             Ok(GenerateSecureKeyResponse {
                 key_name: payload.key_name,
                 public_key,
-                hardware_backing: "tpm".to_string(),
+                hardware_backing: hardware_backing.to_string(),
             })
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -216,13 +223,9 @@ impl<R: Runtime> SecureElement<R> {
         }
         #[cfg(target_os = "windows")]
         {
-            let provider = windows::open_provider()?;
-
-            let keys = windows::list_keys(
-                &provider,
-                payload.key_name.as_deref(),
-                payload.public_key.as_deref(),
-            )?;
+            // List keys from both providers
+            let keys =
+                windows::list_keys(payload.key_name.as_deref(), payload.public_key.as_deref())?;
 
             Ok(ListKeysResponse { keys })
         }
@@ -299,14 +302,24 @@ impl<R: Runtime> SecureElement<R> {
         }
         #[cfg(target_os = "windows")]
         {
-            let provider = windows::open_provider()?;
-            let key = windows::open_key(&provider, &payload.key_name)?;
+            // Open the key and detect which provider it's from
+            let (key, provider_type) = windows::open_key_auto(&payload.key_name)?;
 
             // Hash the data first (NCrypt expects pre-hashed data for ECDSA)
             let hash = windows::sha256_hash(&payload.data)?;
 
-            // Sign the hash
-            let signature = windows::sign_hash(&key, &hash)?;
+            // Sign the hash - use Windows Hello for NGC keys
+            let signature = match provider_type {
+                windows::KeyProviderType::Ngc => {
+                    // Get HWND for Windows Hello dialog parenting
+                    let hwnd = self.get_main_window_hwnd();
+                    windows::sign_hash_with_window(&key, &hash, hwnd)?
+                }
+                windows::KeyProviderType::Tpm => {
+                    // Silent signing for TPM keys
+                    windows::sign_hash(&key, &hash)?
+                }
+            };
 
             Ok(SignWithKeyResponse { signature })
         }
@@ -353,8 +366,6 @@ impl<R: Runtime> SecureElement<R> {
         }
         #[cfg(target_os = "windows")]
         {
-            let provider = windows::open_provider()?;
-
             // If key_name is provided, delete by name
             // If public_key is provided, find the key with that public key first
             // If neither, return error
@@ -362,7 +373,7 @@ impl<R: Runtime> SecureElement<R> {
                 name.clone()
             } else if let Some(public_key) = &payload.public_key {
                 // Find key by public key - fail silently if not found
-                let keys = match windows::list_keys(&provider, None, Some(public_key)) {
+                let keys = match windows::list_keys(None, Some(public_key)) {
                     Ok(keys) => keys,
                     Err(_) => return Ok(DeleteKeyResponse { success: true }),
                 };
@@ -378,8 +389,9 @@ impl<R: Runtime> SecureElement<R> {
             };
 
             // Open key - fail silently if key not found
-            let key = match windows::open_key(&provider, &key_name) {
-                Ok(key) => key,
+            // Use open_key_auto to find the key in either provider
+            let (key, _provider_type) = match windows::open_key_auto(&key_name) {
+                Ok(result) => result,
                 Err(_) => return Ok(DeleteKeyResponse { success: true }),
             };
             let success = windows::delete_key(key)?;

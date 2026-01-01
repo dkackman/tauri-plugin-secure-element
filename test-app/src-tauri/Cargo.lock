@@ -3515,6 +3515,7 @@ dependencies = [
  "hex",
  "libc",
  "rand 0.8.5",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sha2",
