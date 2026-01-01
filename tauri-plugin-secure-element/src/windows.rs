@@ -169,11 +169,42 @@ fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Resul
     }
 }
 
+/// Checks if a key with the given name already exists in either provider
+fn key_exists(key_name: &str) -> bool {
+    // Check NGC provider
+    if let Ok(sid) = get_current_user_sid() {
+        let ngc_full_name = format!("{}//tauri_se//{}", sid, key_name);
+        if let Ok(ngc_provider) = open_ngc_provider() {
+            if open_key_internal(&ngc_provider, &ngc_full_name).is_ok() {
+                return true;
+            }
+        }
+    }
+
+    // Check TPM provider
+    let tpm_full_name = format!("{}{}", KEY_PREFIX_TPM, key_name);
+    if let Ok(tpm_provider) = open_provider() {
+        if open_key_internal(&tpm_provider, &tpm_full_name).is_ok() {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Creates a new P-256 ECDSA key with the appropriate provider based on auth mode
 pub fn create_key(
     key_name: &str,
     auth_mode: &crate::models::AuthenticationMode,
 ) -> crate::Result<KeyHandle> {
+    // Check if a key with this name already exists in either provider
+    if key_exists(key_name) {
+        return Err(crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("A key with name '{}' already exists", key_name),
+        )));
+    }
+
     // Validate Windows Hello requirements before creating the key
     match auth_mode {
         crate::models::AuthenticationMode::BiometricOnly => {
