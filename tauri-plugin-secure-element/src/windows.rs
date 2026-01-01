@@ -2,12 +2,16 @@ use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::Cryptography::{
     NCryptCreatePersistedKey, NCryptDeleteKey, NCryptEnumKeys, NCryptExportKey, NCryptFinalizeKey,
-    NCryptFreeObject, NCryptKeyName, NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty,
-    NCryptSignHash, CERT_KEY_SPEC, NCRYPT_ALLOW_SIGNING_FLAG, NCRYPT_FLAGS, NCRYPT_KEY_HANDLE,
-    NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
+    NCryptFreeObject, NCryptGetProperty, NCryptKeyName, NCryptOpenKey, NCryptOpenStorageProvider,
+    NCryptSetProperty, NCryptSignHash, CERT_KEY_SPEC, NCRYPT_ALLOW_SIGNING_FLAG, NCRYPT_FLAGS,
+    NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
 };
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::System::TpmBaseServices::{
+    Tbsi_Context_Create, Tbsi_GetDeviceInfo, Tbsip_Context_Close, TBS_CONTEXT_PARAMS2,
+    TBS_CONTEXT_VERSION_TWO, TBS_SUCCESS, TPM_DEVICE_INFO, TPM_VERSION_12, TPM_VERSION_20,
+};
 
 use crate::error_sanitize::sanitize_error;
 use crate::windows_hello;
@@ -99,6 +103,219 @@ fn require_windows_11() -> crate::Result<()> {
     }
 }
 
+/// TPM version information
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TpmVersion {
+    /// TPM 1.2 (older, limited algorithms)
+    Tpm12,
+    /// TPM 2.0 (current standard, required for this plugin)
+    Tpm20,
+    /// Unknown TPM version
+    Unknown(u32),
+}
+
+impl std::fmt::Display for TpmVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TpmVersion::Tpm12 => write!(f, "TPM 1.2"),
+            TpmVersion::Tpm20 => write!(f, "TPM 2.0"),
+            TpmVersion::Unknown(v) => write!(f, "TPM (unknown version: {})", v),
+        }
+    }
+}
+
+/// Detailed TPM status information
+#[derive(Debug)]
+pub struct TpmStatus {
+    /// Whether a TPM is present in the system
+    pub present: bool,
+    /// The TPM version, if detected
+    pub version: Option<TpmVersion>,
+    /// Whether the TPM meets requirements (TPM 2.0)
+    pub meets_requirements: bool,
+    /// Whether the Platform Crypto Provider can be opened
+    pub provider_available: bool,
+    /// Whether the provider is hardware-backed
+    pub hardware_backed: bool,
+    /// Human-readable status message
+    pub message: String,
+}
+
+/// RAII guard for TBS context handle
+struct TbsContextGuard(usize);
+
+impl TbsContextGuard {
+    fn new() -> Self {
+        Self(0)
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut usize {
+        &mut self.0
+    }
+
+    fn handle(&self) -> usize {
+        self.0
+    }
+
+    fn is_valid(&self) -> bool {
+        self.0 != 0
+    }
+}
+
+impl Drop for TbsContextGuard {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            unsafe {
+                let _ = Tbsip_Context_Close(self.0);
+            }
+        }
+    }
+}
+
+/// Checks if a TPM is present using the TPM Base Services (TBS) API.
+/// This is the most direct way to detect TPM presence.
+pub fn is_tpm_present_tbs() -> bool {
+    unsafe {
+        let mut device_info = TPM_DEVICE_INFO::default();
+        let result = Tbsi_GetDeviceInfo(std::mem::size_of::<TPM_DEVICE_INFO>() as u32, &mut device_info);
+        result == TBS_SUCCESS
+    }
+}
+
+/// Gets the TPM version using the TBS API.
+/// Returns None if no TPM is present or version cannot be determined.
+pub fn get_tpm_version() -> Option<TpmVersion> {
+    unsafe {
+        let mut device_info = TPM_DEVICE_INFO::default();
+        let result = Tbsi_GetDeviceInfo(std::mem::size_of::<TPM_DEVICE_INFO>() as u32, &mut device_info);
+
+        if result != TBS_SUCCESS {
+            return None;
+        }
+
+        Some(match device_info.tpmVersion {
+            TPM_VERSION_12 => TpmVersion::Tpm12,
+            TPM_VERSION_20 => TpmVersion::Tpm20,
+            v => TpmVersion::Unknown(v),
+        })
+    }
+}
+
+/// Checks if a TPM 2.0 is present and accessible.
+pub fn is_tpm_2_0_present() -> bool {
+    matches!(get_tpm_version(), Some(TpmVersion::Tpm20))
+}
+
+/// Verifies TPM functionality by attempting to create a TBS context.
+/// This is a more thorough check than just querying device info.
+pub fn can_create_tbs_context() -> bool {
+    unsafe {
+        let mut context = TbsContextGuard::new();
+        let params = TBS_CONTEXT_PARAMS2 {
+            version: TBS_CONTEXT_VERSION_TWO,
+            Anonymous: std::mem::zeroed(),
+        };
+
+        let result = Tbsi_Context_Create(
+            &params as *const TBS_CONTEXT_PARAMS2 as *const _,
+            context.as_mut_ptr(),
+        );
+
+        // Context is automatically closed when guard is dropped
+        result == TBS_SUCCESS && context.is_valid()
+    }
+}
+
+/// NCrypt implementation type property name
+const NCRYPT_IMPL_TYPE_PROPERTY: &str = "Impl Type";
+
+/// Implementation type flag indicating hardware-based implementation
+const NCRYPT_IMPL_HARDWARE_FLAG: u32 = 0x00000001;
+
+/// Checks if the NCrypt provider is hardware-backed by querying its implementation type.
+pub fn is_provider_hardware_backed(provider: &ProviderHandle) -> bool {
+    if provider.0.is_invalid() {
+        return false;
+    }
+
+    unsafe {
+        let prop_name = HSTRING::from(NCRYPT_IMPL_TYPE_PROPERTY);
+        let mut impl_type: u32 = 0;
+        let mut result_size: u32 = 0;
+
+        let result = NCryptGetProperty(
+            provider.0,
+            PCWSTR(prop_name.as_ptr()),
+            Some(std::slice::from_raw_parts_mut(
+                &mut impl_type as *mut u32 as *mut u8,
+                std::mem::size_of::<u32>(),
+            )),
+            &mut result_size,
+            NCRYPT_FLAGS(0),
+        );
+
+        if result.is_ok() && result_size == std::mem::size_of::<u32>() as u32 {
+            (impl_type & NCRYPT_IMPL_HARDWARE_FLAG) != 0
+        } else {
+            false
+        }
+    }
+}
+
+/// Gets comprehensive TPM status information.
+/// This performs multiple checks to provide detailed information about TPM availability.
+pub fn get_tpm_status() -> TpmStatus {
+    // Check 1: TBS API device info (most direct check)
+    let tbs_present = is_tpm_present_tbs();
+    let version = get_tpm_version();
+    let is_tpm_2 = matches!(version, Some(TpmVersion::Tpm20));
+
+    // Check 2: Can we create a TBS context? (functional check)
+    let tbs_functional = if tbs_present {
+        can_create_tbs_context()
+    } else {
+        false
+    };
+
+    // Check 3: Can we open the Platform Crypto Provider?
+    let (provider_available, hardware_backed) = match open_provider_by_name(MS_PLATFORM_CRYPTO_PROVIDER) {
+        Ok(provider) => {
+            let hw_backed = is_provider_hardware_backed(&provider);
+            (true, hw_backed)
+        }
+        Err(_) => (false, false),
+    };
+
+    // Determine overall status
+    let meets_requirements = is_tpm_2 && tbs_functional && provider_available;
+
+    let message = if !tbs_present {
+        "No TPM detected in this system".to_string()
+    } else if !is_tpm_2 {
+        format!(
+            "TPM detected but version is {}, TPM 2.0 required",
+            version.map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string())
+        )
+    } else if !tbs_functional {
+        "TPM 2.0 detected but TBS context creation failed - TPM may be disabled in BIOS".to_string()
+    } else if !provider_available {
+        "TPM 2.0 detected but Platform Crypto Provider unavailable".to_string()
+    } else if !hardware_backed {
+        "TPM 2.0 detected but provider reports software implementation".to_string()
+    } else {
+        "TPM 2.0 available and functional".to_string()
+    };
+
+    TpmStatus {
+        present: tbs_present,
+        version,
+        meets_requirements,
+        provider_available,
+        hardware_backed,
+        message,
+    }
+}
+
 /// Opens the Microsoft Platform Crypto Provider (TPM-backed, no Windows Hello)
 pub fn open_provider() -> crate::Result<ProviderHandle> {
     open_provider_by_name(MS_PLATFORM_CRYPTO_PROVIDER)
@@ -129,11 +346,19 @@ fn open_provider_by_name(provider_name: &str) -> crate::Result<ProviderHandle> {
     }
 }
 
-/// Checks if TPM is available by attempting to verify the provider supports our algorithm
+/// Checks if TPM 2.0 is available and functional.
+/// This performs comprehensive checks:
+/// 1. Verifies the provider handle is valid
+/// 2. Uses TBS API to confirm TPM 2.0 presence
+/// 3. Verifies the provider is hardware-backed
 pub fn is_tpm_available(provider: &ProviderHandle) -> bool {
-    // Try to get provider properties - if Platform Crypto Provider opened successfully
-    // and we can interact with it, TPM should be available
-    !provider.0.is_invalid()
+    // Quick check: is the provider handle valid?
+    if provider.0.is_invalid() {
+        return false;
+    }
+
+    // Comprehensive check: is TPM 2.0 actually present and functional?
+    is_tpm_2_0_present() && is_provider_hardware_backed(provider)
 }
 
 pub enum KeyProviderType {
