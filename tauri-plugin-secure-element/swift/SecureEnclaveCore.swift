@@ -169,6 +169,24 @@ public enum SecureEnclaveCore {
         return CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
     }
 
+    /// Safely converts a CFTypeRef to SecKey.
+    /// Uses unsafeBitCast (required for CF type bridging on iOS) with validation.
+    /// Returns nil if the reference cannot be used as a valid SecKey.
+    private static func cfTypeRefToSecKey(_ ref: CFTypeRef) -> SecKey? {
+        // CFTypeRef is AnyObject in Swift. For CF types, as? may not work reliably
+        // across all platforms (particularly iOS) due to type bridging differences.
+        // unsafeBitCast is the correct way to bridge CF types.
+        let key = unsafeBitCast(ref, to: SecKey.self)
+
+        // Validate it's actually a usable key by attempting to get its public key.
+        // This is a lightweight operation that will fail if ref wasn't a SecKey.
+        guard SecKeyCopyPublicKey(key) != nil else {
+            return nil
+        }
+
+        return key
+    }
+
     /// Exports a public key from a private key as base64 string
     public static func exportPublicKeyBase64(privateKey: SecKey) -> Result<String, SecureEnclaveError> {
         guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
@@ -313,11 +331,10 @@ public enum SecureEnclaveCore {
 
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
-                guard let keyRef = item[kSecValueRef as String] as? CFTypeRef else {
+                guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                      let privateKey = cfTypeRefToSecKey(keyRef) else {
                     continue
                 }
-                // swiftlint:disable:next force_cast
-                let privateKey = keyRef as! SecKey
 
                 // Extract key name from kSecAttrLabel
                 let keyNameLabel = (item[kSecAttrLabel as String] as? String)?
@@ -359,13 +376,11 @@ public enum SecureEnclaveCore {
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
         guard status == errSecSuccess || status == errSecInteractionNotAllowed,
-              let keyRef = keyRef
+              let keyRef = keyRef,
+              let privateKey = cfTypeRefToSecKey(keyRef)
         else {
             return .failure(.keyNotFound(keyName))
         }
-
-        // swiftlint:disable:next force_cast
-        let privateKey = keyRef as! SecKey
 
         // Create SHA256 digest using CryptoKit
         let digest = SHA256.hash(data: data)
@@ -422,11 +437,10 @@ public enum SecureEnclaveCore {
 
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
-                guard let keyRef = item[kSecValueRef as String] as? CFTypeRef else {
+                guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                      let privateKey = cfTypeRefToSecKey(keyRef) else {
                     continue
                 }
-                // swiftlint:disable:next force_cast
-                let privateKey = keyRef as! SecKey
 
                 // Check if this key's public key matches
                 if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
