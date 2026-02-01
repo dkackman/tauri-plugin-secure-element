@@ -32,6 +32,10 @@ const KEY_PREFIX_TPM_BASE: &str = "tauri_se_tpm_";
 /// Domain for NGC keys
 const NGC_DOMAIN: &str = "tauri_se";
 
+/// NTE_EXISTS error code - returned when trying to create a key that already exists
+/// Value: 0x8009000F
+const NTE_EXISTS: i32 = -2146893809i32;
+
 /// Sanitizes an app identifier for use in key names.
 /// Replaces dots, slashes, and other problematic characters with underscores.
 fn sanitize_app_id(app_id: &str) -> String {
@@ -42,6 +46,11 @@ fn sanitize_app_id(app_id: &str) -> String {
             _ => c,
         })
         .collect()
+}
+
+/// Checks if a Windows error indicates that a key already exists (NTE_EXISTS)
+fn is_key_exists_error(error: &windows::core::Error) -> bool {
+    error.code().0 == NTE_EXISTS
 }
 
 /// Builds the TPM key prefix including the app identifier
@@ -410,39 +419,15 @@ fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Resul
     }
 }
 
-fn key_exists(app_id: &str, key_name: &str) -> bool {
-    if let Ok(sid) = get_current_user_sid() {
-        let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
-        if let Ok(ngc_provider) = open_ngc_provider() {
-            if open_key_internal(&ngc_provider, &ngc_full_name).is_ok() {
-                return true;
-            }
-        }
-    }
-
-    let tpm_full_name = tpm_key_name(app_id, key_name);
-    if let Ok(tpm_provider) = open_provider() {
-        if open_key_internal(&tpm_provider, &tpm_full_name).is_ok() {
-            return true;
-        }
-    }
-
-    false
-}
-
 /// Creates a new P-256 ECDSA key with the appropriate provider based on auth mode
 pub fn create_key(
     app_id: &str,
     key_name: &str,
     auth_mode: &crate::models::AuthenticationMode,
 ) -> crate::Result<KeyHandle> {
-    // Check if a key with this name already exists in either provider
-    if key_exists(app_id, key_name) {
-        return Err(crate::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            format!("A key with name '{}' already exists", key_name),
-        )));
-    }
+    // Note: We don't pre-check for key existence here to avoid TOCTOU race conditions.
+    // Instead, we let NCryptCreatePersistedKey fail with NTE_EXISTS if the key already
+    // exists, and handle that error appropriately in create_ngc_key/create_tpm_key.
 
     // Validate Windows Hello requirements before creating the key
     match auth_mode {
@@ -537,20 +522,29 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
 
         let algorithm = HSTRING::from("ECDSA_P256");
 
-        NCryptCreatePersistedKey(
+        if let Err(e) = NCryptCreatePersistedKey(
             provider.0,
             &mut key_handle,
             PCWSTR(algorithm.as_ptr()),
             PCWSTR(key_name_h.as_ptr()),
             CERT_KEY_SPEC(0),
             NCRYPT_FLAGS(0),
-        )
-        .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
+        ) {
+            // Check if the error is "key already exists" (NTE_EXISTS)
+            if is_key_exists_error(&e) {
+                return Err(crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    sanitize_error(
+                        &format!("A key with name '{}' already exists", key_name),
+                        "Key already exists",
+                    ),
+                )));
+            }
+            return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("NCryptCreatePersistedKey failed for '{}': {}", key_name, e),
                 "Failed to create key",
-            )))
-        })?;
+            ))));
+        }
 
         // Set key usage to signing only
         let usage: u32 = NCRYPT_ALLOW_SIGNING_FLAG;
@@ -599,20 +593,29 @@ fn create_tpm_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
         let key_name_h = HSTRING::from(full_name.as_str());
         let algorithm = HSTRING::from("ECDSA_P256");
 
-        NCryptCreatePersistedKey(
+        if let Err(e) = NCryptCreatePersistedKey(
             provider.0,
             &mut key_handle,
             PCWSTR(algorithm.as_ptr()),
             PCWSTR(key_name_h.as_ptr()),
             CERT_KEY_SPEC(0),
             NCRYPT_FLAGS(0),
-        )
-        .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
+        ) {
+            // Check if the error is "key already exists" (NTE_EXISTS)
+            if is_key_exists_error(&e) {
+                return Err(crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    sanitize_error(
+                        &format!("A key with name '{}' already exists", key_name),
+                        "Key already exists",
+                    ),
+                )));
+            }
+            return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("Failed to create TPM key '{}': {}", key_name, e),
                 "Failed to create key",
-            )))
-        })?;
+            ))));
+        }
 
         // Set key usage to signing only
         let usage_bytes = NCRYPT_ALLOW_SIGNING_FLAG.to_le_bytes();
