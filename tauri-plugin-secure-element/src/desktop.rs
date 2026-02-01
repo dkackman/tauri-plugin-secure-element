@@ -25,17 +25,38 @@ extern "C" {
     ) -> *mut std::ffi::c_char;
 }
 
-/// Helper module for macOS FFI operations
+/// Helper module for macOS FFI operations.
+///
+/// # FFI Memory Ownership Contract
+///
+/// This module handles the Rust side of the Swift FFI boundary.
+///
+/// **Memory ownership:**
+/// - Swift allocates C strings using `malloc()` (or `strdup()` for error fallback)
+/// - Rust takes ownership when receiving pointers from Swift FFI calls
+/// - Rust frees the memory using `libc::free()` after converting to owned String
+/// - Both `malloc()` and `strdup()` use the C allocator, so `free()` works for both
+///
+/// **Data format:**
+/// - All FFI functions return JSON-encoded strings
+/// - Success responses contain operation-specific fields
+/// - Error responses contain an "error" field with the message
+///
+/// See also: `swift/secure_element_ffi.swift` for the Swift side of this contract.
 #[cfg(target_os = "macos")]
 mod ffi_helpers {
     use std::ffi::CStr;
 
     /// Converts an FFI C string pointer to a Rust String and frees the memory.
-    /// The pointer must have been allocated by Swift using malloc/strdup.
+    ///
+    /// # Memory Contract
+    /// This function takes ownership of the pointer and frees it with `libc::free()`.
+    /// The pointer must have been allocated by Swift using `malloc()` or `strdup()`.
     ///
     /// # Safety
     /// - `ptr` must be a valid, non-null pointer to a null-terminated C string
-    /// - `ptr` must have been allocated by malloc (will be freed with libc::free)
+    /// - `ptr` must have been allocated with the C allocator (malloc/strdup)
+    /// - Caller must not use `ptr` after this function returns
     pub unsafe fn ffi_string_to_owned(ptr: *mut std::ffi::c_char) -> crate::Result<String> {
         if ptr.is_null() {
             return Err(crate::Error::Io(std::io::Error::other(

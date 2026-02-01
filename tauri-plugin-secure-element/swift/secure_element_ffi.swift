@@ -1,6 +1,26 @@
 import Foundation
 import Security
 
+// MARK: - FFI Memory Ownership Contract
+//
+// This file provides C-callable FFI functions for Rust to invoke Swift Secure Enclave operations.
+//
+// MEMORY OWNERSHIP:
+// - All FFI functions return `UnsafeMutablePointer<CChar>` (C strings) allocated with malloc()
+// - The CALLER (Rust) takes ownership and MUST free the pointer using libc::free()
+// - Swift allocates using malloc() for normal returns and strdup() for error fallback
+// - Both malloc() and strdup() use the C allocator, so free() works for both
+//
+// DATA FORMAT:
+// - All returned strings are JSON-encoded
+// - Success: JSON object with operation-specific fields
+// - Error: JSON object with "error" field containing the error message
+//
+// THREAD SAFETY:
+// - These functions may be called from any thread
+// - SecureEnclaveCore operations are thread-safe
+//
+
 // MARK: - FFI Helper Functions
 
 /// Convert a Result to JSON string
@@ -36,7 +56,12 @@ private func escapeJsonString(_ string: String) -> String {
         .replacingOccurrences(of: "\t", with: "\\t")
 }
 
-/// Allocate and return a C string from Swift string
+/// Allocate and return a C string from Swift string.
+///
+/// MEMORY CONTRACT:
+/// - Returns a pointer allocated with malloc() (or strdup() for error fallback)
+/// - Caller (Rust) takes ownership and must free with libc::free()
+/// - Both malloc() and strdup() use the C allocator, so free() works for both
 private func toCString(_ string: String) -> UnsafeMutablePointer<CChar> {
     guard !string.isEmpty else {
         return strdup("{\"error\":\"Empty result\"}")!
