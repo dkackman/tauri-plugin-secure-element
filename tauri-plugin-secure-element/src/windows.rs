@@ -36,11 +36,12 @@ const NGC_DOMAIN: &str = "tauri_se";
 /// Value: 0x8009000F
 const NTE_EXISTS: i32 = -2146893809i32;
 
-/// Sanitizes an app identifier for use in key names.
+/// Sanitizes a string for use in key names.
 /// Replaces dots, slashes, and other problematic characters with underscores.
-fn sanitize_app_id(app_id: &str) -> String {
-    app_id
-        .chars()
+/// Used for both app identifiers and key names as defense-in-depth
+/// (key names are also validated at the command layer).
+fn sanitize_key_component(s: &str) -> String {
+    s.chars()
         .map(|c| match c {
             '.' | '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             _ => c,
@@ -55,18 +56,22 @@ fn is_key_exists_error(error: &windows::core::Error) -> bool {
 
 /// Builds the TPM key prefix including the app identifier
 fn tpm_key_prefix(app_id: &str) -> String {
-    format!("{}{}_", KEY_PREFIX_TPM_BASE, sanitize_app_id(app_id))
+    format!("{}{}_", KEY_PREFIX_TPM_BASE, sanitize_key_component(app_id))
 }
 
 /// Builds the full TPM key name
 fn tpm_key_name(app_id: &str, key_name: &str) -> String {
-    format!("{}{}", tpm_key_prefix(app_id), key_name)
+    format!(
+        "{}{}",
+        tpm_key_prefix(app_id),
+        sanitize_key_component(key_name)
+    )
 }
 
 /// Builds the NGC key marker for the given app identifier
-/// Format: /tauri_se/{app_id}//
+/// Format: /tauri_se/{app_id}/
 fn ngc_key_marker(app_id: &str) -> String {
-    format!("/{}/{}/", NGC_DOMAIN, sanitize_app_id(app_id))
+    format!("/{}/{}/", NGC_DOMAIN, sanitize_key_component(app_id))
 }
 
 /// Builds the full NGC key name
@@ -76,8 +81,8 @@ fn ngc_key_name(sid: &str, app_id: &str, key_name: &str) -> String {
         "{}//{}/{}/{}",
         sid,
         NGC_DOMAIN,
-        sanitize_app_id(app_id),
-        key_name
+        sanitize_key_component(app_id),
+        sanitize_key_component(key_name)
     )
 }
 
