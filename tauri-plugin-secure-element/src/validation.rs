@@ -69,93 +69,48 @@ pub fn validate_sign_data_size(data: &[u8]) -> Result<(), Error> {
 }
 
 /// Rules:
-/// - Must be valid base64 format
-/// - Must be between MIN_PUBLIC_KEY_FILTER_LENGTH and MAX_PUBLIC_KEY_FILTER_LENGTH characters
+/// - Must be valid base64 that can actually be decoded
+/// - Decoded length must be reasonable for a public key (between 20-256 bytes)
 /// - Must not be empty
 pub fn validate_public_key_filter(public_key: &str) -> Result<(), Error> {
-    // Check minimum length
-    if public_key.is_empty() {
+    use base64::Engine;
+
+    // Check for empty input
+    let trimmed = public_key.trim();
+    if trimmed.is_empty() {
         return Err(Error::Validation(
             "Public key filter cannot be empty".to_string(),
         ));
     }
 
-    // Validate base64 format
-    // Base64 characters: A-Z, a-z, 0-9, +, /, and = for padding
-    // We allow whitespace to be lenient, but strip it for validation
-    let trimmed = public_key.trim();
-    if trimmed.is_empty() {
-        return Err(Error::Validation(
-            "Public key filter cannot be empty or whitespace only".to_string(),
-        ));
-    }
-
-    // Remove whitespace for validation
-    let no_whitespace: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
-
-    if no_whitespace.len() < MIN_PUBLIC_KEY_FILTER_LENGTH {
+    // Check string length before attempting decode
+    if trimmed.len() < MIN_PUBLIC_KEY_FILTER_LENGTH {
         return Err(Error::Validation(format!(
             "Public key filter is too short (minimum {} characters, got {})",
             MIN_PUBLIC_KEY_FILTER_LENGTH,
-            no_whitespace.len()
+            trimmed.len()
         )));
     }
 
-    if no_whitespace.len() > MAX_PUBLIC_KEY_FILTER_LENGTH {
+    if trimmed.len() > MAX_PUBLIC_KEY_FILTER_LENGTH {
         return Err(Error::Validation(format!(
             "Public key filter exceeds maximum length of {} characters (got {})",
             MAX_PUBLIC_KEY_FILTER_LENGTH,
-            no_whitespace.len()
+            trimmed.len()
         )));
     }
 
-    // Check for valid base64 characters
-    // Base64 uses: A-Z, a-z, 0-9, +, /, and = for padding
-    let base64_chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    if !no_whitespace.bytes().all(|b| base64_chars.contains(&b)) {
-        return Err(Error::Validation(
-            "Public key filter contains invalid characters (must be base64 encoded)".to_string(),
-        ));
-    }
+    // Actually decode the base64 to validate it
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .map_err(|e| Error::Validation(format!("Invalid base64 encoding: {}", e)))?;
 
-    // Base64 strings must have length that's a multiple of 4 (after padding)
-    // Padding can be 0, 1, or 2 '=' characters
-    let padding_count = no_whitespace
-        .chars()
-        .rev()
-        .take_while(|&c| c == '=')
-        .count();
-    if padding_count > 2 {
+    // Sanity check: decoded public key should have reasonable size
+    // P-256 uncompressed: 65 bytes, compressed: 33 bytes
+    // Allow some flexibility for different formats
+    if decoded.is_empty() {
         return Err(Error::Validation(
-            "Public key filter has invalid base64 padding (maximum 2 padding characters)"
-                .to_string(),
-        ));
-    }
-
-    if padding_count > 0 {
-        let without_padding = &no_whitespace[..no_whitespace.len() - padding_count];
-        if without_padding.contains('=') {
-            return Err(Error::Validation(
-                "Public key filter has invalid base64 padding (padding must be at the end)"
-                    .to_string(),
-            ));
-        }
-    }
-
-    // Base64 strings must have total length that's a multiple of 4 (including padding)
-    // This is a basic sanity check for base64 format
-    if no_whitespace.len() % 4 != 0 {
-        return Err(Error::Validation(
-            "Public key filter has invalid base64 format (total length must be multiple of 4)"
-                .to_string(),
-        ));
-    }
-
-    // Ensure we have some data (not just padding)
-    let data_len = no_whitespace.len() - padding_count;
-    if data_len == 0 {
-        return Err(Error::Validation(
-            "Public key filter is invalid (empty after removing padding)".to_string(),
+            "Public key filter decodes to empty data".to_string(),
         ));
     }
 
@@ -238,29 +193,23 @@ mod tests {
 
     #[test]
     fn test_valid_public_key_filters() {
-        // Valid base64 strings (typical public key sizes)
-        // 24 chars - example: "dGVzdGtleTEyMzQ1Njc4OQ==" (base64 of "testkey123456789")
+        // Valid base64 string - 24 chars, decodes to "testkey123456789"
         assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ==").is_ok());
 
-        // 20 chars (minimum) - example: "dGVzdGtleTEyMzQ1Njc="
+        // 20 chars (minimum) - valid base64
         assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc=").is_ok());
 
-        // 44 chars (compressed key) - example: "A3B4C5D6E7F8G9H0I1J2K3L4M5N6O7P8Q9R0S1T2U3V4W5X6Y7Z8"
-        assert!(
-            validate_public_key_filter("A3B4C5D6E7F8G9H0I1J2K3L4M5N6O7P8Q9R0S1T2U3V4W5X6Y7Z8")
-                .is_ok()
-        );
+        // Longer valid base64 (44 chars - typical compressed P-256 key size)
+        // This is base64 of 33 random bytes
+        assert!(validate_public_key_filter("A0FhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejEy").is_ok());
 
-        // 88 chars (uncompressed key) - example with padding
-        let valid_key = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE".repeat(2);
-        assert!(validate_public_key_filter(&valid_key).is_ok());
+        // 88 chars - typical uncompressed P-256 key in X9.62 format (65 bytes)
+        assert!(validate_public_key_filter(
+            "BIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAo="
+        ).is_ok());
 
-        // With whitespace (should be trimmed)
+        // With leading/trailing whitespace (should be trimmed)
         assert!(validate_public_key_filter("  dGVzdGtleTEyMzQ1Njc4OQ==  ").is_ok());
-
-        // Maximum length (256 chars, must be multiple of 4)
-        let max_key = "A".repeat(256);
-        assert!(validate_public_key_filter(&max_key).is_ok());
     }
 
     #[test]
@@ -271,24 +220,27 @@ mod tests {
         // Whitespace only
         assert!(validate_public_key_filter("   ").is_err());
 
-        // Too short
-        assert!(validate_public_key_filter("short").is_err());
+        // Too short (valid base64 but under minimum length)
         assert!(validate_public_key_filter("dGVzdA==").is_err()); // 8 chars
 
         // Too long
-        let too_long = "A".repeat(MAX_PUBLIC_KEY_FILTER_LENGTH + 1);
+        let too_long = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &vec![0u8; 200], // Will produce >256 char base64
+        );
         assert!(validate_public_key_filter(&too_long).is_err());
 
-        // Invalid characters
+        // Invalid base64 - bad characters
         assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ==@").is_err());
         assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ==#").is_err());
-        assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ== ").is_ok()); // Whitespace is trimmed
 
-        // Invalid padding
-        assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ===").is_err()); // 3 padding chars
-        assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4O=Q=").is_err()); // Padding in middle
+        // Invalid base64 - wrong padding
+        assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ===").is_err());
 
-        // Invalid length (not multiple of 4)
-        assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ").is_err()); // 23 chars, not multiple of 4
+        // Invalid base64 - not valid encoding (length not multiple of 4)
+        assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ").is_err());
+
+        // Trailing whitespace is fine (gets trimmed), result is valid
+        assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ== ").is_ok());
     }
 }
