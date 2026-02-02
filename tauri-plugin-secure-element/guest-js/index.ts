@@ -15,7 +15,12 @@ export async function ping(value: string): Promise<string | null> {
 
 export type AuthenticationMode = "none" | "pinOrBiometric" | "biometricOnly";
 
-export type HardwareBacking = "secureEnclave" | "strongBox" | "tee";
+export type HardwareBacking =
+  | "secureEnclave"
+  | "strongBox"
+  | "tee"
+  | "ngc"
+  | "tpm";
 
 export interface GenerateSecureKeyResult {
   publicKey: string;
