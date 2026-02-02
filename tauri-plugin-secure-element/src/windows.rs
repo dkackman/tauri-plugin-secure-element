@@ -8,6 +8,7 @@ use windows::Win32::Security::Cryptography::{
 };
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::System::TpmBaseServices::{Tbsi_GetDeviceInfo, TPM_DEVICE_INFO};
 
 use crate::error_sanitize::sanitize_error;
 use crate::windows_hello;
@@ -77,26 +78,90 @@ const NCRYPT_WINDOW_HANDLE_PROPERTY: &str = "HWND Handle";
 /// Use context property for custom UI messages
 const NCRYPT_USE_CONTEXT_PROPERTY: &str = "Use Context";
 
-fn is_windows_11() -> crate::Result<bool> {
+/// Checks if the Windows version supports TPM 2.0 via the Platform Crypto Provider.
+/// Minimum requirement: Windows 10 version 1607 (Anniversary Update, build 14393).
+/// This is when TPM 2.0 became mandatory for new Windows 10 devices and the
+/// Platform Crypto Provider gained full TPM 2.0 support.
+fn is_windows_10_1607_or_higher() -> crate::Result<bool> {
     let version = winver::WindowsVersion::detect().ok_or_else(|| {
         crate::Error::Io(std::io::Error::other("Failed to detect Windows version"))
     })?;
 
-    // Windows 11 is version 10.0.22000 or higher
-    let windows_11_min = winver::WindowsVersion::new(10, 0, 22000);
+    // Windows 10 version 1607 (Anniversary Update) is build 14393
+    // This is the minimum version for reliable TPM 2.0 support
+    let windows_10_1607_min = winver::WindowsVersion::new(10, 0, 14393);
 
-    Ok(version >= windows_11_min)
+    Ok(version >= windows_10_1607_min)
 }
 
-fn require_windows_11() -> crate::Result<()> {
-    match is_windows_11() {
+fn require_windows_10_1607() -> crate::Result<()> {
+    match is_windows_10_1607_or_higher() {
         Ok(true) => Ok(()),
         Ok(false) => Err(crate::Error::Io(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "This plugin requires Windows 11 (build 22000 or higher)",
+            "This plugin requires Windows 10 version 1607 (build 14393) or higher",
         ))),
         Err(e) => Err(e),
     }
+}
+
+/// TPM version constants returned by TPM_DEVICE_INFO
+const TPM_VERSION_20: u32 = 2;
+
+/// Result of TPM detection
+#[derive(Debug, Clone)]
+pub struct TpmInfo {
+    /// Whether a TPM is present
+    pub present: bool,
+    /// TPM version (1 = TPM 1.2, 2 = TPM 2.0)
+    pub version: Option<u32>,
+    /// TPM interface type
+    #[allow(dead_code)]
+    pub interface_type: Option<u32>,
+    /// TPM implementation revision
+    #[allow(dead_code)]
+    pub implementation_revision: Option<u32>,
+}
+
+/// Detects TPM presence and version using the TPM Base Services API.
+/// Returns detailed information about the TPM if present.
+pub fn detect_tpm() -> TpmInfo {
+    unsafe {
+        let mut device_info = TPM_DEVICE_INFO {
+            structVersion: 1,
+            tpmVersion: 0,
+            tpmInterfaceType: 0,
+            tpmImpRevision: 0,
+        };
+
+        let size = std::mem::size_of::<TPM_DEVICE_INFO>() as u32;
+        let result = Tbsi_GetDeviceInfo(size, &mut device_info as *mut _ as *mut std::ffi::c_void);
+
+        // TBS_SUCCESS is 0
+        if result == 0 {
+            TpmInfo {
+                present: true,
+                version: Some(device_info.tpmVersion),
+                interface_type: Some(device_info.tpmInterfaceType),
+                implementation_revision: Some(device_info.tpmImpRevision),
+            }
+        } else {
+            // TPM not present or error accessing it
+            TpmInfo {
+                present: false,
+                version: None,
+                interface_type: None,
+                implementation_revision: None,
+            }
+        }
+    }
+}
+
+/// Checks if TPM 2.0 is available on this system.
+/// Returns true only if a TPM is present AND it is version 2.0 or higher.
+pub fn is_tpm2_available() -> bool {
+    let info = detect_tpm();
+    info.present && info.version.map(|v| v >= TPM_VERSION_20).unwrap_or(false)
 }
 
 /// Opens the Microsoft Platform Crypto Provider (TPM-backed, no Windows Hello)
@@ -110,7 +175,7 @@ pub fn open_ngc_provider() -> crate::Result<ProviderHandle> {
 }
 
 fn open_provider_by_name(provider_name: &str) -> crate::Result<ProviderHandle> {
-    require_windows_11()?;
+    require_windows_10_1607()?;
 
     unsafe {
         let mut provider = NCRYPT_PROV_HANDLE::default();
@@ -129,11 +194,11 @@ fn open_provider_by_name(provider_name: &str) -> crate::Result<ProviderHandle> {
     }
 }
 
-/// Checks if TPM is available by attempting to verify the provider supports our algorithm
+/// Checks if TPM 2.0 is available for use with the given provider.
+/// This verifies both that the provider handle is valid AND that the system has TPM 2.0.
 pub fn is_tpm_available(provider: &ProviderHandle) -> bool {
-    // Try to get provider properties - if Platform Crypto Provider opened successfully
-    // and we can interact with it, TPM should be available
-    !provider.0.is_invalid()
+    // Provider handle must be valid AND system must have TPM 2.0
+    !provider.0.is_invalid() && is_tpm2_available()
 }
 
 pub enum KeyProviderType {
