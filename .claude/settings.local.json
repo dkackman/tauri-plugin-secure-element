@@ -6,7 +6,16 @@
       "Bash(cargo check:*)",
       "Bash(pnpm build:*)",
       "Bash(pnpm format:*)",
-      "Bash(pnpm lint:*)"
+      "Bash(pnpm lint:*)",
+      "Bash(security find-identity:*)",
+      "Bash(./build-macos-dev.sh:*)",
+      "Bash(codesign:*)",
+      "Bash(log show:*)",
+      "Bash(security cms:*)",
+      "Bash(system_profiler:*)",
+      "Bash(ioreg:*)",
+      "Bash(spctl:*)",
+      "Bash(/usr/bin/log show:*)"
     ]
   }
 }
