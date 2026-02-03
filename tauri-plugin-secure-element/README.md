@@ -95,11 +95,17 @@ import {
   signWithKey,
   deleteKey,
   type AuthenticationMode,
+  type SecureElementBacking,
+  type SecureElementCapabilities,
 } from "tauri-plugin-secure-element-api";
 
-// Check if secure element is supported
-const support = await checkSecureElementSupport();
-console.log("Secure element supported:", support.secureElementSupported);
+// Check device secure element capabilities
+const capabilities = await checkSecureElementSupport();
+console.log("Strongest backing:", capabilities.strongest);
+console.log(
+  "Can enforce biometric-only:",
+  capabilities.canEnforceBiometricOnly
+);
 
 // Generate a new secure key
 const { publicKey, keyName } = await generateSecureKey(
@@ -122,15 +128,65 @@ await deleteKey("my-key-name");
 
 ### `checkSecureElementSupport()`
 
-Returns information about secure element support on the device.
+Returns detailed information about secure element hardware capabilities on the device.
 
-**Returns:** `Promise<SecureElementSupport>`
+**Returns:** `Promise<SecureElementCapabilities>`
 
 ```typescript
-interface SecureElementSupport {
-  secureElementSupported: boolean;
-  teeSupported: boolean;
+/**
+ * Hardware backing tiers, ordered weakest → strongest:
+ * "none" < "firmware" < "integrated" < "discrete"
+ */
+type SecureElementBacking = "none" | "firmware" | "integrated" | "discrete";
+
+interface SecureElementCapabilities {
+  /** A discrete physical security chip is available (e.g. discrete TPM 2.0, macOS T2, Android StrongBox) */
+  discrete: boolean;
+  /** An on-die isolated security core is available (e.g. Apple Silicon Secure Enclave, ARM TrustZone/TEE) */
+  integrated: boolean;
+  /** Firmware-backed security is available but no dedicated secure processor (e.g. Windows fTPM via Intel PTT or AMD PSP) */
+  firmware: boolean;
+  /** The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator, Android Emulator) */
+  emulated: boolean;
+  /** The strongest hardware backing tier available on this device */
+  strongest: SecureElementBacking;
+  /** Whether biometric-only authentication can be enforced at the key level (Android API 30+ only) */
   canEnforceBiometricOnly: boolean;
+}
+```
+
+**Hardware Backing Tiers:**
+
+| Tier         | Description                                    | Examples                                           |
+| ------------ | ---------------------------------------------- | -------------------------------------------------- |
+| `none`       | No secure element available (software-only)    | Unsupported devices, some VMs                      |
+| `firmware`   | Firmware-backed, no dedicated secure processor | Windows fTPM (Intel PTT, AMD PSP)                  |
+| `integrated` | On-die isolated security core                  | Apple Silicon Secure Enclave, ARM TrustZone/TEE    |
+| `discrete`   | Physically separate security processor         | Discrete TPM 2.0, macOS T2 chip, Android StrongBox |
+
+**Usage Example:**
+
+```typescript
+const caps = await checkSecureElementSupport();
+
+// Check if any hardware backing is available
+if (caps.strongest === "none") {
+  console.warn("No secure element available - keys will be software-only");
+}
+
+// Check for high-security backing (discrete or integrated)
+if (caps.strongest === "discrete" || caps.strongest === "integrated") {
+  console.log("High-security hardware backing available");
+}
+
+// Warn if running in emulated environment
+if (caps.emulated) {
+  console.warn("Running in emulator/VM - security may be reduced");
+}
+
+// Check before creating biometric-only keys
+if (caps.canEnforceBiometricOnly) {
+  await generateSecureKey("my-key", "biometricOnly");
 }
 ```
 
