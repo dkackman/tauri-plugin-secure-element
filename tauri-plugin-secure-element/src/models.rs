@@ -117,14 +117,38 @@ pub struct DeleteKeyResponse {
     pub success: bool,
 }
 
-/// Response for Secure Element support check
+/// Secure element hardware backing tiers.
+/// Ordered weakest → strongest so that PartialOrd/Ord work naturally.
+/// `capabilities.strongest >= SecureElementBacking::Integrated` reads well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SecureElementBacking {
+    /// No secure element available (software-only)
+    #[default]
+    None,
+    /// Firmware-backed, no dedicated secure processor (e.g. Windows fTPM via Intel PTT or AMD PSP)
+    Firmware,
+    /// On-die isolated security core (e.g. Apple Silicon Secure Enclave, ARM TrustZone/TEE)
+    Integrated,
+    /// Physically discrete security processor (e.g. discrete TPM 2.0, macOS T2, Android StrongBox)
+    Discrete,
+}
+
+/// Response for Secure Element capabilities check
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckSecureElementSupportResponse {
-    /// Whether Secure Element (StrongBox on Android, Secure Enclave on iOS) is supported
-    pub secure_element_supported: bool,
-    /// Whether Trusted Execution Environment (TEE) / hardware-backed keystore is supported
-    pub tee_supported: bool,
-    /// Android API < 30 doesn't persist biometric-only authentication requirements
+    /// A discrete physical security chip is available (e.g. discrete TPM, T2, StrongBox)
+    pub discrete: bool,
+    /// An on-die isolated security core is available (e.g. Secure Enclave, TrustZone/TEE)
+    pub integrated: bool,
+    /// Firmware-backed security is available but no dedicated secure processor (e.g. fTPM)
+    pub firmware: bool,
+    /// The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator)
+    pub emulated: bool,
+    /// The strongest tier available on this device
+    pub strongest: SecureElementBacking,
+    /// Whether biometric-only authentication can be enforced at the key level
+    /// (Android API < 30 doesn't persist this requirement)
     pub can_enforce_biometric_only: bool,
 }

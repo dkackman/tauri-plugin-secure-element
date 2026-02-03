@@ -2,7 +2,7 @@
 import XCTest
 
 final class ExamplePluginTests: XCTestCase {
-    func testExample() throws {
+    func testExample() {
         let plugin = SecureKeysPlugin()
     }
 }

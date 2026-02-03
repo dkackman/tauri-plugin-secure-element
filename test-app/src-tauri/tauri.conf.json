@@ -34,7 +34,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "signingIdentity": "Apple Development: dkackman@gmail.com (P55387UKSL)",
+      "signingIdentity": "Apple Development: DONALD PHILLIP KACKMAN (P55387UKSL)",
       "entitlements": "gen/apple/test-app_macOS/test-app_macOS.dev.entitlements"
     }
   }

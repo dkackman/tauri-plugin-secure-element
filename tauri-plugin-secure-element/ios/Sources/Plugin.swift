@@ -79,11 +79,10 @@ class SecureEnclavePlugin: Plugin {
         switch SecureEnclaveCore.listKeys(keyName: args.keyName, publicKey: args.publicKey) {
         case let .success(response):
             let keys: [[String: Any]] = response.keys.map { keyInfo in
-                var info: [String: Any] = [
+                [
                     "keyName": keyInfo.keyName,
                     "publicKey": keyInfo.publicKey,
                 ]
-                return info
             }
             invoke.resolve(["keys": keys])
         case let .failure(error):
@@ -126,8 +125,11 @@ class SecureEnclavePlugin: Plugin {
     @objc func checkSecureElementSupport(_ invoke: Invoke) throws {
         let response = SecureEnclaveCore.checkSupport()
         invoke.resolve([
-            "secureElementSupported": response.secureElementSupported,
-            "teeSupported": response.teeSupported,
+            "discrete": response.discrete,
+            "integrated": response.integrated,
+            "firmware": response.firmware,
+            "emulated": response.emulated,
+            "strongest": response.strongest.rawValue,
             "canEnforceBiometricOnly": response.canEnforceBiometricOnly,
         ])
     }
