@@ -813,6 +813,7 @@ class SecureKeysPlugin(
             // If publicKey is provided, find the key by public key and delete it
             val targetPublicKey = args.publicKey
             if (targetPublicKey == null) {
+                invoke.reject("Either keyName or publicKey must be provided")
                 return
             }
 
