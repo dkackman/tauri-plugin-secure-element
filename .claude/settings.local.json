@@ -15,7 +15,8 @@
       "Bash(system_profiler:*)",
       "Bash(ioreg:*)",
       "Bash(spctl:*)",
-      "Bash(/usr/bin/log show:*)"
+      "Bash(/usr/bin/log show:*)",
+      "Bash(swiftc:*)"
     ]
   }
 }
