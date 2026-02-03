@@ -1,9 +1,18 @@
 # Tauri Plugin Secure Element
 
-A Tauri plugin for secure element functionality.
+A Tauri plugin for secure element functionality on Windows (TPM 2.0), macOS & iOS (Secure Enclave) and Android (StrongBox & TEE).
 
 [![npm](https://img.shields.io/npm/v/tauri-plugin-secure-element-api)](https://www.npmjs.com/package/tauri-plugin-secure-element-api)
 [![Crates.io Downloads (latest version)](https://img.shields.io/crates/dv/tauri-plugin-secure-element)](https://crates.io/crates/tauri-plugin-secure-element)
+
+## Features
+
+- Generate secure keys using hardware-backed secure storage
+- Sign data with keys stored in secure elements
+- List and manage secure keys
+- Check secure element support on the device
+- Support for biometric and PIN authentication modes
+- Cross-platform support for macOS, Windows, iOS, and Android
 
 ## Prerequisites
 
@@ -21,7 +30,7 @@ pnpm build
 
 This will install dependencies, build the plugin, its JS bindings, and the test app frontend.
 
-## Running
+## Running the Test App
 
 ### iOS
 
@@ -58,17 +67,6 @@ pnpm tauri dev
 
 ## Using Tauri Plugin Secure Element
 
-A Tauri plugin for secure element functionality on Windows (TPM 2.0), macOS & iOS (Secure Enclave) and Android (StrongBox & TEE).
-
-## Features
-
-- Generate secure keys using hardware-backed secure storage
-- Sign data with keys stored in secure elements
-- List and manage secure keys
-- Check secure element support on the device
-- Support for biometric and PIN authentication modes
-- Cross-platform support for macOS, Windows, iOS, and Android
-
 ### Installation
 
 #### npm
@@ -85,7 +83,7 @@ yarn add tauri-plugin-secure-element-api
 
 ```toml
 [dependencies]
-tauri-plugin-secure-element = "0.1.0-beta.1"
+tauri-plugin-secure-element = "0.1.0-beta.2"
 ```
 
 ### Setup
@@ -110,10 +108,7 @@ Add the plugin permissions to `src-tauri/capabilities/default.json`:
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "secure-element:default"
-  ]
+  "permissions": ["core:default", "secure-element:default"]
 }
 ```
 
@@ -156,11 +151,14 @@ import {
   signWithKey,
   deleteKey,
   type AuthenticationMode,
+  type SecureElementBacking,
+  type SecureElementCapabilities,
 } from "tauri-plugin-secure-element-api";
 
-// Check if secure element is supported
-const support = await checkSecureElementSupport();
-console.log("Secure element supported:", support.secureElementSupported);
+// Check device secure element capabilities
+const capabilities = await checkSecureElementSupport();
+console.log("Strongest backing:", capabilities.strongest);
+console.log("Can enforce biometric-only:", capabilities.canEnforceBiometricOnly);
 
 // Generate a new secure key
 const { publicKey, keyName } = await generateSecureKey(
@@ -183,15 +181,65 @@ await deleteKey("my-key-name");
 
 ### `checkSecureElementSupport()`
 
-Returns information about secure element support on the device.
+Returns detailed information about secure element hardware capabilities on the device.
 
-**Returns:** `Promise<SecureElementSupport>`
+**Returns:** `Promise<SecureElementCapabilities>`
 
 ```typescript
-interface SecureElementSupport {
-  secureElementSupported: boolean;
-  teeSupported: boolean;
+/**
+ * Hardware backing tiers, ordered weakest → strongest:
+ * "none" < "firmware" < "integrated" < "discrete"
+ */
+type SecureElementBacking = "none" | "firmware" | "integrated" | "discrete";
+
+interface SecureElementCapabilities {
+  /** A discrete physical security chip is available (e.g. discrete TPM 2.0, macOS T2, Android StrongBox) */
+  discrete: boolean;
+  /** An on-die isolated security core is available (e.g. Apple Silicon Secure Enclave, ARM TrustZone/TEE) */
+  integrated: boolean;
+  /** Firmware-backed security is available but no dedicated secure processor (e.g. Windows fTPM via Intel PTT or AMD PSP) */
+  firmware: boolean;
+  /** The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator, Android Emulator) */
+  emulated: boolean;
+  /** The strongest hardware backing tier available on this device */
+  strongest: SecureElementBacking;
+  /** Whether biometric-only authentication can be enforced at the key level (Android API 30+ only) */
   canEnforceBiometricOnly: boolean;
+}
+```
+
+**Hardware Backing Tiers:**
+
+| Tier         | Description                                    | Examples                                           |
+| ------------ | ---------------------------------------------- | -------------------------------------------------- |
+| `none`       | No secure element available (software-only)    | Unsupported devices, some VMs                      |
+| `firmware`   | Firmware-backed, no dedicated secure processor | Windows fTPM (Intel PTT, AMD PSP)                  |
+| `integrated` | On-die isolated security core                  | Apple Silicon Secure Enclave, ARM TrustZone/TEE    |
+| `discrete`   | Physically separate security processor         | Discrete TPM 2.0, macOS T2 chip, Android StrongBox |
+
+**Usage Example:**
+
+```typescript
+const caps = await checkSecureElementSupport();
+
+// Check if any hardware backing is available
+if (caps.strongest === "none") {
+  console.warn("No secure element available - keys will be software-only");
+}
+
+// Check for high-security backing (discrete or integrated)
+if (caps.strongest === "discrete" || caps.strongest === "integrated") {
+  console.log("High-security hardware backing available");
+}
+
+// Warn if running in emulated environment
+if (caps.emulated) {
+  console.warn("Running in emulator/VM - security may be reduced");
+}
+
+// Check before creating biometric-only keys
+if (caps.canEnforceBiometricOnly) {
+  await generateSecureKey("my-key", "biometricOnly");
 }
 ```
 
@@ -204,7 +252,18 @@ Generates a new secure key in the device's secure element.
 - `keyName`: Unique name for the key
 - `authMode`: Authentication mode (`'none'`, `'pinOrBiometric'`, or `'biometricOnly'`)
 
-**Returns:** `Promise<{ publicKey: string; keyName: string }>`
+**Returns:** `Promise<GenerateSecureKeyResult>`
+
+```typescript
+interface GenerateSecureKeyResult {
+  publicKey: string;
+  keyName: string;
+  /** The type of hardware backing used for this key */
+  hardwareBacking: "secureEnclave" | "strongBox" | "tee" | "ngc" | "tpm";
+}
+```
+
+**Note:** The `biometricOnly` mode requires Android 11 (API 30) or higher. On older Android versions, this mode will be rejected with an error. Use `checkSecureElementSupport().canEnforceBiometricOnly` to check support before creating biometric-only keys.
 
 ### `listKeys(keyName?: string, publicKey?: string)`
 
@@ -240,20 +299,58 @@ Deletes a key from the secure element. At least one parameter must be provided.
 
 Public keys are returned as base64-encoded strings in **X9.62 uncompressed point format** (65 bytes), consistent across all platforms:
 
-| Byte(s) | Content                  |
-| ------- | ------------------------ |
-| 0       | `0x04` (uncompressed)    |
-| 1-32    | X coordinate (32 bytes)  |
-| 33-64   | Y coordinate (32 bytes)  |
+| Byte(s) | Content                 |
+| ------- | ----------------------- |
+| 0       | `0x04` (uncompressed)   |
+| 1-32    | X coordinate (32 bytes) |
+| 33-64   | Y coordinate (32 bytes) |
 
 All keys use the **secp256r1 (P-256)** elliptic curve.
 
 ## Platform Support
 
-- **iOS**: Uses Secure Enclave for key generation and signing
-- **Android**: Uses StrongBox and TEE (Trusted Execution Environment) when available
-- **Windows**: Uses TPM 2.0 for key generation and signing
-- **macOS**: Uses Secure Enclave for key generation and signing
+| Platform                   | Hardware       | `strongest`  | Notes                                           |
+| -------------------------- | -------------- | ------------ | ----------------------------------------------- |
+| **iOS**                    | Secure Enclave | `integrated` | On-die security core in A-series/M-series chips |
+| **macOS** (Apple Silicon)  | Secure Enclave | `integrated` | On-die security core in M1/M2/M3/M4 chips       |
+| **macOS** (Intel + T2)     | T2 Chip        | `discrete`   | Separate security processor on motherboard      |
+| **Android** (StrongBox)    | StrongBox      | `discrete`   | Tamper-resistant hardware module                |
+| **Android** (TEE only)     | TrustZone/TEE  | `integrated` | ARM TrustZone isolated execution environment    |
+| **Windows** (discrete TPM) | TPM 2.0        | `discrete`   | Separate TPM chip on motherboard                |
+| **Windows** (fTPM)         | Firmware TPM   | `firmware`   | Intel PTT or AMD PSP firmware-based TPM         |
+| **Simulators/Emulators**   | None           | `none`       | `emulated: true` flag is set                    |
+
+## Platform Limitations
+
+### Windows
+
+- Windows 11 (build 22000 or higher) requires TPM 2.0
+- TPM 2.0 is supported on Windows 10 (since version 1507)
+
+### macOS
+
+- Secure Enclave is available on Macs with Apple Silicon (M1/M2/M3/M4) or T2 chip
+
+### Android
+
+| Feature                   | Requirement | Notes                            |
+| ------------------------- | ----------- | -------------------------------- |
+| Hardware-backed keys      | API 23+     | TEE or StrongBox required        |
+| StrongBox                 | API 28+     | Falls back to TEE if unavailable |
+| `biometricOnly` auth mode | API 30+     | Rejected on older versions       |
+
+### iOS
+
+- Secure Enclave is available on all devices with A7 chip or later (iPhone 5s+)
+- Simulator does not support Secure Enclave - test on physical devices
+
+### Authentication Modes
+
+| Mode             | iOS/MacOS                         | Android                              | Windows             |
+| ---------------- | --------------------------------- | ------------------------------------ | ------------------- |
+| `none`           | ✅ No auth required               | ✅ No auth required                  | ✅ No auth required |
+| `pinOrBiometric` | ✅ Face ID, Touch ID, or passcode | ✅ Biometric or PIN/pattern/password | ✅ Windows Hello    |
+| `biometricOnly`  | ❌ Not supported                  | ✅ API 30+ only, biometric only      | ❌ Not supported    |
 
 ## License
 
@@ -262,3 +359,8 @@ Apache-2.0
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Links
+
+- [Repository](https://github.com/dkackman/tauri-plugin-secure-element)
+- [Issues](https://github.com/dkackman/tauri-plugin-secure-element/issues)
