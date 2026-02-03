@@ -1,9 +1,13 @@
+use std::sync::OnceLock;
 use tauri::{command, AppHandle, Runtime};
 
 use crate::models::*;
 use crate::validation::{validate_key_name, validate_public_key_filter, validate_sign_data_size};
 use crate::Result;
 use crate::SecureElementExt;
+
+/// Hardware capabilities don't change at runtime, so we only need to check once.
+static SE_CAPABILITIES_CACHE: OnceLock<CheckSecureElementSupportResponse> = OnceLock::new();
 
 #[command]
 pub(crate) async fn ping<R: Runtime>(
@@ -83,5 +87,12 @@ pub(crate) async fn delete_key<R: Runtime>(
 pub(crate) async fn check_secure_element_support<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<CheckSecureElementSupportResponse> {
-    app.secure_element().check_secure_element_support()
+    // Return cached result if available (capabilities don't change at runtime)
+    if let Some(cached) = SE_CAPABILITIES_CACHE.get() {
+        return Ok(cached.clone());
+    }
+
+    // Query platform and cache the result
+    let result = app.secure_element().check_secure_element_support()?;
+    Ok(SE_CAPABILITIES_CACHE.get_or_init(|| result).clone())
 }
