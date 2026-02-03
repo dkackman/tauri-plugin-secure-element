@@ -62,7 +62,6 @@ public struct SupportResponse {
 
 /// Errors that can occur during Secure Enclave operations
 public enum SecureEnclaveError: Error, LocalizedError {
-    case simulatorNotSupported
     case keyAlreadyExists(String)
     case keyNotFound(String)
     case failedToCreateAccessControl(String)
@@ -78,8 +77,6 @@ public enum SecureEnclaveError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .simulatorNotSupported:
-            return "Secure Enclave is not available on iOS Simulator. Please test on a physical device."
         case let .keyAlreadyExists(name):
             #if DEBUG
                 return "Key already exists: \(name)"
@@ -243,11 +240,6 @@ public enum SecureEnclaveCore {
 
     /// Generate a new secure key in the Secure Enclave
     public static func generateSecureKey(keyName: String, authMode: String?) -> Result<GenerateKeyResponse, SecureEnclaveError> {
-        // Check for simulator
-        if isSimulator {
-            return .failure(.simulatorNotSupported)
-        }
-
         // Check biometric availability if biometricOnly mode is requested
         let mode = authMode ?? "pinOrBiometric"
         if mode == "biometricOnly" {

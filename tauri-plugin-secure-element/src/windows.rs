@@ -158,8 +158,7 @@ pub fn detect_tpm() -> TpmInfo {
         };
 
         let size = std::mem::size_of::<TPM_DEVICE_INFO>() as u32;
-        let result =
-            Tbsi_GetDeviceInfo(size, &mut device_info as *mut _ as *mut std::ffi::c_void);
+        let result = Tbsi_GetDeviceInfo(size, &mut device_info as *mut _ as *mut std::ffi::c_void);
 
         // TBS_SUCCESS is 0
         if result == 0 {

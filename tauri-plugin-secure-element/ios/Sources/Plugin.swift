@@ -79,11 +79,10 @@ class SecureEnclavePlugin: Plugin {
         switch SecureEnclaveCore.listKeys(keyName: args.keyName, publicKey: args.publicKey) {
         case let .success(response):
             let keys: [[String: Any]] = response.keys.map { keyInfo in
-                var info: [String: Any] = [
+                [
                     "keyName": keyInfo.keyName,
                     "publicKey": keyInfo.publicKey,
                 ]
-                return info
             }
             invoke.resolve(["keys": keys])
         case let .failure(error):

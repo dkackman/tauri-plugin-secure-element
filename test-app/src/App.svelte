@@ -329,9 +329,6 @@
   let isVerifying = $state(false);
 
   // Hardware Support
-  let discrete = $state<boolean | null>(null);
-  let integrated = $state<boolean | null>(null);
-  let firmware = $state<boolean | null>(null);
   let emulated = $state<boolean | null>(null);
   let strongest = $state<SecureElementBacking | null>(null);
   let canEnforceBiometricOnly = $state<boolean | null>(null);
@@ -476,18 +473,12 @@
     secureElementCheckError = "";
     checkSecureElementSupport()
       .then((result) => {
-        discrete = result.discrete;
-        integrated = result.integrated;
-        firmware = result.firmware;
         emulated = result.emulated;
         strongest = result.strongest;
         canEnforceBiometricOnly = result.canEnforceBiometricOnly;
       })
       .catch((err) => {
         secureElementCheckError = err.toString();
-        discrete = false;
-        integrated = false;
-        firmware = false;
         emulated = false;
         strongest = "none";
         canEnforceBiometricOnly = false;

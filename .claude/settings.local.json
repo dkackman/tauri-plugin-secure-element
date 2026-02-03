@@ -4,7 +4,9 @@
       "Bash(dir:*)",
       "WebSearch",
       "Bash(cargo check:*)",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "Bash(pnpm format:*)",
+      "Bash(pnpm lint:*)"
     ]
   }
 }
