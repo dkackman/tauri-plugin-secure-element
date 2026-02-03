@@ -34,10 +34,27 @@ public struct SignResponse {
     public let signature: Data
 }
 
+/// Secure element hardware backing tiers
+public enum SecureElementBacking: String, Codable {
+    case none
+    case firmware
+    case integrated
+    case discrete
+}
+
 /// Response from checking Secure Enclave support
 public struct SupportResponse {
-    public let secureElementSupported: Bool
-    public let teeSupported: Bool
+    /// A discrete physical security chip is available (e.g. T2 chip on Intel Macs)
+    public let discrete: Bool
+    /// An on-die isolated security core is available (e.g. Secure Enclave on Apple Silicon)
+    public let integrated: Bool
+    /// Firmware-backed security is available (not applicable on Apple platforms)
+    public let firmware: Bool
+    /// The security is emulated/virtual (e.g. iOS Simulator)
+    public let emulated: Bool
+    /// The strongest tier available on this device
+    public let strongest: SecureElementBacking
+    /// Whether biometric-only authentication can be enforced
     public let canEnforceBiometricOnly: Bool
 }
 
@@ -457,13 +474,32 @@ public enum SecureEnclaveCore {
         }
     }
 
+    /// Detects the type of secure element on macOS (Apple Silicon vs T2 vs none)
+    #if os(macOS)
+        private static func detectMacSecureElementType() -> (discrete: Bool, integrated: Bool) {
+            // Check if running on Apple Silicon (arm64)
+            // Apple Silicon Macs have an integrated Secure Enclave on the SoC
+            #if arch(arm64)
+                return (discrete: false, integrated: true)
+            #else
+                // Intel Mac - check if T2 chip is present
+                // T2 is a discrete security chip on Intel Macs
+                // If Secure Enclave works on Intel Mac, it must be T2
+                return (discrete: true, integrated: false)
+            #endif
+        }
+    #endif
+
     /// Check if Secure Enclave is supported on this device
     public static func checkSupport() -> SupportResponse {
-        // Check for simulator
+        // Check for simulator - this is emulated, no real secure element
         if isSimulator {
             return SupportResponse(
-                secureElementSupported: false,
-                teeSupported: false,
+                discrete: false,
+                integrated: false,
+                firmware: false,
+                emulated: true,
+                strongest: .none,
                 canEnforceBiometricOnly: false
             )
         }
@@ -478,8 +514,11 @@ public enum SecureEnclaveCore {
             &accessError
         ) != nil else {
             return SupportResponse(
-                secureElementSupported: false,
-                teeSupported: false,
+                discrete: false,
+                integrated: false,
+                firmware: false,
+                emulated: false,
+                strongest: .none,
                 canEnforceBiometricOnly: false
             )
         }
@@ -511,8 +550,11 @@ public enum SecureEnclaveCore {
 
         guard testKey != nil else {
             return SupportResponse(
-                secureElementSupported: false,
-                teeSupported: false,
+                discrete: false,
+                integrated: false,
+                firmware: false,
+                emulated: false,
+                strongest: .none,
                 canEnforceBiometricOnly: false
             )
         }
@@ -521,9 +563,27 @@ public enum SecureEnclaveCore {
         // This uses LAContext to verify both hardware availability AND enrollment
         let canEnforceBiometric = checkBiometricAvailability() == nil
 
+        // Determine the type of secure element
+        #if os(iOS) || os(watchOS) || os(tvOS)
+            // iOS devices always have an integrated Secure Enclave on the SoC
+            let discrete = false
+            let integrated = true
+        #elseif os(macOS)
+            let (discrete, integrated) = detectMacSecureElementType()
+        #else
+            let discrete = false
+            let integrated = false
+        #endif
+
+        // Determine strongest backing (discrete > integrated > firmware > none)
+        let strongest: SecureElementBacking = discrete ? .discrete : (integrated ? .integrated : .none)
+
         return SupportResponse(
-            secureElementSupported: true,
-            teeSupported: true,
+            discrete: discrete,
+            integrated: integrated,
+            firmware: false, // Apple platforms don't have firmware-only TPM
+            emulated: false, // Real device, not emulated
+            strongest: strongest,
             canEnforceBiometricOnly: canEnforceBiometric
         )
     }

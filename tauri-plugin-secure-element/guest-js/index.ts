@@ -90,14 +90,36 @@ export async function deleteKey(
   ).then((r) => r.success);
 }
 
-export interface SecureElementSupport {
-  secureElementSupported: boolean;
-  teeSupported: boolean;
+/**
+ * Secure element hardware backing tiers.
+ * Ordered weakest → strongest: none < firmware < integrated < discrete
+ */
+export type SecureElementBacking =
+  | "none"
+  | "firmware"
+  | "integrated"
+  | "discrete";
+
+/**
+ * Secure element capabilities for the current device.
+ */
+export interface SecureElementCapabilities {
+  /** A discrete physical security chip is available (e.g. discrete TPM, T2, StrongBox) */
+  discrete: boolean;
+  /** An on-die isolated security core is available (e.g. Secure Enclave, TrustZone/TEE) */
+  integrated: boolean;
+  /** Firmware-backed security is available but no dedicated secure processor (e.g. fTPM) */
+  firmware: boolean;
+  /** The security is emulated/virtual (e.g. vTPM in VM, iOS Simulator, Android Emulator) */
+  emulated: boolean;
+  /** The strongest tier available on this device */
+  strongest: SecureElementBacking;
+  /** Whether biometric-only authentication can be enforced at the key level */
   canEnforceBiometricOnly: boolean;
 }
 
-export async function checkSecureElementSupport(): Promise<SecureElementSupport> {
-  const result = await invoke<SecureElementSupport>(
+export async function checkSecureElementSupport(): Promise<SecureElementCapabilities> {
+  const result = await invoke<SecureElementCapabilities>(
     "plugin:secure-element|check_secure_element_support"
   );
   return result;

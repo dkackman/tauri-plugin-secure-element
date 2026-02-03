@@ -437,29 +437,17 @@ impl<R: Runtime> SecureElement<R> {
         }
         #[cfg(target_os = "windows")]
         {
-            match windows::open_provider() {
-                Ok(provider) => {
-                    let tpm_available = windows::is_tpm_available(&provider);
-                    Ok(CheckSecureElementSupportResponse {
-                        secure_element_supported: tpm_available,
-                        tee_supported: tpm_available,
-                        can_enforce_biometric_only: tpm_available
-                            && windows::can_enforce_biometric_only(),
-                    })
-                }
-                Err(_) => Ok(CheckSecureElementSupportResponse {
-                    secure_element_supported: false,
-                    tee_supported: false,
-                    can_enforce_biometric_only: false,
-                }),
-            }
+            Ok(windows::get_secure_element_capabilities())
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
             // On unsupported desktop platforms, return that secure element is not supported
             Ok(CheckSecureElementSupportResponse {
-                secure_element_supported: false,
-                tee_supported: false,
+                discrete: false,
+                integrated: false,
+                firmware: false,
+                emulated: false,
+                strongest: crate::models::SecureElementBacking::None,
                 can_enforce_biometric_only: false,
             })
         }

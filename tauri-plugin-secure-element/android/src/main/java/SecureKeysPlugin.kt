@@ -376,16 +376,54 @@ class SecureKeysPlugin(
         invoke.resolve(ret)
     }
 
+    /**
+     * Detect if running on an Android emulator
+     */
+    private fun isEmulator(): Boolean {
+        return (Build.FINGERPRINT.startsWith("generic") ||
+            Build.FINGERPRINT.startsWith("unknown") ||
+            Build.MODEL.contains("google_sdk") ||
+            Build.MODEL.contains("Emulator") ||
+            Build.MODEL.contains("Android SDK built for x86") ||
+            Build.MANUFACTURER.contains("Genymotion") ||
+            Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic") ||
+            Build.PRODUCT == "google_sdk" ||
+            Build.PRODUCT == "sdk_gphone_x86" ||
+            Build.PRODUCT == "sdk_gphone_x86_64" ||
+            Build.PRODUCT == "sdk_gphone64_arm64" ||
+            Build.HARDWARE.contains("goldfish") ||
+            Build.HARDWARE.contains("ranchu"))
+    }
+
     @Command
     fun checkSecureElementSupport(invoke: Invoke) {
         try {
-            val secureElementSupported = isSecureElementSupported()
-            val teeSupported = isTeeSupported()
+            // StrongBox = discrete physical security chip
+            val discrete = isSecureElementSupported()
+            // TEE/TrustZone = on-die isolated security core
+            val integrated = isTeeSupported()
+            // Android doesn't have firmware-only TPM tier
+            val firmware = false
+            // Check if running in emulator
+            val emulated = isEmulator()
             // API 30+ (Android 11+) supports biometric-only enforcement at key level
             val canEnforceBiometricOnly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+
+            // Determine strongest backing (discrete > integrated > firmware > none)
+            val strongest =
+                when {
+                    discrete -> "discrete"
+                    integrated -> "integrated"
+                    firmware -> "firmware"
+                    else -> "none"
+                }
+
             val ret = JSObject()
-            ret.put("secureElementSupported", secureElementSupported)
-            ret.put("teeSupported", teeSupported)
+            ret.put("discrete", discrete)
+            ret.put("integrated", integrated)
+            ret.put("firmware", firmware)
+            ret.put("emulated", emulated)
+            ret.put("strongest", strongest)
             ret.put("canEnforceBiometricOnly", canEnforceBiometricOnly)
             invoke.resolve(ret)
         } catch (e: Exception) {

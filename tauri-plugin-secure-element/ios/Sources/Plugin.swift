@@ -126,8 +126,11 @@ class SecureEnclavePlugin: Plugin {
     @objc func checkSecureElementSupport(_ invoke: Invoke) throws {
         let response = SecureEnclaveCore.checkSupport()
         invoke.resolve([
-            "secureElementSupported": response.secureElementSupported,
-            "teeSupported": response.teeSupported,
+            "discrete": response.discrete,
+            "integrated": response.integrated,
+            "firmware": response.firmware,
+            "emulated": response.emulated,
+            "strongest": response.strongest.rawValue,
             "canEnforceBiometricOnly": response.canEnforceBiometricOnly,
         ])
     }

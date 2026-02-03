@@ -156,8 +156,11 @@ public func secureElementDeleteKey(
 public func secureElementCheckSupport() -> UnsafeMutablePointer<CChar> {
     let response = SecureEnclaveCore.checkSupport()
     let json = dictionaryToJson([
-        "secureElementSupported": response.secureElementSupported,
-        "teeSupported": response.teeSupported,
+        "discrete": response.discrete,
+        "integrated": response.integrated,
+        "firmware": response.firmware,
+        "emulated": response.emulated,
+        "strongest": response.strongest.rawValue,
         "canEnforceBiometricOnly": response.canEnforceBiometricOnly,
     ])
 

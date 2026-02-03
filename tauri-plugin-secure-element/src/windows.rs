@@ -108,6 +108,28 @@ fn require_windows_10_1607() -> crate::Result<()> {
 /// TPM version constants returned by TPM_DEVICE_INFO
 const TPM_VERSION_20: u32 = 2;
 
+/// TPM interface type constants from TPM_DEVICE_INFO
+/// See: https://learn.microsoft.com/en-us/windows/win32/api/tbs/ns-tbs-tpm_device_info
+const TPM_IFTYPE_UNKNOWN: u32 = 0;
+const TPM_IFTYPE_1: u32 = 1; // TPM 1.2 interface (LPC)
+const TPM_IFTYPE_TRUSTZONE: u32 = 2; // ARM TrustZone
+const TPM_IFTYPE_HW: u32 = 3; // Hardware/discrete TPM
+const TPM_IFTYPE_EMULATOR: u32 = 4; // Software emulator
+const TPM_IFTYPE_SPB: u32 = 5; // Simple Peripheral Bus (SPI/I2C)
+
+/// Classification of TPM type based on interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TpmType {
+    /// No TPM detected (or emulator only)
+    None,
+    /// Firmware TPM (fTPM) - Intel PTT, AMD PSP, or similar
+    Firmware,
+    /// On-die integrated security (ARM TrustZone)
+    Integrated,
+    /// Discrete hardware TPM chip
+    Discrete,
+}
+
 /// Result of TPM detection
 #[derive(Debug, Clone)]
 pub struct TpmInfo {
@@ -115,9 +137,10 @@ pub struct TpmInfo {
     pub present: bool,
     /// TPM version (1 = TPM 1.2, 2 = TPM 2.0)
     pub version: Option<u32>,
-    /// TPM interface type
-    #[allow(dead_code)]
+    /// TPM interface type (raw value from TPM_DEVICE_INFO)
     pub interface_type: Option<u32>,
+    /// Classified TPM type (discrete vs firmware)
+    pub tpm_type: TpmType,
     /// TPM implementation revision
     #[allow(dead_code)]
     pub implementation_revision: Option<u32>,
@@ -135,14 +158,33 @@ pub fn detect_tpm() -> TpmInfo {
         };
 
         let size = std::mem::size_of::<TPM_DEVICE_INFO>() as u32;
-        let result = Tbsi_GetDeviceInfo(size, &mut device_info as *mut _ as *mut std::ffi::c_void);
+        let result =
+            Tbsi_GetDeviceInfo(size, &mut device_info as *mut _ as *mut std::ffi::c_void);
 
         // TBS_SUCCESS is 0
         if result == 0 {
+            let interface_type = device_info.tpmInterfaceType;
+
+            // Classify TPM type based on interface:
+            // - TPM_IFTYPE_HW (3): Discrete hardware TPM chip
+            // - TPM_IFTYPE_SPB (5): SPI/I2C-attached discrete TPM
+            // - TPM_IFTYPE_1 (1): LPC-attached TPM (typically TPM 1.2 discrete)
+            // - TPM_IFTYPE_TRUSTZONE (2): ARM TrustZone - on-die integrated security
+            // - TPM_IFTYPE_UNKNOWN (0): Often firmware TPM (Intel PTT, AMD fTPM)
+            // - TPM_IFTYPE_EMULATOR (4): Software emulator - not hardware backed
+            let tpm_type = match interface_type {
+                TPM_IFTYPE_HW | TPM_IFTYPE_SPB | TPM_IFTYPE_1 => TpmType::Discrete,
+                TPM_IFTYPE_TRUSTZONE => TpmType::Integrated,
+                TPM_IFTYPE_UNKNOWN => TpmType::Firmware, // fTPM typically reports as unknown
+                TPM_IFTYPE_EMULATOR => TpmType::None,    // Emulator is not hardware-backed
+                _ => TpmType::Firmware,                  // Default for unrecognized types
+            };
+
             TpmInfo {
                 present: true,
                 version: Some(device_info.tpmVersion),
-                interface_type: Some(device_info.tpmInterfaceType),
+                interface_type: Some(interface_type),
+                tpm_type,
                 implementation_revision: Some(device_info.tpmImpRevision),
             }
         } else {
@@ -151,6 +193,7 @@ pub fn detect_tpm() -> TpmInfo {
                 present: false,
                 version: None,
                 interface_type: None,
+                tpm_type: TpmType::None,
                 implementation_revision: None,
             }
         }
@@ -162,6 +205,60 @@ pub fn detect_tpm() -> TpmInfo {
 pub fn is_tpm2_available() -> bool {
     let info = detect_tpm();
     info.present && info.version.map(|v| v >= TPM_VERSION_20).unwrap_or(false)
+}
+
+/// Gets the secure element capabilities for Windows.
+/// Returns information about what types of hardware security are available.
+pub fn get_secure_element_capabilities() -> crate::models::CheckSecureElementSupportResponse {
+    let info = detect_tpm();
+
+    // Check if TPM is emulated (virtual TPM in a VM)
+    let emulated = info
+        .interface_type
+        .map(|t| t == TPM_IFTYPE_EMULATOR)
+        .unwrap_or(false);
+
+    // Check if we have TPM 2.0
+    let has_tpm2 = info.present && info.version.map(|v| v >= TPM_VERSION_20).unwrap_or(false);
+
+    if !has_tpm2 {
+        return crate::models::CheckSecureElementSupportResponse {
+            discrete: false,
+            integrated: false,
+            firmware: false,
+            emulated,
+            strongest: crate::models::SecureElementBacking::None,
+            can_enforce_biometric_only: false,
+        };
+    }
+
+    // Determine capabilities based on TPM type
+    let (discrete, integrated, firmware) = match info.tpm_type {
+        TpmType::Discrete => (true, false, false),
+        TpmType::Integrated => (false, true, false), // ARM TrustZone on Windows ARM
+        TpmType::Firmware => (false, false, true),
+        TpmType::None => (false, false, false),
+    };
+
+    // Determine strongest backing (discrete > integrated > firmware > none)
+    let strongest = if discrete {
+        crate::models::SecureElementBacking::Discrete
+    } else if integrated {
+        crate::models::SecureElementBacking::Integrated
+    } else if firmware {
+        crate::models::SecureElementBacking::Firmware
+    } else {
+        crate::models::SecureElementBacking::None
+    };
+
+    crate::models::CheckSecureElementSupportResponse {
+        discrete,
+        integrated,
+        firmware,
+        emulated,
+        strongest,
+        can_enforce_biometric_only: can_enforce_biometric_only(),
+    }
 }
 
 /// Opens the Microsoft Platform Crypto Provider (TPM-backed, no Windows Hello)

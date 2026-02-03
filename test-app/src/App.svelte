@@ -15,6 +15,7 @@
     listKeys,
     signWithKey,
     type AuthenticationMode,
+    type SecureElementBacking,
   } from "tauri-plugin-secure-element-api";
 
   // Test Runner Section
@@ -96,14 +97,20 @@
         name: "Check Secure Element Support",
         fn: async () => {
           const result = await checkSecureElementSupport();
-          if (typeof result.secureElementSupported !== "boolean") {
-            throw new Error("Invalid response: missing secureElementSupported");
+          if (typeof result.discrete !== "boolean") {
+            throw new Error("Invalid response: missing discrete");
           }
-          if (typeof result.teeSupported !== "boolean") {
-            throw new Error("Invalid response: missing teeSupported");
+          if (typeof result.integrated !== "boolean") {
+            throw new Error("Invalid response: missing integrated");
+          }
+          if (typeof result.strongest !== "string") {
+            throw new Error("Invalid response: missing strongest");
+          }
+          if (typeof result.emulated !== "boolean") {
+            throw new Error("Invalid response: missing emulated");
           }
           log(
-            `  Secure Element: ${result.secureElementSupported}, TEE: ${result.teeSupported}, BiometricOnly: ${result.canEnforceBiometricOnly}`
+            `  Strongest: ${result.strongest}, Discrete: ${result.discrete}, Integrated: ${result.integrated}, Firmware: ${result.firmware}, Emulated: ${result.emulated}, Bio-Only: ${result.canEnforceBiometricOnly}`
           );
         },
       },
@@ -322,9 +329,12 @@
   let isVerifying = $state(false);
 
   // Hardware Support
-  let secureElementSupported = $state(null);
-  let teeSupported = $state(null);
-  let canEnforceBiometricOnly = $state(null);
+  let discrete = $state<boolean | null>(null);
+  let integrated = $state<boolean | null>(null);
+  let firmware = $state<boolean | null>(null);
+  let emulated = $state<boolean | null>(null);
+  let strongest = $state<SecureElementBacking | null>(null);
+  let canEnforceBiometricOnly = $state<boolean | null>(null);
   let secureElementCheckError = $state("");
 
   function _createKey() {
@@ -466,14 +476,20 @@
     secureElementCheckError = "";
     checkSecureElementSupport()
       .then((result) => {
-        secureElementSupported = result.secureElementSupported;
-        teeSupported = result.teeSupported;
+        discrete = result.discrete;
+        integrated = result.integrated;
+        firmware = result.firmware;
+        emulated = result.emulated;
+        strongest = result.strongest;
         canEnforceBiometricOnly = result.canEnforceBiometricOnly;
       })
       .catch((err) => {
         secureElementCheckError = err.toString();
-        secureElementSupported = false;
-        teeSupported = false;
+        discrete = false;
+        integrated = false;
+        firmware = false;
+        emulated = false;
+        strongest = "none";
         canEnforceBiometricOnly = false;
       });
   }
@@ -498,17 +514,36 @@
     <div class="d-flex flex-wrap gap-2">
       {#if secureElementCheckError}
         <span class="badge bg-danger">Hardware Error</span>
-      {:else if secureElementSupported !== null}
+      {:else if strongest !== null}
+        {#if emulated}
+          <span
+            class="badge bg-danger"
+            title="Virtual/emulated (vTPM, Simulator, Emulator)">Emulated</span
+          >
+        {/if}
         <span
-          class="badge {secureElementSupported ? 'bg-success' : 'bg-secondary'}"
+          class="badge {strongest === 'discrete'
+            ? 'bg-success'
+            : strongest === 'integrated'
+              ? 'bg-success'
+              : strongest === 'firmware'
+                ? 'bg-warning text-dark'
+                : 'bg-secondary'}"
+          title={strongest === "discrete"
+            ? "Discrete security chip (TPM, T2, StrongBox)"
+            : strongest === "integrated"
+              ? "On-die security core (Secure Enclave, TEE)"
+              : strongest === "firmware"
+                ? "Firmware-backed (fTPM)"
+                : "No hardware security"}
         >
-          SE: {secureElementSupported ? "Yes" : "No"}
-        </span>
-        <span class="badge {teeSupported ? 'bg-success' : 'bg-secondary'}">
-          TEE: {teeSupported ? "Yes" : "No"}
+          {strongest.charAt(0).toUpperCase() + strongest.slice(1)}
         </span>
         {#if canEnforceBiometricOnly}
-          <span class="badge bg-info">Bio-Only</span>
+          <span
+            class="badge bg-info"
+            title="Biometric-only authentication supported">Bio-Only</span
+          >
         {/if}
       {:else}
         <span class="badge bg-secondary">Checking...</span>
