@@ -36,7 +36,7 @@ This will install dependencies, build the plugin, its JS bindings, and the test 
 
 ```bash
 cd test-app
-pnpm tauri ios dev # limited functionality on the simulator
+pnpm tauri ios dev
 ```
 
 ### Android
