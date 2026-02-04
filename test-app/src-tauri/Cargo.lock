@@ -3509,7 +3509,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-secure-element"
-version = "0.1.0-beta.2"
+version = "0.1.0-beta.3"
 dependencies = [
  "base64 0.22.1",
  "libc",

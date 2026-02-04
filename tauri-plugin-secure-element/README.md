@@ -27,7 +27,7 @@ yarn add tauri-plugin-secure-element-api
 
 ```toml
 [dependencies]
-tauri-plugin-secure-element = "0.1.0-beta.2"
+tauri-plugin-secure-element = "0.1.0-beta.3"
 ```
 
 ## Setup
