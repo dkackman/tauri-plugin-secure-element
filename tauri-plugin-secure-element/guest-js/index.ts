@@ -50,8 +50,8 @@ export async function listKeys(
 ): Promise<KeyInfo[]> {
   return await invoke<{ keys: KeyInfo[] }>("plugin:secure-element|list_keys", {
     payload: {
-      keyName: keyName || null,
-      publicKey: publicKey || null,
+      keyName: keyName ?? null,
+      publicKey: publicKey ?? null,
     },
   }).then((r) => r.keys);
 }
@@ -83,8 +83,8 @@ export async function deleteKey(
     "plugin:secure-element|delete_key",
     {
       payload: {
-        keyName: keyName || null,
-        publicKey: publicKey || null,
+        keyName: keyName ?? null,
+        publicKey: publicKey ?? null,
       },
     }
   ).then((r) => r.success);

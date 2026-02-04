@@ -26,14 +26,31 @@ private func dictionaryToJson(_ dict: [String: Any]) -> String {
     }
 }
 
-/// Escape special characters in JSON string
+/// Escape special characters in JSON string.
+/// Uses JSONSerialization to properly escape all control characters (U+0000-U+001F)
+/// as required by the JSON specification.
 private func escapeJsonString(_ string: String) -> String {
-    return string
-        .replacingOccurrences(of: "\\", with: "\\\\")
-        .replacingOccurrences(of: "\"", with: "\\\"")
-        .replacingOccurrences(of: "\n", with: "\\n")
-        .replacingOccurrences(of: "\r", with: "\\r")
-        .replacingOccurrences(of: "\t", with: "\\t")
+    // Use JSONSerialization to properly escape all special characters including
+    // control characters that the simple replacingOccurrences approach misses
+    guard let data = try? JSONSerialization.data(
+        withJSONObject: string,
+        options: .fragmentsAllowed
+    ),
+    let escaped = String(data: data, encoding: .utf8),
+    escaped.count >= 2 else {
+        // Fallback: filter out control characters we can't escape
+        return string.unicodeScalars
+            .filter { $0.value >= 0x20 || $0 == "\t" || $0 == "\n" || $0 == "\r" }
+            .map { String($0) }
+            .joined()
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
+    }
+    // JSONSerialization wraps the string in quotes, strip them
+    return String(escaped.dropFirst().dropLast())
 }
 
 /// Allocate and return a C string from Swift string

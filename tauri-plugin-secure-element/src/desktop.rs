@@ -30,6 +30,37 @@ extern "C" {
 mod ffi_helpers {
     use std::ffi::CStr;
 
+    /// RAII guard for malloc'd pointers that automatically calls libc::free on drop.
+    /// Ensures memory is freed even if a panic occurs during string conversion.
+    pub struct MallocGuard(*mut std::ffi::c_char);
+
+    impl MallocGuard {
+        /// Creates a new guard that will free the pointer on drop.
+        /// Returns None if the pointer is null.
+        pub fn new(ptr: *mut std::ffi::c_char) -> Option<Self> {
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Self(ptr))
+            }
+        }
+
+        /// Returns the raw pointer for use with CStr functions.
+        pub fn as_ptr(&self) -> *const std::ffi::c_char {
+            self.0
+        }
+    }
+
+    impl Drop for MallocGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    libc::free(self.0 as *mut libc::c_void);
+                }
+            }
+        }
+    }
+
     /// Converts an FFI C string pointer to a Rust String and frees the memory.
     /// The pointer must have been allocated by Swift using malloc/strdup.
     ///
@@ -37,27 +68,20 @@ mod ffi_helpers {
     /// - `ptr` must be a valid, non-null pointer to a null-terminated C string
     /// - `ptr` must have been allocated by malloc (will be freed with libc::free)
     pub unsafe fn ffi_string_to_owned(ptr: *mut std::ffi::c_char) -> crate::Result<String> {
-        if ptr.is_null() {
-            return Err(crate::Error::Io(std::io::Error::other(
-                "FFI call returned null",
-            )));
-        }
+        let guard = MallocGuard::new(ptr)
+            .ok_or_else(|| crate::Error::Io(std::io::Error::other("FFI call returned null")))?;
 
-        // Convert to CStr and then to owned String before freeing
-        let result = CStr::from_ptr(ptr)
+        // Convert to owned String - guard ensures ptr is freed even if this panics
+        let s = CStr::from_ptr(guard.as_ptr())
             .to_str()
-            .map(|s| s.to_string())
             .map_err(|e| {
                 crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("Invalid UTF-8 in FFI result: {}", e),
                 ))
-            });
+            })?
+            .to_string();
 
-        // Always free the pointer, even on error
-        libc::free(ptr as *mut libc::c_void);
-
-        let s = result?;
         if s.is_empty() {
             return Err(crate::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

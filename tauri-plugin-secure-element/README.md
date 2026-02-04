@@ -231,9 +231,11 @@ Signs data using a key stored in the secure element.
 **Parameters:**
 
 - `keyName`: Name of the key to use
-- `data`: Data to sign as `Uint8Array`
+- `data`: Raw data to sign as `Uint8Array` (do not pre-hash)
 
-**Returns:** `Promise<Uint8Array>` - The signature
+**Returns:** `Promise<Uint8Array>` - DER-encoded ECDSA signature
+
+**Important:** The plugin automatically hashes your data with SHA-256 before signing. Pass raw data, not a pre-computed hash. See [Signature Format](#signature-format) for details.
 
 ### `deleteKey(keyName?: string, publicKey?: string)`
 
@@ -252,6 +254,100 @@ Public keys are returned as base64-encoded strings in **X9.62 uncompressed point
 | 33-64   | Y coordinate (32 bytes) |
 
 All keys use the **secp256r1 (P-256)** elliptic curve.
+
+## Signature Format
+
+### Hashing Convention
+
+**The plugin automatically hashes your data with SHA-256 before signing.** This is handled internally on all platforms:
+
+- **iOS/macOS**: Hashes data, then signs with `.ecdsaSignatureDigestX962SHA256`
+- **Android**: Uses `SHA256withECDSA` which hashes internally
+- **Windows**: Explicitly hashes with SHA-256 before calling `NCryptSignHash`
+
+**Do not pre-hash your data.** Pass the raw data to `signWithKey()` and the plugin handles hashing.
+
+### Signature Output
+
+Signatures are returned as **DER-encoded ECDSA signatures** (ASN.1 format), consistent across all platforms. Typical size is 70-72 bytes for P-256.
+
+```
+SEQUENCE {
+  INTEGER r,  -- 32-33 bytes (may have leading 0x00 for sign bit)
+  INTEGER s   -- 32-33 bytes (may have leading 0x00 for sign bit)
+}
+```
+
+### Verifying Signatures
+
+To verify a signature produced by this plugin:
+
+1. Use the **raw original data** (not hashed)
+2. Use an **ECDSA-SHA256** verification algorithm (the verifier will hash internally)
+3. Use the **secp256r1 (P-256)** curve
+4. The signature is **DER-encoded**
+
+**Example (Node.js):**
+
+```typescript
+import { createVerify } from "crypto";
+
+function verifySignature(
+  publicKeyBase64: string,
+  data: Uint8Array,
+  signatureDer: Uint8Array
+): boolean {
+  // Convert X9.62 public key to PEM format
+  const publicKeyBuffer = Buffer.from(publicKeyBase64, "base64");
+  const publicKey = {
+    key: publicKeyBuffer,
+    format: "raw",
+    type: "spki",
+    namedCurve: "P-256",
+  };
+
+  const verify = createVerify("SHA256");
+  verify.update(data); // Pass raw data - verify() hashes internally
+  return verify.verify(
+    { key: publicKey, dsaEncoding: "der" },
+    Buffer.from(signatureDer)
+  );
+}
+```
+
+**Example (Web Crypto API):**
+
+```typescript
+async function verifySignature(
+  publicKeyBase64: string,
+  data: Uint8Array,
+  signatureDer: Uint8Array
+): Promise<boolean> {
+  const publicKeyBytes = Uint8Array.from(atob(publicKeyBase64), (c) =>
+    c.charCodeAt(0)
+  );
+
+  // Import the raw public key
+  const publicKey = await crypto.subtle.importKey(
+    "raw",
+    publicKeyBytes,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"]
+  );
+
+  // Note: Web Crypto expects raw R||S format, not DER
+  // You may need to convert DER to raw format (64 bytes)
+  const signatureRaw = derToRaw(signatureDer);
+
+  return crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    publicKey,
+    signatureRaw,
+    data // Pass raw data - verify() hashes internally
+  );
+}
+```
 
 ## Platform Support
 
