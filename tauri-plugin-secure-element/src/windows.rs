@@ -671,14 +671,22 @@ pub fn sign_hash_with_window(
             let hwnd_property = HSTRING::from(NCRYPT_WINDOW_HANDLE_PROPERTY);
             let hwnd_bytes = handle.to_ne_bytes();
 
-            // Ignore errors - the signing will still work, just with a potentially
-            // less well-positioned dialog
-            let _ = NCryptSetProperty(
+            if let Err(e) = NCryptSetProperty(
                 key.0,
                 PCWSTR(hwnd_property.as_ptr()),
                 &hwnd_bytes,
                 NCRYPT_FLAGS(0),
-            );
+            ) {
+                // Log but don't fail - dialog will still work, just with default positioning
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "Warning: Failed to set window handle property for Windows Hello dialog: {}",
+                    e
+                );
+            }
+        } else {
+            #[cfg(debug_assertions)]
+            eprintln!("Warning: No HWND available for Windows Hello dialog parenting");
         }
 
         let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
@@ -689,24 +697,37 @@ pub fn sign_hash_with_window(
             .flat_map(|&c| c.to_le_bytes())
             .collect();
 
-        let _ = NCryptSetProperty(
+        if let Err(e) = NCryptSetProperty(
             key.0,
             PCWSTR(context_property.as_ptr()),
             &context_bytes,
             NCRYPT_FLAGS(0),
-        );
+        ) {
+            // Log but don't fail - dialog will still work with default message
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Failed to set context message for Windows Hello dialog: {}",
+                e
+            );
+        }
 
         // Set gesture required property to force biometric/PIN prompt
         let gesture_property = HSTRING::from(NCRYPT_PIN_CACHE_IS_GESTURE_REQUIRED_PROPERTY);
         let gesture_required: u32 = 1;
         let gesture_bytes = gesture_required.to_le_bytes();
 
-        let _ = NCryptSetProperty(
+        NCryptSetProperty(
             key.0,
             PCWSTR(gesture_property.as_ptr()),
             &gesture_bytes,
             NCRYPT_FLAGS(0),
-        );
+        )
+        .map_err(|e| {
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to set gesture required property: {}", e),
+                "Failed to configure per-operation authentication",
+            )))
+        })?;
     }
 
     sign_hash_internal(key, hash)
