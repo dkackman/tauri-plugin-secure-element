@@ -484,18 +484,6 @@ public enum SecureEnclaveCore {
 
     /// Check if Secure Enclave is supported on this device
     public static func checkSupport() -> SupportResponse {
-        // Check for simulator - this is emulated, no real secure element
-        if isSimulator {
-            return SupportResponse(
-                discrete: false,
-                integrated: false,
-                firmware: false,
-                emulated: true,
-                strongest: .none,
-                canEnforceBiometricOnly: false
-            )
-        }
-
         // Try to create access control with basic flags
         var accessError: Unmanaged<CFError>?
         let flags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence]
@@ -509,7 +497,7 @@ public enum SecureEnclaveCore {
                 discrete: false,
                 integrated: false,
                 firmware: false,
-                emulated: false,
+                emulated: isSimulator,
                 strongest: .none,
                 canEnforceBiometricOnly: false
             )
@@ -545,7 +533,7 @@ public enum SecureEnclaveCore {
                 discrete: false,
                 integrated: false,
                 firmware: false,
-                emulated: false,
+                emulated: isSimulator,
                 strongest: .none,
                 canEnforceBiometricOnly: false
             )
@@ -573,8 +561,8 @@ public enum SecureEnclaveCore {
         return SupportResponse(
             discrete: discrete,
             integrated: integrated,
-            firmware: false, // Apple platforms don't have firmware-only TPM
-            emulated: false, // Real device, not emulated
+            firmware: false,        // Apple platforms don't have firmware-only TPM
+            emulated: isSimulator,  // Real device or emulated
             strongest: strongest,
             canEnforceBiometricOnly: canEnforceBiometric
         )
