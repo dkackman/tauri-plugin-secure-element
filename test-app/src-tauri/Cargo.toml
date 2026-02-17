@@ -22,4 +22,5 @@ tauri = { version = "2.9.4", features = [] }
 tauri-plugin-secure-element = { path = "../../tauri-plugin-secure-element" }
 p256 = { version = "0.13", features = ["ecdsa"] }
 base64 = "0.22"
+tauri-plugin-os = "2.3.2"
 

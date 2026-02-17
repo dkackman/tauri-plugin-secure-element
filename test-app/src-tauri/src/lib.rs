@@ -43,6 +43,7 @@ fn verify_signature(
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![verify_signature])
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_secure_element::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

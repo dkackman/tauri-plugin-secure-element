@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-os": "^2.3.2",
     "bootstrap": "^5.3.8",
     "lucide-svelte": "^0.562.0",
     "tauri-plugin-secure-element-api": "file:../tauri-plugin-secure-element"
