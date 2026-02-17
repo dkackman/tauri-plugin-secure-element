@@ -5,6 +5,38 @@
   "publicKeyFormat": "X9.62-uncompressed-base64",
   "vectors": [
     {
+      "platform": "windows",
+      "label": "windows - Hello, World!",
+      "publicKey": "BNCKS/RWUz6rAXhN0+FLvCmV/CPbAnx96G1Ki5pm69LjGBfDJ62HM+eRPlgtBukxl91j0R3OsBvWEm8wLKN2Z6I=",
+      "message": "Hello, World!",
+      "signatureBase64": "MEUCIQDbbiBVReKwj72zRLCBspLTAx/dOXlEDRdcNkoE6hKrWgIgFurhhuujK3QUDIpUDfIUkJwrXliQSOluhBGAsMw58ng=",
+      "generatedAt": "2026-02-17T02:16:43.313Z"
+    },
+    {
+      "platform": "windows",
+      "label": "windows - Test message for cro...",
+      "publicKey": "BNCKS/RWUz6rAXhN0+FLvCmV/CPbAnx96G1Ki5pm69LjGBfDJ62HM+eRPlgtBukxl91j0R3OsBvWEm8wLKN2Z6I=",
+      "message": "Test message for cross-platform verification",
+      "signatureBase64": "MEUCICmXRNjoMI4wTuM1nbUbXv4ErC14WsofgQxbL9WMaL1yAiEAluqHPTtsEbDl4edEz8/obXEJg05EalFiVbww+G84IXI=",
+      "generatedAt": "2026-02-17T02:16:43.339Z"
+    },
+    {
+      "platform": "windows",
+      "label": "windows - こんにちは世界 🌍",
+      "publicKey": "BNCKS/RWUz6rAXhN0+FLvCmV/CPbAnx96G1Ki5pm69LjGBfDJ62HM+eRPlgtBukxl91j0R3OsBvWEm8wLKN2Z6I=",
+      "message": "こんにちは世界 🌍",
+      "signatureBase64": "MEUCIQDnnTTv1wYqsB7XuddJPBr8+CpJvG+V7MBxJzFhh/UqsQIgGSiTEYd/RBYUx3n6y+JMGWIOsTjORwqfUb3ULYEjGeU=",
+      "generatedAt": "2026-02-17T02:16:43.353Z"
+    },
+    {
+      "platform": "windows",
+      "label": "windows - a",
+      "publicKey": "BNCKS/RWUz6rAXhN0+FLvCmV/CPbAnx96G1Ki5pm69LjGBfDJ62HM+eRPlgtBukxl91j0R3OsBvWEm8wLKN2Z6I=",
+      "message": "a",
+      "signatureBase64": "MEUCIAWWeYLbZ7dYn64UFbHzKCd3pshY0TfY6X/9ocV+Q0bGAiEAytbl2ni+a5E2XewKWOWgU5ppFHEPOXiJACBpNBV9m6c=",
+      "generatedAt": "2026-02-17T02:16:43.367Z"
+    },
+    {
       "platform": "android - simulator",
       "label": "android - simulator - Hello, World!",
       "publicKey": "BGb3vfGnSr3aHJlrOjh8LPM6QHD7BVbArXDjUZHUVPaGQuj+Hk7DJxY1ZkuXC/QIaOD1bTCK/qnPvU090xpOpVo=",
