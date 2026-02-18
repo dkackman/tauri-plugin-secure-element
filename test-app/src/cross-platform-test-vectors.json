@@ -70,68 +70,36 @@
       "generatedAt": "2026-02-17T02:16:43.367Z"
     },
     {
-      "platform": "android - simulator",
-      "label": "android - simulator - Hello, World!",
+      "platform": "android",
+      "label": "android - Hello, World!",
       "publicKey": "BGb3vfGnSr3aHJlrOjh8LPM6QHD7BVbArXDjUZHUVPaGQuj+Hk7DJxY1ZkuXC/QIaOD1bTCK/qnPvU090xpOpVo=",
       "message": "Hello, World!",
       "signatureBase64": "MEQCIFWmWRw2v3vqQERHa8xZp3x9Soq9kjq14p1jIXnRng7BAiAg7l6ilOvVK96+211KQbsh4aM7H2XURiXPwGuI97pZZg==",
       "generatedAt": "2026-02-17T02:00:33.944Z"
     },
     {
-      "platform": "android - simulator",
-      "label": "android - simulator - Test message for cro...",
+      "platform": "android",
+      "label": "android - Test message for cro...",
       "publicKey": "BGb3vfGnSr3aHJlrOjh8LPM6QHD7BVbArXDjUZHUVPaGQuj+Hk7DJxY1ZkuXC/QIaOD1bTCK/qnPvU090xpOpVo=",
       "message": "Test message for cross-platform verification",
       "signatureBase64": "MEUCIGYmUgcrWNR0MfIVjNNZW+SzTjfwUAABaWSewgYiZQCsAiEAgxB4a3QG53KRYlMyW/aBnBllsrr1f+BoTu6IlmOt+PM=",
       "generatedAt": "2026-02-17T02:00:33.952Z"
     },
     {
-      "platform": "android - simulator",
-      "label": "android - simulator - こんにちは世界 🌍",
+      "platform": "android",
+      "label": "android - こんにちは世界 🌍",
       "publicKey": "BGb3vfGnSr3aHJlrOjh8LPM6QHD7BVbArXDjUZHUVPaGQuj+Hk7DJxY1ZkuXC/QIaOD1bTCK/qnPvU090xpOpVo=",
       "message": "こんにちは世界 🌍",
       "signatureBase64": "MEUCIA40GA5FU5DAOakyCZRP3Xfo+FhS0zjN14p949OT5gwhAiEAiZvfIJlXZz+lGDMs62lE3rQ3yZfl3kj2YG/ZZcVu9fU=",
       "generatedAt": "2026-02-17T02:00:33.962Z"
     },
     {
-      "platform": "android - simulator",
-      "label": "android - simulator - a",
+      "platform": "android",
+      "label": "android - a",
       "publicKey": "BGb3vfGnSr3aHJlrOjh8LPM6QHD7BVbArXDjUZHUVPaGQuj+Hk7DJxY1ZkuXC/QIaOD1bTCK/qnPvU090xpOpVo=",
       "message": "a",
       "signatureBase64": "MEYCIQDGp1tfGspHxrxw3F2ArHgTHDAim7oUAJITOqC75kqAhQIhAJy3gkJFzgqDKGHKt9+IQRkv09UNBL4C9NgCS63daleu",
       "generatedAt": "2026-02-17T02:00:33.969Z"
-    },
-    {
-      "platform": "ios - simulator",
-      "label": "ios - simulator - Hello, World!",
-      "publicKey": "BFaCP+DWBkW+kd/pCWE47IhukOb9tzWuI5TARhh3ruGGk2HBKX/djz1c+/fo4HQWU+91VyxEQD8mJ4DeFnsy5JE=",
-      "message": "Hello, World!",
-      "signatureBase64": "MEUCIFBAmYoWzie7t+9Owxcww2BMQZOmcXYVMOA6A/UcvkDPAiEA1i2hGQ/Im7n5L7b/kMGq57hLfwwmwHnX165uYmuHJso=",
-      "generatedAt": "2026-02-17T01:56:41.986Z"
-    },
-    {
-      "platform": "ios - simulator",
-      "label": "ios - simulator - Test message for cro...",
-      "publicKey": "BFaCP+DWBkW+kd/pCWE47IhukOb9tzWuI5TARhh3ruGGk2HBKX/djz1c+/fo4HQWU+91VyxEQD8mJ4DeFnsy5JE=",
-      "message": "Test message for cross-platform verification",
-      "signatureBase64": "MEUCIQCTpXui4Qvq1+Mzu7sWoAJKJ6yBjSH58PgwlgEs5kqUJgIgeG8eQ+PQnho6ZYSR055EluZfQsvHYEeq5AQNf856hOg=",
-      "generatedAt": "2026-02-17T01:56:41.993Z"
-    },
-    {
-      "platform": "ios - simulator",
-      "label": "ios - simulator - こんにちは世界 🌍",
-      "publicKey": "BFaCP+DWBkW+kd/pCWE47IhukOb9tzWuI5TARhh3ruGGk2HBKX/djz1c+/fo4HQWU+91VyxEQD8mJ4DeFnsy5JE=",
-      "message": "こんにちは世界 🌍",
-      "signatureBase64": "MEUCIQDOgBzKo1qnR2vc/X+05p0gBHg5tmYlJiKD0HL9xLNM7wIgE0EUduD7KBbPfUCOdOXyZPbEUI363fa70PRAhFudwjw=",
-      "generatedAt": "2026-02-17T01:56:41.999Z"
-    },
-    {
-      "platform": "ios - simulator",
-      "label": "ios - simulator - a",
-      "publicKey": "BFaCP+DWBkW+kd/pCWE47IhukOb9tzWuI5TARhh3ruGGk2HBKX/djz1c+/fo4HQWU+91VyxEQD8mJ4DeFnsy5JE=",
-      "message": "a",
-      "signatureBase64": "MEQCIDl4zzQW+5wJZr5JksCobn+0vovVRi5ZTktFxC+WJ9OHAiBQX1T2SW1Punrl6J3dIH7sKTcUWs3xX30IcN8EnB8Hng==",
-      "generatedAt": "2026-02-17T01:56:42.005Z"
     },
     {
       "platform": "macos",
