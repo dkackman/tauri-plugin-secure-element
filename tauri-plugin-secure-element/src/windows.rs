@@ -488,32 +488,32 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             )))
         })?;
 
+        let key = KeyHandle(key_handle);
+
         // Set key usage to signing only
         let usage: u32 = NCRYPT_ALLOW_SIGNING_FLAG;
         let key_usage_property = HSTRING::from("Key Usage");
 
         if let Err(e) = NCryptSetProperty(
-            key_handle,
+            key.0,
             PCWSTR(key_usage_property.as_ptr()),
             &usage.to_le_bytes(),
             NCRYPT_FLAGS(0),
         ) {
-            let _ = NCryptFreeObject(key_handle);
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("Failed to set key usage: {}", e),
                 "Failed to set key usage",
             ))));
         }
 
-        if let Err(e) = NCryptFinalizeKey(key_handle, NCRYPT_SILENT_FLAG) {
-            let _ = NCryptFreeObject(key_handle);
+        if let Err(e) = NCryptFinalizeKey(key.0, NCRYPT_SILENT_FLAG) {
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("NCryptFinalizeKey failed: {}", e),
                 "Failed to finalize key",
             ))));
         }
 
-        Ok(KeyHandle(key_handle))
+        Ok(key)
     }
 }
 
@@ -550,32 +550,32 @@ fn create_tpm_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             )))
         })?;
 
+        let key = KeyHandle(key_handle);
+
         // Set key usage to signing only
         let usage_bytes = NCRYPT_ALLOW_SIGNING_FLAG.to_le_bytes();
         let key_usage_property = HSTRING::from("Key Usage");
 
         if let Err(e) = NCryptSetProperty(
-            key_handle,
+            key.0,
             PCWSTR(key_usage_property.as_ptr()),
             usage_bytes.as_slice(),
             NCRYPT_FLAGS(0),
         ) {
-            let _ = NCryptFreeObject(key_handle);
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("Failed to set key usage: {}", e),
                 "Failed to set key usage",
             ))));
         }
 
-        if let Err(e) = NCryptFinalizeKey(key_handle, NCRYPT_FLAGS(0)) {
-            let _ = NCryptFreeObject(key_handle);
+        if let Err(e) = NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) {
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("Failed to finalize key: {}", e),
                 "Failed to finalize key",
             ))));
         }
 
-        Ok(KeyHandle(key_handle))
+        Ok(key)
     }
 }
 
@@ -773,11 +773,13 @@ fn sign_hash_internal(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
 
 pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
     unsafe {
-        // NCryptDeleteKey takes ownership and invalidates the handle
-        // Use take() to extract the handle and prevent Drop from being called
-        match NCryptDeleteKey(key.take(), 0u32) {
+        let handle = key.take();
+        match NCryptDeleteKey(handle, 0u32) {
             Ok(_) => Ok(true),
-            Err(_) => Ok(false), // Fail silently
+            Err(_) => {
+                let _ = NCryptFreeObject(handle);
+                Ok(false)
+            }
         }
     }
 }
