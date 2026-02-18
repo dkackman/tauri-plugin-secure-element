@@ -2,6 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { Copy } from "lucide-svelte";
   import { signWithKey, type KeyInfo } from "tauri-plugin-secure-element-api";
+  import SpinnerButton from "./SpinnerButton.svelte";
+  import { copyToClipboard } from "./utils.js";
 
   let {
     keysList,
@@ -97,14 +99,6 @@
       verifyError = err instanceof Error ? err.message : String(err);
     } finally {
       isVerifying = false;
-    }
-  }
-
-  async function copyToClipboard(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (err) {
-      console.error("Failed to copy:", err);
     }
   }
 </script>
@@ -207,18 +201,14 @@
             </small>
           </div>
 
-          <button
+          <SpinnerButton
+            loading={isVerifying}
+            disabled={!verifyPublicKey.trim()}
+            label="Verify Signature"
+            loadingLabel="Verifying..."
             onclick={verifySignature}
             class="btn btn-info btn-sm w-100"
-            disabled={isVerifying || !verifyPublicKey.trim()}
-          >
-            {#if isVerifying}
-              <span class="spinner-border spinner-border-sm me-1"></span>
-              Verifying...
-            {:else}
-              Verify Signature
-            {/if}
-          </button>
+          />
 
           {#if verifyError}
             <div class="alert alert-danger mt-2 mb-0 py-1 small">

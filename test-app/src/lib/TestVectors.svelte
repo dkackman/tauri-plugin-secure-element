@@ -1,14 +1,20 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { platform } from "@tauri-apps/plugin-os";
-  import { ChevronDown, ChevronUp, Copy } from "lucide-svelte";
+  import { Copy } from "lucide-svelte";
   import {
     deleteKey,
     generateSecureKey,
     signWithKey,
   } from "tauri-plugin-secure-element-api";
   import testVectorsData from "../cross-platform-test-vectors.json";
-  import { base64ToUint8Array, uint8ArrayToBase64 } from "./utils.js";
+  import CollapsibleCard from "./CollapsibleCard.svelte";
+  import SpinnerButton from "./SpinnerButton.svelte";
+  import {
+    base64ToUint8Array,
+    copyToClipboard,
+    uint8ArrayToBase64,
+  } from "./utils.js";
 
   type TestVector = {
     platform: string;
@@ -147,155 +153,119 @@
     vectorVerifyResults = results;
     isVerifyingVectors = false;
   }
-
-  async function copyGeneratedVectors() {
-    try {
-      await navigator.clipboard.writeText(generatedVectorsJson);
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
-  }
 </script>
 
-<section class="card mt-4">
-  <div
-    class="card-header d-flex justify-content-between align-items-center"
-    style="cursor: pointer;"
-    onclick={() => (sectionExpanded = !sectionExpanded)}
-    onkeydown={(e) => e.key === "Enter" && (sectionExpanded = !sectionExpanded)}
-    role="button"
-    tabindex="0"
-  >
-    <div class="d-flex align-items-center gap-2">
-      <h2 class="h6 mb-0">Cross-Platform Test Vectors</h2>
-      {#if vectorVerifyResults.length > 0}
-        {@const allPassed = vectorVerifyResults.every((r) => r.passed)}
-        <span class="badge {allPassed ? 'bg-success' : 'bg-danger'}">
-          {vectorVerifyResults.filter((r) => r.passed)
-            .length}/{vectorVerifyResults.length}
-        </span>
-      {/if}
-    </div>
-    {#if sectionExpanded}
-      <ChevronUp size={20} />
-    {:else}
-      <ChevronDown size={20} />
+<CollapsibleCard
+  title="Cross-Platform Test Vectors"
+  bind:expanded={sectionExpanded}
+>
+  {#snippet badge()}
+    {#if vectorVerifyResults.length > 0}
+      {@const allPassed = vectorVerifyResults.every((r) => r.passed)}
+      <span class="badge {allPassed ? 'bg-success' : 'bg-danger'}">
+        {vectorVerifyResults.filter((r) => r.passed)
+          .length}/{vectorVerifyResults.length}
+      </span>
+    {/if}
+  {/snippet}
+
+  <!-- Generator -->
+  <div class="mb-4">
+    <h3 class="h6">Generate Vectors</h3>
+    <p class="text-muted small mb-2">
+      Creates signed test vectors for the current platform. Copy the output into <code
+        >cross-platform-test-vectors.json</code
+      >.
+    </p>
+    <SpinnerButton
+      loading={isGeneratingVectors}
+      label="Generate Test Vectors"
+      loadingLabel="Generating..."
+      onclick={generateTestVectors}
+    />
+
+    {#if vectorGenerateError}
+      <div class="alert alert-danger mt-2 py-2 small">
+        {vectorGenerateError}
+      </div>
+    {/if}
+
+    {#if generatedVectorsJson}
+      <div class="mt-2">
+        <div class="d-flex gap-2 mb-1">
+          <button
+            onclick={() => copyToClipboard(generatedVectorsJson)}
+            class="btn btn-outline-secondary btn-sm"
+          >
+            <Copy size={14} class="me-1" />
+            Copy JSON
+          </button>
+        </div>
+        <textarea
+          class="form-control font-monospace"
+          style="font-size: 0.7rem; height: 200px;"
+          readonly
+          value={generatedVectorsJson}
+        ></textarea>
+      </div>
     {/if}
   </div>
 
-  {#if sectionExpanded}
-    <div class="card-body">
-      <!-- Generator -->
-      <div class="mb-4">
-        <h3 class="h6">Generate Vectors</h3>
-        <p class="text-muted small mb-2">
-          Creates signed test vectors for the current platform. Copy the output
-          into <code>cross-platform-test-vectors.json</code>.
-        </p>
-        <button
-          onclick={generateTestVectors}
-          class="btn btn-primary btn-sm"
-          disabled={isGeneratingVectors}
-        >
-          {#if isGeneratingVectors}
-            <span class="spinner-border spinner-border-sm me-1"></span>
-            Generating...
-          {:else}
-            Generate Test Vectors
-          {/if}
-        </button>
+  <hr />
 
-        {#if vectorGenerateError}
-          <div class="alert alert-danger mt-2 py-2 small">
-            {vectorGenerateError}
-          </div>
-        {/if}
+  <!-- Verifier -->
+  <div>
+    <h3 class="h6">Verify Stored Vectors</h3>
+    <p class="text-muted small mb-2">
+      Verifies all signatures from <code>cross-platform-test-vectors.json</code>
+      ({testVectorsData.vectors.length} vector{testVectorsData.vectors
+        .length !== 1
+        ? "s"
+        : ""} loaded).
+    </p>
+    <SpinnerButton
+      loading={isVerifyingVectors}
+      disabled={testVectorsData.vectors.length === 0}
+      label="Verify Cross-Platform Vectors"
+      loadingLabel="Verifying..."
+      onclick={verifyTestVectors}
+    />
 
-        {#if generatedVectorsJson}
-          <div class="mt-2">
-            <div class="d-flex gap-2 mb-1">
-              <button
-                onclick={copyGeneratedVectors}
-                class="btn btn-outline-secondary btn-sm"
-              >
-                <Copy size={14} class="me-1" />
-                Copy JSON
-              </button>
-            </div>
-            <textarea
-              class="form-control font-monospace"
-              style="font-size: 0.7rem; height: 200px;"
-              readonly
-              value={generatedVectorsJson}
-            ></textarea>
-          </div>
-        {/if}
-      </div>
-
-      <hr />
-
-      <!-- Verifier -->
-      <div>
-        <h3 class="h6">Verify Stored Vectors</h3>
-        <p class="text-muted small mb-2">
-          Verifies all signatures from <code
-            >cross-platform-test-vectors.json</code
+    {#if vectorVerifyResults.length > 0}
+      <div class="mt-2">
+        {#each vectorVerifyResults as result}
+          <div
+            class="d-flex align-items-center gap-2 py-1 border-bottom"
+            style="font-size: 0.8rem;"
           >
-          ({testVectorsData.vectors.length} vector{testVectorsData.vectors
-            .length !== 1
-            ? "s"
-            : ""} loaded).
-        </p>
-        <button
-          onclick={verifyTestVectors}
-          class="btn btn-primary btn-sm"
-          disabled={isVerifyingVectors || testVectorsData.vectors.length === 0}
-        >
-          {#if isVerifyingVectors}
-            <span class="spinner-border spinner-border-sm me-1"></span>
-            Verifying...
-          {:else}
-            Verify Cross-Platform Vectors
-          {/if}
-        </button>
-
-        {#if vectorVerifyResults.length > 0}
-          <div class="mt-2">
-            {#each vectorVerifyResults as result}
-              <div
-                class="d-flex align-items-center gap-2 py-1 border-bottom"
-                style="font-size: 0.8rem;"
-              >
-                <span
-                  class="badge {result.passed ? 'bg-success' : 'bg-danger'}"
-                  style="font-size: 0.7rem;"
-                >
-                  {result.passed ? "✓" : "✗"}
-                </span>
-                {#if result.platform}
-                  <span class="badge bg-secondary" style="font-size: 0.65rem;">
-                    {result.platform}
-                  </span>
-                {/if}
-                <span>{result.label}</span>
-                {#if result.error}
-                  <span class="text-danger small">({result.error})</span>
-                {/if}
-              </div>
-            {/each}
-            <div
-              class="mt-2 small {vectorVerifyResults.filter((r) => r.passed)
-                .length === vectorVerifyResults.length
-                ? 'text-success'
-                : 'text-danger'}"
+            <span
+              class="badge {result.passed ? 'bg-success' : 'bg-danger'}"
+              style="font-size: 0.7rem;"
             >
-              {vectorVerifyResults.filter((r) => r.passed).length} passed, {vectorVerifyResults.filter(
-                (r) => !r.passed
-              ).length} failed
-            </div>
+              {result.passed ? "✓" : "✗"}
+            </span>
+            {#if result.platform}
+              <span class="badge bg-secondary" style="font-size: 0.65rem;">
+                {result.platform}
+              </span>
+            {/if}
+            <span>{result.label}</span>
+            {#if result.error}
+              <span class="text-danger small">({result.error})</span>
+            {/if}
           </div>
-        {/if}
+        {/each}
+        <div
+          class="mt-2 small {vectorVerifyResults.filter((r) => r.passed)
+            .length === vectorVerifyResults.length
+            ? 'text-success'
+            : 'text-danger'}"
+        >
+          {vectorVerifyResults.filter((r) => r.passed).length} passed, {vectorVerifyResults.filter(
+            (r) => !r.passed
+          ).length} failed
+        </div>
       </div>
-    </div>
-  {/if}
-</section>
+    {/if}
+  </div>
+</CollapsibleCard>

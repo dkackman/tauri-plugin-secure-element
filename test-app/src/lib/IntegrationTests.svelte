@@ -1,6 +1,5 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { ChevronDown, ChevronUp } from "lucide-svelte";
   import {
     checkSecureElementSupport,
     deleteKey,
@@ -9,6 +8,8 @@
     signWithKey,
   } from "tauri-plugin-secure-element-api";
   import testVectorsData from "../cross-platform-test-vectors.json";
+  import CollapsibleCard from "./CollapsibleCard.svelte";
+  import SpinnerButton from "./SpinnerButton.svelte";
   import { base64ToUint8Array } from "./utils.js";
 
   let { onComplete }: { onComplete: () => void } = $props();
@@ -350,116 +351,91 @@
   }
 </script>
 
-<section class="card mt-4">
-  <div
-    class="card-header d-flex justify-content-between align-items-center"
-    style="cursor: pointer;"
-    onclick={() => (sectionExpanded = !sectionExpanded)}
-    onkeydown={(e) => e.key === "Enter" && (sectionExpanded = !sectionExpanded)}
-    role="button"
-    tabindex="0"
-  >
-    <div class="d-flex align-items-center gap-2">
-      <h2 class="h6 mb-0">Integration Tests</h2>
-      {#if testSummary}
+<CollapsibleCard title="Integration Tests" bind:expanded={sectionExpanded}>
+  {#snippet badge()}
+    {#if testSummary}
+      <span
+        class="badge {testSummary.failed === 0 ? 'bg-success' : 'bg-danger'}"
+      >
+        {testSummary.passed}/{testSummary.total}
+      </span>
+    {/if}
+  {/snippet}
+
+  <div class="d-flex gap-2 mb-3">
+    <SpinnerButton
+      loading={isTestRunning}
+      label="Run All Tests"
+      loadingLabel="Running..."
+      onclick={runAllTests}
+    />
+    <button
+      onclick={clearLog}
+      class="btn btn-outline-secondary btn-sm"
+      disabled={isTestRunning}
+    >
+      Clear
+    </button>
+  </div>
+
+  <!-- Test Status Badges -->
+  {#if testResults.length > 0}
+    <div class="d-flex flex-wrap gap-1 mb-3">
+      {#each testResults as test}
         <span
-          class="badge {testSummary.failed === 0 ? 'bg-success' : 'bg-danger'}"
+          class="badge {test.status === 'passed'
+            ? 'bg-success'
+            : test.status === 'failed'
+              ? 'bg-danger'
+              : test.status === 'running'
+                ? 'bg-warning text-dark'
+                : 'bg-secondary'}"
+          title={test.message || test.name}
+          style="font-size: 0.7rem;"
         >
-          {testSummary.passed}/{testSummary.total}
+          {test.status === "running"
+            ? "..."
+            : test.status === "passed"
+              ? "✓"
+              : test.status === "failed"
+                ? "✗"
+                : "○"}
         </span>
-      {/if}
+      {/each}
     </div>
-    {#if sectionExpanded}
-      <ChevronUp size={20} />
+  {/if}
+
+  <!-- Console -->
+  <div
+    class="bg-dark text-light p-2 rounded font-monospace"
+    style="height: 200px; overflow-y: auto; font-size: 0.75rem;"
+  >
+    {#if testLog.length === 0}
+      <span class="text-muted">Click "Run All Tests" to start...</span>
     {:else}
-      <ChevronDown size={20} />
+      {#each testLog as line}
+        <div
+          class={line.includes("PASSED")
+            ? "text-success"
+            : line.includes("FAILED")
+              ? "text-danger"
+              : line.includes("═")
+                ? "text-info"
+                : "text-light"}
+        >
+          {line}
+        </div>
+      {/each}
     {/if}
   </div>
 
-  {#if sectionExpanded}
-    <div class="card-body">
-      <div class="d-flex gap-2 mb-3">
-        <button
-          onclick={runAllTests}
-          class="btn btn-primary btn-sm"
-          disabled={isTestRunning}
-        >
-          {#if isTestRunning}
-            <span class="spinner-border spinner-border-sm me-1"></span>
-            Running...
-          {:else}
-            Run All Tests
-          {/if}
-        </button>
-        <button
-          onclick={clearLog}
-          class="btn btn-outline-secondary btn-sm"
-          disabled={isTestRunning}
-        >
-          Clear
-        </button>
-      </div>
-
-      <!-- Test Status Badges -->
-      {#if testResults.length > 0}
-        <div class="d-flex flex-wrap gap-1 mb-3">
-          {#each testResults as test}
-            <span
-              class="badge {test.status === 'passed'
-                ? 'bg-success'
-                : test.status === 'failed'
-                  ? 'bg-danger'
-                  : test.status === 'running'
-                    ? 'bg-warning text-dark'
-                    : 'bg-secondary'}"
-              title={test.message || test.name}
-              style="font-size: 0.7rem;"
-            >
-              {test.status === "running"
-                ? "..."
-                : test.status === "passed"
-                  ? "✓"
-                  : test.status === "failed"
-                    ? "✗"
-                    : "○"}
-            </span>
-          {/each}
-        </div>
-      {/if}
-
-      <!-- Console -->
-      <div
-        class="bg-dark text-light p-2 rounded font-monospace"
-        style="height: 200px; overflow-y: auto; font-size: 0.75rem;"
-      >
-        {#if testLog.length === 0}
-          <span class="text-muted">Click "Run All Tests" to start...</span>
-        {:else}
-          {#each testLog as line}
-            <div
-              class={line.includes("PASSED")
-                ? "text-success"
-                : line.includes("FAILED")
-                  ? "text-danger"
-                  : line.includes("═")
-                    ? "text-info"
-                    : "text-light"}
-            >
-              {line}
-            </div>
-          {/each}
-        {/if}
-      </div>
-
-      {#if testSummary}
-        <div
-          class="mt-2 small {testSummary.failed === 0
-            ? 'text-success'
-            : 'text-danger'}"
-        >
-          {testSummary.passed} passed, {testSummary.failed} failed in {testSummary.duration}ms
-        </div>
-      {/if}
+  {#if testSummary}
+    <div
+      class="mt-2 small {testSummary.failed === 0
+        ? 'text-success'
+        : 'text-danger'}"
+    >
+      {testSummary.passed} passed, {testSummary.failed} failed in {testSummary.duration}ms
     </div>
   {/if}
-</section>
+</CollapsibleCard>

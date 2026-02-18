@@ -6,6 +6,7 @@
     type AuthenticationMode,
     type KeyInfo,
   } from "tauri-plugin-secure-element-api";
+  import { copyToClipboard } from "./utils.js";
 
   let {
     keysList,
@@ -67,14 +68,6 @@
       }
     } catch (err) {
       onDeleteError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function copyToClipboard(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (err) {
-      console.error("Failed to copy:", err);
     }
   }
 </script>
