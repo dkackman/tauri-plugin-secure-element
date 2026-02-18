@@ -180,7 +180,8 @@ public enum SecureEnclaveCore {
 
     /// Extracts error description from CFError
     public static func extractCFErrorDescription(_ error: Unmanaged<CFError>) -> String {
-        return CFErrorCopyDescription(error.takeRetainedValue()) as String? ?? "Unknown error"
+        let cfError = error.takeRetainedValue()
+        return CFErrorCopyDescription(cfError) as String? ?? "Unknown error"
     }
 
     /// Exports a public key from a private key as base64 string

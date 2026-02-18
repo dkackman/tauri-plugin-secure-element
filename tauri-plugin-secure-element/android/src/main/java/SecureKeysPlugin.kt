@@ -289,30 +289,22 @@ class SecureKeysPlugin(
                 if (privateKey != null) {
                     val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
                     val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-                    val isHardwareBacked = keyInfo.isInsideSecureHardware
-
-                    // Clean up test key
-                    keyStore.deleteEntry(testAlias)
-
-                    return isHardwareBacked
+                    return keyInfo.isInsideSecureHardware
                 }
             }
 
             // If we can't check KeyInfo (API < 23), assume TEE is available if key creation succeeded
             // and we're on API 18+ (hardware-backed keystore was introduced)
-            keyStore.deleteEntry(testAlias)
             return true
         } catch (e: Exception) {
             Log.e(TAG, "TEE check failed", e)
-            // Clean up test key if it was created
-            try {
-                if (keyStore.containsAlias(testAlias)) {
-                    keyStore.deleteEntry(testAlias)
-                }
-            } catch (cleanupException: Exception) {
-                Log.w(TAG, "Failed to clean up test key", cleanupException)
-            }
             return false
+        } finally {
+            try {
+                keyStore.deleteEntry(testAlias)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clean up test key", e)
+            }
         }
     }
 
@@ -511,6 +503,13 @@ class SecureKeysPlugin(
                         "generateSecureKey: StrongBox key creation failed, falling back to TEE. " +
                             "Reason: ${e.message ?: e.javaClass.simpleName}",
                     )
+
+                    // Clean up any partial key entry left by the failed StrongBox attempt
+                    try {
+                        keyStore.deleteEntry(args.keyName)
+                    } catch (deleteEx: Exception) {
+                        Log.w(TAG, "generateSecureKey: Failed to clean up partial StrongBox key", deleteEx)
+                    }
 
                     // Create a new KeyPairGenerator instance since it can't be reinitialized
                     keyPairGenerator =

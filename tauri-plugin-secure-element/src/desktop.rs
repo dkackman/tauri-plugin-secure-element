@@ -74,10 +74,10 @@ mod ffi_helpers {
         // Convert to owned String - guard ensures ptr is freed even if this panics
         let s = CStr::from_ptr(guard.as_ptr())
             .to_str()
-            .map_err(|e| {
+            .map_err(|_| {
                 crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid UTF-8 in FFI result: {}", e),
+                    "Invalid UTF-8 in FFI result",
                 ))
             })?
             .to_string();
@@ -92,9 +92,20 @@ mod ffi_helpers {
         Ok(s)
     }
 
+    /// Maximum size of a JSON response from FFI (1MB).
+    /// Prevents memory exhaustion from unexpectedly large responses.
+    const MAX_FFI_RESPONSE_SIZE: usize = 1024 * 1024;
+
     /// Parses a JSON response from FFI, checking for error field first.
     /// Returns the parsed response or an error if the JSON contains an "error" field.
     pub fn parse_ffi_response<T: serde::de::DeserializeOwned>(json: &str) -> crate::Result<T> {
+        if json.len() > MAX_FFI_RESPONSE_SIZE {
+            return Err(crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "FFI response exceeds maximum allowed size",
+            )));
+        }
+
         // First check if response contains an error
         let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
             crate::Error::Io(std::io::Error::new(
