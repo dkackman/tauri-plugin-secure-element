@@ -495,7 +495,7 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
         let key_usage_property = HSTRING::from("Key Usage");
 
         if let Err(e) = NCryptSetProperty(
-            key.0,
+            key.0.into(),
             PCWSTR(key_usage_property.as_ptr()),
             &usage.to_le_bytes(),
             NCRYPT_FLAGS(0),
@@ -557,7 +557,7 @@ fn create_tpm_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
         let key_usage_property = HSTRING::from("Key Usage");
 
         if let Err(e) = NCryptSetProperty(
-            key.0,
+            key.0.into(),
             PCWSTR(key_usage_property.as_ptr()),
             usage_bytes.as_slice(),
             NCRYPT_FLAGS(0),
@@ -587,7 +587,7 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
 
         NCryptExportKey(
             key.0,
-            NCRYPT_KEY_HANDLE::default(),
+            None,
             PCWSTR(blob_type.as_ptr()),
             None,
             None,
@@ -604,7 +604,7 @@ pub fn export_public_key(key: &KeyHandle) -> crate::Result<Vec<u8>> {
         let mut blob = vec![0u8; blob_size as usize];
         NCryptExportKey(
             key.0,
-            NCRYPT_KEY_HANDLE::default(),
+            None,
             PCWSTR(blob_type.as_ptr()),
             None,
             Some(&mut blob),
@@ -672,7 +672,7 @@ pub fn sign_hash_with_window(
             let hwnd_bytes = handle.to_ne_bytes();
 
             if let Err(e) = NCryptSetProperty(
-                key.0,
+                key.0.into(),
                 PCWSTR(hwnd_property.as_ptr()),
                 &hwnd_bytes,
                 NCRYPT_FLAGS(0),
@@ -690,15 +690,13 @@ pub fn sign_hash_with_window(
         }
 
         let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
-        let context_message = HSTRING::from("Authenticate to sign data");
-        let context_bytes: Vec<u8> = context_message
-            .as_wide()
-            .iter()
-            .flat_map(|&c| c.to_le_bytes())
+        let context_bytes: Vec<u8> = "Authenticate to sign data"
+            .encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
             .collect();
 
         if let Err(e) = NCryptSetProperty(
-            key.0,
+            key.0.into(),
             PCWSTR(context_property.as_ptr()),
             &context_bytes,
             NCRYPT_FLAGS(0),
@@ -717,7 +715,7 @@ pub fn sign_hash_with_window(
         let gesture_bytes = gesture_required.to_le_bytes();
 
         NCryptSetProperty(
-            key.0,
+            key.0.into(),
             PCWSTR(gesture_property.as_ptr()),
             &gesture_bytes,
             NCRYPT_FLAGS(0),
@@ -777,7 +775,7 @@ pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
         match NCryptDeleteKey(handle, 0u32) {
             Ok(_) => Ok(true),
             Err(_) => {
-                let _ = NCryptFreeObject(handle);
+                let _ = NCryptFreeObject(handle.into());
                 Ok(false)
             }
         }

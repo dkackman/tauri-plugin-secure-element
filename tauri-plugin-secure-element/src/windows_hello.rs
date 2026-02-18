@@ -14,7 +14,7 @@ pub fn is_windows_hello_configured() -> bool {
 fn check_windows_hello_availability() -> Result<bool, windows::core::Error> {
     // Call the async API and wait for the result
     let availability_async = UserConsentVerifier::CheckAvailabilityAsync()?;
-    let availability = availability_async.get()?;
+    let availability = availability_async.join()?;
 
     // Windows Hello is only considered configured if it returns Available
     // Other states like DeviceNotPresent, NotConfiguredForUser, DisabledByPolicy mean it's not usable

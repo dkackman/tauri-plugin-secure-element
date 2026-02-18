@@ -22,9 +22,43 @@ macro_rules! define_raii_handle {
         }
     };
 
+    // With .into() conversion for cleanup (when cleanup function expects a convertible type)
+    ($(#[$meta:meta])* $vis:vis $name:ident($field_vis:vis $handle_type:ty), $cleanup_fn:path, $check:ident, into) => {
+        $(#[$meta])*
+        $vis struct $name($field_vis $handle_type);
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                if !self.0.$check() {
+                    unsafe {
+                        let _ = $cleanup_fn(self.0.into());
+                    }
+                }
+            }
+        }
+    };
+
     // With Deref/DerefMut for transparent handle access
     ($(#[$meta:meta])* $vis:vis $name:ident($field_vis:vis $handle_type:ty), $cleanup_fn:path, $check:ident, deref) => {
         define_raii_handle!($(#[$meta])* $vis $name($field_vis $handle_type), $cleanup_fn, $check);
+
+        impl Deref for $name {
+            type Target = $handle_type;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+    };
+
+    // With .into() conversion + Deref/DerefMut
+    ($(#[$meta:meta])* $vis:vis $name:ident($field_vis:vis $handle_type:ty), $cleanup_fn:path, $check:ident, into, deref) => {
+        define_raii_handle!($(#[$meta])* $vis $name($field_vis $handle_type), $cleanup_fn, $check, into);
 
         impl Deref for $name {
             type Target = $handle_type;
@@ -57,7 +91,7 @@ macro_rules! define_raii_handle {
     };
 }
 
-define_raii_handle!(pub HLocalGuard(HLOCAL), LocalFree, is_invalid);
+define_raii_handle!(pub HLocalGuard(HLOCAL), LocalFree, is_invalid, into);
 
 impl HLocalGuard {
     /// Creates a new guard with an invalid handle
@@ -88,12 +122,12 @@ impl WindowsHandleGuard {
 
 define_raii_handle!(
     /// RAII wrapper for NCRYPT_PROV_HANDLE that automatically calls NCryptFreeObject on drop
-    pub ProviderHandle(pub NCRYPT_PROV_HANDLE), NCryptFreeObject, is_invalid, deref
+    pub ProviderHandle(pub NCRYPT_PROV_HANDLE), NCryptFreeObject, is_invalid, into, deref
 );
 
 define_raii_handle!(
     /// RAII wrapper for NCRYPT_KEY_HANDLE that automatically calls NCryptFreeObject on drop
-    pub KeyHandle(pub NCRYPT_KEY_HANDLE), NCryptFreeObject, is_invalid, deref
+    pub KeyHandle(pub NCRYPT_KEY_HANDLE), NCryptFreeObject, is_invalid, into, deref
 );
 
 impl KeyHandle {
