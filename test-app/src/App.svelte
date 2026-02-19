@@ -11,6 +11,9 @@
   import SignVerify from "./lib/SignVerify.svelte";
   import TestVectors from "./lib/TestVectors.svelte";
 
+  // Tab state
+  let activeTab = $state<"tests" | "keys" | "vectors">("tests");
+
   // Hardware support state
   let emulated = $state<boolean | null>(null);
   let strongest = $state<SecureElementBacking | null>(null);
@@ -54,11 +57,9 @@
 </script>
 
 <main class="container py-3">
-  <!-- Header with Hardware Status -->
-  <div
-    class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-4 pb-3 border-bottom"
-  >
-    <h1 class="h3 mb-2 mb-md-0">Secure Key Manager</h1>
+  <!-- Header: title + hardware status on one line -->
+  <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
+    <h1 class="h4 mb-0">Secure Key Manager</h1>
     <HardwareStatus
       {strongest}
       {emulated}
@@ -67,25 +68,54 @@
     />
   </div>
 
-  <div class="row g-4">
-    <!-- Left Column: Keys -->
-    <div class="col-12 col-lg-5">
-      <KeyManager
-        {keysList}
-        {listKeysError}
-        bind:selectedKeyName
-        {canEnforceBiometricOnly}
-        onRefreshKeys={refreshKeysList}
-        onDeleteError={(msg) => (listKeysError = msg)}
-      />
-    </div>
+  <!-- Tab navigation -->
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+      <button
+        class="nav-link {activeTab === 'tests' ? 'active' : ''}"
+        onclick={() => (activeTab = "tests")}
+      >
+        Integration Tests
+      </button>
+    </li>
+    <li class="nav-item">
+      <button
+        class="nav-link {activeTab === 'keys' ? 'active' : ''}"
+        onclick={() => (activeTab = "keys")}
+      >
+        Keys &amp; Sign
+      </button>
+    </li>
+    <li class="nav-item">
+      <button
+        class="nav-link {activeTab === 'vectors' ? 'active' : ''}"
+        onclick={() => (activeTab = "vectors")}
+      >
+        Test Vectors
+      </button>
+    </li>
+  </ul>
 
-    <!-- Right Column: Sign & Verify -->
-    <div class="col-12 col-lg-7">
-      <SignVerify {keysList} bind:selectedKeyName />
+  <!-- Tab content -->
+  {#if activeTab === "tests"}
+    <IntegrationTests onComplete={refreshKeysList} />
+  {:else if activeTab === "keys"}
+    <div class="row g-4">
+      <div class="col-12 col-lg-5">
+        <KeyManager
+          {keysList}
+          {listKeysError}
+          bind:selectedKeyName
+          {canEnforceBiometricOnly}
+          onRefreshKeys={refreshKeysList}
+          onDeleteError={(msg) => (listKeysError = msg)}
+        />
+      </div>
+      <div class="col-12 col-lg-7">
+        <SignVerify {keysList} bind:selectedKeyName />
+      </div>
     </div>
-  </div>
-
-  <IntegrationTests onComplete={refreshKeysList} />
-  <TestVectors />
+  {:else if activeTab === "vectors"}
+    <TestVectors />
+  {/if}
 </main>
