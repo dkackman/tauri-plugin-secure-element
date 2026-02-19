@@ -8,8 +8,8 @@
     signWithKey,
   } from "tauri-plugin-secure-element-api";
   import testVectorsData from "../cross-platform-test-vectors.json";
-  import CollapsibleCard from "./CollapsibleCard.svelte";
   import SpinnerButton from "./SpinnerButton.svelte";
+  import TestResultRow from "./TestResultRow.svelte";
   import { base64ToUint8Array } from "./utils.js";
 
   let { onComplete }: { onComplete: () => void } = $props();
@@ -39,7 +39,6 @@
     failed: number;
     duration: number;
   } | null>(null);
-  let sectionExpanded = $state(false);
 
   function log(message: string, type: "info" | "success" | "error" = "info") {
     const timestamp = new Date().toLocaleTimeString();
@@ -88,7 +87,6 @@
   async function runAllTests() {
     if (isTestRunning) return;
     isTestRunning = true;
-    sectionExpanded = true;
     clearLog();
 
     const startTime = Date.now();
@@ -351,64 +349,53 @@
   }
 </script>
 
-<CollapsibleCard title="Integration Tests" bind:expanded={sectionExpanded}>
-  {#snippet badge()}
-    {#if testSummary}
-      <span
-        class="badge {testSummary.failed === 0 ? 'bg-success' : 'bg-danger'}"
-      >
-        {testSummary.passed}/{testSummary.total}
-      </span>
-    {/if}
-  {/snippet}
-
-  <div class="d-flex gap-2 mb-3">
+<!-- Full-height flex layout: action row → test table → growing console -->
+<div class="d-flex flex-column" style="height: calc(100vh - 180px);">
+  <!-- Action row -->
+  <div class="d-flex align-items-center gap-3 mb-3 flex-shrink-0">
     <SpinnerButton
       loading={isTestRunning}
       label="Run All Tests"
       loadingLabel="Running..."
       onclick={runAllTests}
+      class="btn btn-primary"
     />
     <button
+      type="button"
       onclick={clearLog}
       class="btn btn-outline-secondary btn-sm"
       disabled={isTestRunning}
     >
       Clear
     </button>
+    {#if testSummary}
+      <div class="d-flex gap-2 ms-auto align-items-center">
+        <span class="badge bg-success">{testSummary.passed} passed</span>
+        {#if testSummary.failed > 0}
+          <span class="badge bg-danger">{testSummary.failed} failed</span>
+        {/if}
+        <span class="text-muted small">{testSummary.duration}ms</span>
+      </div>
+    {/if}
   </div>
 
-  <!-- Test Status Badges -->
+  <!-- Test result table -->
   {#if testResults.length > 0}
-    <div class="d-flex flex-wrap gap-1 mb-3">
-      {#each testResults as test}
-        <span
-          class="badge {test.status === 'passed'
-            ? 'bg-success'
-            : test.status === 'failed'
-              ? 'bg-danger'
-              : test.status === 'running'
-                ? 'bg-warning text-dark'
-                : 'bg-secondary'}"
-          title={test.message || test.name}
-          style="font-size: 0.7rem;"
-        >
-          {test.status === "running"
-            ? "..."
-            : test.status === "passed"
-              ? "✓"
-              : test.status === "failed"
-                ? "✗"
-                : "○"}
-        </span>
-      {/each}
+    <div class="mb-3 flex-shrink-0">
+      <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+        <tbody>
+          {#each testResults as test}
+            <TestResultRow {test} />
+          {/each}
+        </tbody>
+      </table>
     </div>
   {/if}
 
-  <!-- Console -->
+  <!-- Console: fills remaining height -->
   <div
-    class="bg-dark text-light p-2 rounded font-monospace"
-    style="height: 200px; overflow-y: auto; font-size: 0.75rem;"
+    class="bg-dark text-light p-2 rounded font-monospace flex-grow-1 overflow-auto"
+    style="min-height: 0; font-size: 0.75rem;"
   >
     {#if testLog.length === 0}
       <span class="text-muted">Click "Run All Tests" to start...</span>
@@ -428,14 +415,4 @@
       {/each}
     {/if}
   </div>
-
-  {#if testSummary}
-    <div
-      class="mt-2 small {testSummary.failed === 0
-        ? 'text-success'
-        : 'text-danger'}"
-    >
-      {testSummary.passed} passed, {testSummary.failed} failed in {testSummary.duration}ms
-    </div>
-  {/if}
-</CollapsibleCard>
+</div>
