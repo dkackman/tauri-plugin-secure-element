@@ -69,7 +69,7 @@
   </div>
 
   <!-- Tab navigation -->
-  <ul class="nav nav-tabs mb-3" role="tablist">
+  <ul class="nav nav-tabs nav-fill mb-3" role="tablist">
     <li class="nav-item" role="presentation">
       <button
         id="tab-tests"
@@ -81,7 +81,7 @@
         tabindex={activeTab === "tests" ? 0 : -1}
         onclick={() => (activeTab = "tests")}
       >
-        Integration Tests
+        Tests
       </button>
     </li>
     <li class="nav-item" role="presentation">
@@ -109,7 +109,7 @@
         tabindex={activeTab === "vectors" ? 0 : -1}
         onclick={() => (activeTab = "vectors")}
       >
-        Test Vectors
+        Vectors
       </button>
     </li>
   </ul>
