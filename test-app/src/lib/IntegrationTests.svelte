@@ -39,12 +39,19 @@
     failed: number;
     duration: number;
   } | null>(null);
+  let consoleEl = $state<HTMLDivElement | null>(null);
 
   function log(message: string, type: "info" | "success" | "error" = "info") {
     const timestamp = new Date().toLocaleTimeString();
     const prefix = type === "success" ? "✓" : type === "error" ? "✗" : "→";
     testLog = [...testLog, `[${timestamp}] ${prefix} ${message}`];
   }
+
+  $effect(() => {
+    if (testLog.length > 0 && consoleEl) {
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+  });
 
   function clearLog() {
     testLog = [];
@@ -350,6 +357,7 @@
 </script>
 
 <!-- Full-height flex layout: action row → test table → growing console -->
+<!-- 180px offset accounts for: App.svelte container py-3 (~32px) + header row (~65px) + tab nav (~50px) + buffer -->
 <div class="d-flex flex-column" style="height: calc(100vh - 180px);">
   <!-- Action row -->
   <div class="d-flex align-items-center gap-3 mb-3 flex-shrink-0">
@@ -383,6 +391,13 @@
   {#if testResults.length > 0}
     <div class="mb-3 flex-shrink-0">
       <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+        <thead class="visually-hidden">
+          <tr>
+            <th scope="col">Status</th>
+            <th scope="col">Test Name</th>
+            <th scope="col">Duration</th>
+          </tr>
+        </thead>
         <tbody>
           {#each testResults as test}
             <TestResultRow {test} />
@@ -394,6 +409,7 @@
 
   <!-- Console: fills remaining height -->
   <div
+    bind:this={consoleEl}
     class="bg-dark text-light p-2 rounded font-monospace flex-grow-1 overflow-auto"
     style="min-height: 0; font-size: 0.75rem;"
   >
