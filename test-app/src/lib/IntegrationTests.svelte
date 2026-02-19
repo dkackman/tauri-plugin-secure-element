@@ -390,7 +390,10 @@
   <!-- Test result table -->
   {#if testResults.length > 0}
     <div class="mb-3 flex-shrink-0">
-      <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+      <table
+        class="table table-sm table-hover mb-0"
+        style="font-size: 0.85rem;"
+      >
         <thead class="visually-hidden">
           <tr>
             <th scope="col">Status</th>

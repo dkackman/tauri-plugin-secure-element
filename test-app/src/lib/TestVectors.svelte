@@ -203,7 +203,8 @@
   <h2 class="h6">Verify Stored Vectors</h2>
   <p class="text-muted small mb-2">
     Verifies all signatures from <code>cross-platform-test-vectors.json</code>
-    ({testVectorsData.vectors.length} vector{testVectorsData.vectors.length !== 1
+    ({testVectorsData.vectors.length} vector{testVectorsData.vectors.length !==
+    1
       ? "s"
       : ""} loaded).
   </p>
@@ -240,8 +241,8 @@
         </div>
       {/each}
       <div
-        class="mt-2 small {vectorVerifyResults.filter((r) => r.passed).length ===
-        vectorVerifyResults.length
+        class="mt-2 small {vectorVerifyResults.filter((r) => r.passed)
+          .length === vectorVerifyResults.length
           ? 'text-success'
           : 'text-danger'}"
       >

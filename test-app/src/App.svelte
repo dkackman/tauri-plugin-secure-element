@@ -58,7 +58,9 @@
 
 <main class="container py-3">
   <!-- Header: title + hardware status on one line -->
-  <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-3 pb-2 border-bottom">
+  <div
+    class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-3 pb-2 border-bottom"
+  >
     <h1 class="h4 mb-0">Secure Key Manager</h1>
     <HardwareStatus
       {strongest}
@@ -116,11 +118,21 @@
 
   <!-- Tab content -->
   {#if activeTab === "tests"}
-    <div id="panel-tests" role="tabpanel" aria-labelledby="tab-tests" tabindex="0">
+    <div
+      id="panel-tests"
+      role="tabpanel"
+      aria-labelledby="tab-tests"
+      tabindex="0"
+    >
       <IntegrationTests onComplete={refreshKeysList} />
     </div>
   {:else if activeTab === "keys"}
-    <div id="panel-keys" role="tabpanel" aria-labelledby="tab-keys" tabindex="0">
+    <div
+      id="panel-keys"
+      role="tabpanel"
+      aria-labelledby="tab-keys"
+      tabindex="0"
+    >
       <div class="row g-4">
         <div class="col-12 col-lg-5">
           <KeyManager
@@ -138,7 +150,12 @@
       </div>
     </div>
   {:else if activeTab === "vectors"}
-    <div id="panel-vectors" role="tabpanel" aria-labelledby="tab-vectors" tabindex="0">
+    <div
+      id="panel-vectors"
+      role="tabpanel"
+      aria-labelledby="tab-vectors"
+      tabindex="0"
+    >
       <TestVectors />
     </div>
   {/if}
