@@ -58,7 +58,7 @@
 
 <main class="container py-3">
   <!-- Header: title + hardware status on one line -->
-  <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
+  <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-3 pb-2 border-bottom">
     <h1 class="h4 mb-0">Secure Key Manager</h1>
     <HardwareStatus
       {strongest}
@@ -69,26 +69,44 @@
   </div>
 
   <!-- Tab navigation -->
-  <ul class="nav nav-tabs mb-3">
-    <li class="nav-item">
+  <ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
       <button
+        id="tab-tests"
+        type="button"
         class="nav-link {activeTab === 'tests' ? 'active' : ''}"
+        role="tab"
+        aria-selected={activeTab === "tests"}
+        aria-controls="panel-tests"
+        tabindex={activeTab === "tests" ? 0 : -1}
         onclick={() => (activeTab = "tests")}
       >
         Integration Tests
       </button>
     </li>
-    <li class="nav-item">
+    <li class="nav-item" role="presentation">
       <button
+        id="tab-keys"
+        type="button"
         class="nav-link {activeTab === 'keys' ? 'active' : ''}"
+        role="tab"
+        aria-selected={activeTab === "keys"}
+        aria-controls="panel-keys"
+        tabindex={activeTab === "keys" ? 0 : -1}
         onclick={() => (activeTab = "keys")}
       >
         Keys &amp; Sign
       </button>
     </li>
-    <li class="nav-item">
+    <li class="nav-item" role="presentation">
       <button
+        id="tab-vectors"
+        type="button"
         class="nav-link {activeTab === 'vectors' ? 'active' : ''}"
+        role="tab"
+        aria-selected={activeTab === "vectors"}
+        aria-controls="panel-vectors"
+        tabindex={activeTab === "vectors" ? 0 : -1}
         onclick={() => (activeTab = "vectors")}
       >
         Test Vectors
@@ -98,24 +116,30 @@
 
   <!-- Tab content -->
   {#if activeTab === "tests"}
-    <IntegrationTests onComplete={refreshKeysList} />
+    <div id="panel-tests" role="tabpanel" aria-labelledby="tab-tests" tabindex="0">
+      <IntegrationTests onComplete={refreshKeysList} />
+    </div>
   {:else if activeTab === "keys"}
-    <div class="row g-4">
-      <div class="col-12 col-lg-5">
-        <KeyManager
-          {keysList}
-          {listKeysError}
-          bind:selectedKeyName
-          {canEnforceBiometricOnly}
-          onRefreshKeys={refreshKeysList}
-          onDeleteError={(msg) => (listKeysError = msg)}
-        />
-      </div>
-      <div class="col-12 col-lg-7">
-        <SignVerify {keysList} bind:selectedKeyName />
+    <div id="panel-keys" role="tabpanel" aria-labelledby="tab-keys" tabindex="0">
+      <div class="row g-4">
+        <div class="col-12 col-lg-5">
+          <KeyManager
+            {keysList}
+            {listKeysError}
+            bind:selectedKeyName
+            {canEnforceBiometricOnly}
+            onRefreshKeys={refreshKeysList}
+            onDeleteError={(msg) => (listKeysError = msg)}
+          />
+        </div>
+        <div class="col-12 col-lg-7">
+          <SignVerify {keysList} bind:selectedKeyName />
+        </div>
       </div>
     </div>
   {:else if activeTab === "vectors"}
-    <TestVectors />
+    <div id="panel-vectors" role="tabpanel" aria-labelledby="tab-vectors" tabindex="0">
+      <TestVectors />
+    </div>
   {/if}
 </main>
