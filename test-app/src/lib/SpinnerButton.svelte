@@ -16,7 +16,7 @@
   } = $props();
 </script>
 
-<button {onclick} class={cls} disabled={loading || disabled}>
+<button type="button" {onclick} class={cls} disabled={loading || disabled}>
   {#if loading}
     <span class="spinner-border spinner-border-sm me-1"></span>
     {loadingLabel}
