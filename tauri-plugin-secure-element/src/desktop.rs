@@ -257,9 +257,9 @@ impl<R: Runtime> SecureElement<R> {
     pub fn list_keys(&self, payload: ListKeysRequest) -> crate::Result<ListKeysResponse> {
         #[cfg(target_os = "macos")]
         {
-            let (key_name_ptr, _key_name_cstr) =
+            let (key_name_ptr, _key_name_cstr_guard) =
                 ffi_helpers::optional_to_cstring(payload.key_name.as_ref());
-            let (public_key_ptr, _public_key_cstr) =
+            let (public_key_ptr, _public_key_cstr_guard) =
                 ffi_helpers::optional_to_cstring(payload.public_key.as_ref());
 
             let result_ptr = unsafe { secure_element_list_keys(key_name_ptr, public_key_ptr) };
@@ -389,9 +389,9 @@ impl<R: Runtime> SecureElement<R> {
     pub fn delete_key(&self, payload: DeleteKeyRequest) -> crate::Result<DeleteKeyResponse> {
         #[cfg(target_os = "macos")]
         {
-            let (key_name_ptr, _key_name_cstr) =
+            let (key_name_ptr, _key_name_cstr_guard) =
                 ffi_helpers::optional_to_cstring(payload.key_name.as_ref());
-            let (public_key_ptr, _public_key_cstr) =
+            let (public_key_ptr, _public_key_cstr_guard) =
                 ffi_helpers::optional_to_cstring(payload.public_key.as_ref());
 
             let result_ptr = unsafe { secure_element_delete_key(key_name_ptr, public_key_ptr) };
