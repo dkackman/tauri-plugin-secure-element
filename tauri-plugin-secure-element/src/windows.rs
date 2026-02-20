@@ -1,3 +1,9 @@
+use crate::error_sanitize::sanitize_error;
+use crate::windows_hello;
+use crate::windows_raii::{
+    EnumStateGuard, HLocalGuard, KeyHandle, KeyNameBufferGuard, ProviderHandle,
+};
+use std::os::windows::io::FromRawHandle;
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
@@ -10,12 +16,6 @@ use windows::Win32::Security::Cryptography::{
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::System::TpmBaseServices::{Tbsi_GetDeviceInfo, TPM_DEVICE_INFO};
-use std::os::windows::io::FromRawHandle;
-use crate::error_sanitize::sanitize_error;
-use crate::windows_hello;
-use crate::windows_raii::{
-    EnumStateGuard, HLocalGuard, KeyHandle, KeyNameBufferGuard, ProviderHandle,
-};
 
 /// Microsoft Platform Crypto Provider - uses TPM when available (for keys without Windows Hello)
 pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provider";
@@ -405,12 +405,7 @@ pub fn create_key(
 fn get_current_user_sid() -> crate::Result<String> {
     unsafe {
         let mut raw_token = HANDLE::default();
-        OpenProcessToken(
-            GetCurrentProcess(),
-            TOKEN_QUERY,
-            &mut raw_token,
-        )
-        .map_err(|e| {
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw_token).map_err(|e| {
             crate::Error::Io(std::io::Error::other(format!(
                 "Failed to open process token: {}",
                 e
@@ -420,7 +415,9 @@ fn get_current_user_sid() -> crate::Result<String> {
 
         // Get required buffer size
         let mut size_needed: u32 = 0;
-        let token = HANDLE(std::os::windows::io::AsRawHandle::as_raw_handle(&token_handle));
+        let token = HANDLE(std::os::windows::io::AsRawHandle::as_raw_handle(
+            &token_handle,
+        ));
         let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size_needed);
         let mut buffer = vec![0u8; size_needed as usize];
         let result = GetTokenInformation(
