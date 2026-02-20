@@ -1,5 +1,5 @@
 use std::ops::{Deref, DerefMut};
-use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
+use windows::Win32::Foundation::{LocalFree, HLOCAL};
 use windows::Win32::Security::Cryptography::{
     NCryptFreeBuffer, NCryptFreeObject, NCryptKeyName, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE,
 };
@@ -104,19 +104,6 @@ impl HLocalGuard {
     /// This is used when a Windows API returns a PWSTR that needs to be freed with LocalFree
     pub fn set_from_pwstr(&mut self, pwstr: windows::core::PWSTR) {
         self.0 = HLOCAL(pwstr.as_ptr() as *mut _);
-    }
-}
-
-define_raii_handle!(
-    /// RAII wrapper for HANDLE that automatically calls CloseHandle on drop
-    pub WindowsHandleGuard(pub HANDLE), CloseHandle, is_invalid, deref
-);
-
-impl WindowsHandleGuard {
-    /// Creates a new guard with an invalid handle
-    /// The handle should be initialized by a Windows API call that takes &mut HANDLE
-    pub fn new() -> Self {
-        Self(HANDLE::default())
     }
 }
 

@@ -1,4 +1,5 @@
 use windows::core::{HSTRING, PCWSTR};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::Cryptography::{
     NCryptCreatePersistedKey, NCryptDeleteKey, NCryptEnumKeys, NCryptExportKey, NCryptFinalizeKey,
@@ -9,11 +10,11 @@ use windows::Win32::Security::Cryptography::{
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::System::TpmBaseServices::{Tbsi_GetDeviceInfo, TPM_DEVICE_INFO};
-
+use std::os::windows::io::FromRawHandle;
 use crate::error_sanitize::sanitize_error;
 use crate::windows_hello;
 use crate::windows_raii::{
-    EnumStateGuard, HLocalGuard, KeyHandle, KeyNameBufferGuard, ProviderHandle, WindowsHandleGuard,
+    EnumStateGuard, HLocalGuard, KeyHandle, KeyNameBufferGuard, ProviderHandle,
 };
 
 /// Microsoft Platform Crypto Provider - uses TPM when available (for keys without Windows Hello)
@@ -403,11 +404,11 @@ pub fn create_key(
 
 fn get_current_user_sid() -> crate::Result<String> {
     unsafe {
-        let mut token_handle_guard = WindowsHandleGuard::new();
+        let mut raw_token = HANDLE::default();
         OpenProcessToken(
             GetCurrentProcess(),
             TOKEN_QUERY,
-            std::ptr::addr_of_mut!(token_handle_guard.0),
+            &mut raw_token,
         )
         .map_err(|e| {
             crate::Error::Io(std::io::Error::other(format!(
@@ -415,13 +416,15 @@ fn get_current_user_sid() -> crate::Result<String> {
                 e
             )))
         })?;
+        let token_handle = std::os::windows::io::OwnedHandle::from_raw_handle(raw_token.0);
 
         // Get required buffer size
         let mut size_needed: u32 = 0;
-        let _ = GetTokenInformation(token_handle_guard.0, TokenUser, None, 0, &mut size_needed);
+        let token = HANDLE(std::os::windows::io::AsRawHandle::as_raw_handle(&token_handle));
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size_needed);
         let mut buffer = vec![0u8; size_needed as usize];
         let result = GetTokenInformation(
-            token_handle_guard.0,
+            token,
             TokenUser,
             Some(buffer.as_mut_ptr() as *mut _),
             size_needed,
