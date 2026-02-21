@@ -31,6 +31,7 @@
   let createKeyError = $state("");
   let showCreateForm = $state(false);
   let authMode = $state<AuthenticationMode>("pinOrBiometric");
+  let pendingDeleteKey = $state("");
 
   $effect(() => {
     if (authMode === "biometricOnly" && canEnforceBiometricOnly === false) {
@@ -169,21 +170,40 @@
                   {key.publicKey.slice(0, 20)}...
                 </div>
               </div>
-              <div class="d-flex gap-1 ms-2">
-                <button
-                  onclick={() => copyToClipboard(key.publicKey)}
-                  class="btn btn-outline-secondary btn-sm p-1"
-                  title="Copy public key"
-                >
-                  <Copy size={14} />
-                </button>
-                <button
-                  onclick={() => deleteKeyByName(key.keyName)}
-                  class="btn btn-outline-danger btn-sm p-1"
-                  title="Delete key"
-                >
-                  <Trash2 size={14} />
-                </button>
+              <div class="d-flex gap-1 ms-2 align-items-center">
+                {#if pendingDeleteKey === key.keyName}
+                  <span class="small text-danger me-1">Delete?</span>
+                  <button
+                    onclick={() => {
+                      deleteKeyByName(key.keyName);
+                      pendingDeleteKey = "";
+                    }}
+                    class="btn btn-danger btn-sm py-0 px-2"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onclick={() => (pendingDeleteKey = "")}
+                    class="btn btn-outline-secondary btn-sm py-0 px-2"
+                  >
+                    No
+                  </button>
+                {:else}
+                  <button
+                    onclick={() => copyToClipboard(key.publicKey)}
+                    class="btn btn-outline-secondary btn-sm p-1"
+                    title="Copy public key"
+                  >
+                    <Copy size={14} />
+                  </button>
+                  <button
+                    onclick={() => (pendingDeleteKey = key.keyName)}
+                    class="btn btn-outline-danger btn-sm p-1"
+                    title="Delete key"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                {/if}
               </div>
             </div>
           </div>
