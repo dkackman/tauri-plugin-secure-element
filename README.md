@@ -258,8 +258,6 @@ Generates a new secure key in the device's secure element.
 interface GenerateSecureKeyResult {
   publicKey: string;
   keyName: string;
-  /** The type of hardware backing used for this key */
-  hardwareBacking: "secureEnclave" | "strongBox" | "tee" | "ngc" | "tpm";
 }
 ```
 

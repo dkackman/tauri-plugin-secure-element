@@ -542,8 +542,6 @@ class SecureKeysPlugin(
             val ret = JSObject()
             ret.put("publicKey", publicKeyBase64)
             ret.put("keyName", args.keyName)
-            // Include backing type so callers can detect StrongBox vs TEE
-            ret.put("hardwareBacking", if (usedStrongBox) "strongBox" else "tee")
             invoke.resolve(ret)
         } catch (e: Exception) {
             val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"

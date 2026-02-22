@@ -25,9 +25,7 @@
   } = $props();
 
   let newKeyName = $state("");
-  let createdKey = $state<{ keyName: string; hardwareBacking: string } | null>(
-    null
-  );
+  let createdKey = $state<{ keyName: string } | null>(null);
   let createKeyError = $state("");
   let showCreateForm = $state(false);
   let authMode = $state<AuthenticationMode>("pinOrBiometric");
@@ -131,7 +129,6 @@
       <div class="alert alert-success py-2 px-3 small">
         <strong>Created:</strong>
         {createdKey.keyName}
-        <span class="badge bg-info ms-1">{createdKey.hardwareBacking}</span>
       </div>
     {/if}
 

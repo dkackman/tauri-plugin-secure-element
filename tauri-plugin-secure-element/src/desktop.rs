@@ -232,16 +232,9 @@ impl<R: Runtime> SecureElement<R> {
             let public_key_bytes = windows::export_public_key(&key)?;
             let public_key = base64::engine::general_purpose::STANDARD.encode(&public_key_bytes);
 
-            // Determine hardware backing based on auth mode
-            let hardware_backing = match payload.auth_mode {
-                crate::models::AuthenticationMode::PinOrBiometric => "ngc", // Windows Hello NGC
-                _ => "tpm", // Platform Crypto Provider with TPM
-            };
-
             Ok(GenerateSecureKeyResponse {
                 key_name: payload.key_name,
                 public_key,
-                hardware_backing: hardware_backing.to_string(),
             })
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]

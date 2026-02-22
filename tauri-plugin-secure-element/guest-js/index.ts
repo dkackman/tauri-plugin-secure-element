@@ -25,8 +25,6 @@ export type HardwareBacking =
 export interface GenerateSecureKeyResult {
   publicKey: string;
   keyName: string;
-  /** The type of hardware backing used for this key */
-  hardwareBacking: HardwareBacking;
 }
 
 export async function generateSecureKey(

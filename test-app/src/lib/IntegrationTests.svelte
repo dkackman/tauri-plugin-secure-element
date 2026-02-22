@@ -131,10 +131,8 @@
           if (!result.keyName) throw new Error("Missing keyName in response");
           if (!result.publicKey)
             throw new Error("Missing publicKey in response");
-          if (!result.hardwareBacking)
-            throw new Error("Missing hardwareBacking");
           testPublicKey = result.publicKey;
-          log(`  Created key: ${result.keyName} (${result.hardwareBacking})`);
+          log(`  Created key: ${result.keyName}`);
         },
       },
       {

@@ -18,7 +18,11 @@
       "Bash(/usr/bin/log show:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nadd pre-beta code review findings\n\nDocuments security and quality issues found during review, with focus on\nWindows-specific issues requiring per-operation authentication enforcement.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(swiftc:*)"
+      "Bash(swiftc:*)",
+      "Bash(node --version:*)",
+      "Bash(nvm ls:*)",
+      "Bash(pnpm config:*)",
+      "Bash(pnpm --version:*)"
     ]
   }
 }

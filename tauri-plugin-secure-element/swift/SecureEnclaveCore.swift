@@ -15,7 +15,6 @@ import Security
 public struct GenerateKeyResponse {
     public let publicKey: String
     public let keyName: String
-    public let hardwareBacking: String
 }
 
 /// Information about a key in the Secure Enclave
@@ -310,7 +309,7 @@ public enum SecureEnclaveCore {
         // Export public key
         switch exportPublicKeyBase64(privateKey: privateKey) {
         case let .success(publicKeyBase64):
-            return .success(GenerateKeyResponse(publicKey: publicKeyBase64, keyName: keyName, hardwareBacking: "secureEnclave"))
+            return .success(GenerateKeyResponse(publicKey: publicKeyBase64, keyName: keyName))
         case let .failure(error):
             return .failure(error)
         }

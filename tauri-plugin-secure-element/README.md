@@ -205,7 +205,6 @@ Generates a new secure key in the device's secure element.
 interface GenerateSecureKeyResult {
   publicKey: string;
   keyName: string;
-  hardwareBacking: "secureEnclave" | "strongBox" | "tee";
 }
 ```
 
