@@ -133,9 +133,17 @@ public enum SecureEnclaveError: Error, LocalizedError {
         case .keyNotAccessible:
             return "Key is not accessible: the device may be locked"
         case let .invalidData(detail):
-            return "Invalid data: \(detail)"
+            #if DEBUG
+                return "Invalid data: \(detail)"
+            #else
+                return "Invalid data"
+            #endif
         case let .biometricNotAvailable(detail):
-            return "biometricOnly authentication mode requires biometric authentication (Face ID/Touch ID) to be available and enrolled. \(detail)"
+            #if DEBUG
+                return "Biometric authentication is not available: \(detail)"
+            #else
+                return "Biometric authentication is not available"
+            #endif
         }
     }
 }
