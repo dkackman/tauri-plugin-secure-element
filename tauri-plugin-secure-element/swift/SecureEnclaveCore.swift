@@ -72,6 +72,7 @@ public enum SecureEnclaveError: Error, LocalizedError {
     case failedToDeleteKey(String)
     case failedToQueryKeys(Int32)
     case invalidAuthMode
+    case keyNotAccessible
     case invalidData(String)
     case biometricNotAvailable(String)
 
@@ -129,6 +130,8 @@ public enum SecureEnclaveError: Error, LocalizedError {
             #endif
         case .invalidAuthMode:
             return "Invalid auth mode"
+        case .keyNotAccessible:
+            return "Key is not accessible: the device may be locked"
         case let .invalidData(detail):
             return "Invalid data: \(detail)"
         case let .biometricNotAvailable(detail):
@@ -368,9 +371,10 @@ public enum SecureEnclaveCore {
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
-        guard status == errSecSuccess || status == errSecInteractionNotAllowed,
-              let keyRef = keyRef
-        else {
+        guard status == errSecSuccess, let keyRef = keyRef else {
+            if status == errSecInteractionNotAllowed {
+                return .failure(.keyNotAccessible)
+            }
             return .failure(.keyNotFound(keyName))
         }
 
