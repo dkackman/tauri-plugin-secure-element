@@ -2,7 +2,7 @@
 name = "tauri-plugin-secure-element"
 version = "0.1.0-beta.4"
 authors = [ "Don Kackman<dkackman@gmail.com>" ]
-description = "Tauri plugin for secure element use on iOS (Secure Enclave) and Android (Strongbox and TEE)."
+description = "Tauri plugin for secure element use on macOS/iOS (Secure Enclave), Windows (TPM), and Android (Strongbox and TEE)."
 edition = "2021"
 rust-version = "1.77.2"
 links = "tauri-plugin-secure-element"

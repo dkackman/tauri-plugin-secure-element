@@ -22,7 +22,10 @@
       "Bash(node --version:*)",
       "Bash(nvm ls:*)",
       "Bash(pnpm config:*)",
-      "Bash(pnpm --version:*)"
+      "Bash(pnpm --version:*)",
+      "Bash(ls:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:tauri.app)"
     ]
   }
 }
