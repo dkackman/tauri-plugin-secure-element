@@ -150,9 +150,6 @@ import {
   listKeys,
   signWithKey,
   deleteKey,
-  type AuthenticationMode,
-  type SecureElementBacking,
-  type SecureElementCapabilities,
 } from "tauri-plugin-secure-element-api";
 
 // Check device secure element capabilities
@@ -289,7 +286,7 @@ Signs data using a key stored in the secure element.
 
 ### `deleteKey(keyName?: string, publicKey?: string)`
 
-Deletes a key from the secure element. At least one parameter must be provided.
+Deletes a key from the secure element. Exactly one parameter must be provided (not both).
 
 **Returns:** `Promise<boolean>` - Success status
 
