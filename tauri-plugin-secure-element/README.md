@@ -94,9 +94,6 @@ import {
   listKeys,
   signWithKey,
   deleteKey,
-  type AuthenticationMode,
-  type SecureElementBacking,
-  type SecureElementCapabilities,
 } from "tauri-plugin-secure-element-api";
 
 // Check device secure element capabilities
