@@ -106,7 +106,7 @@ Note: The `predev` script automatically builds the plugin before running.
 
 **macOS Note:** Secure Enclave access on macOS requires a provisioning profile and special code signing. See `docs/macos-development.md` for setup instructions.
 
-**Windows Note:** Windows Hello integration requires a TPM 2.0 compatible device and Windows 10/11. On Windows, run `setup-msvc-env.ps1` from the repo root if you encounter build issues with the Windows SDK.
+**Windows Note:** Windows Hello integration requires a TPM 2.0 compatible device and Windows 10 version 1607 (build 14393) or higher. Minimum requirement for reliable TPM 2.0 support.
 
 ### Code Quality
 
@@ -140,9 +140,15 @@ pnpm lint:kotlin         # Lint Kotlin only
 - `tauri-plugin-secure-element/src/lib.rs` - Main plugin entry point
 - `tauri-plugin-secure-element/src/commands.rs` - Tauri command implementations
 - `tauri-plugin-secure-element/src/models.rs` - Data models and types
+- `tauri-plugin-secure-element/src/error.rs` - Plugin `Error` enum and `Result<T>` type alias
+- `tauri-plugin-secure-element/src/error_sanitize.rs` - Returns detailed errors in debug builds, generic messages in release (avoids leaking sensitive info)
+- `tauri-plugin-secure-element/src/validation.rs` - Input validation for key names, sign data size, and public key filters
 - `tauri-plugin-secure-element/src/mobile.rs` - Mobile platform interface
 - `tauri-plugin-secure-element/src/desktop.rs` - Desktop platform implementation (macOS/Windows)
-- `tauri-plugin-secure-element/src/windows.rs` - Windows Hello/TPM implementation
+- `tauri-plugin-secure-element/src/windows.rs` - Core Windows NCrypt/TPM implementation: key creation, signing, export, enumeration
+- `tauri-plugin-secure-element/src/windows_hello.rs` - Windows Hello availability check via `UserConsentVerifier` WinRT API
+- `tauri-plugin-secure-element/src/windows_raii.rs` - RAII wrappers for NCrypt handles (`ProviderHandle`, `KeyHandle`, `EnumStateGuard`, `KeyNameBufferGuard`)
+- `tauri-plugin-secure-element/src/der.rs` - Converts raw ECDSA R||S signatures (from NCrypt) to DER format for cross-platform compatibility
 - `tauri-plugin-secure-element/guest-js/index.ts` - JavaScript API
 
 **Platform Implementations:**
@@ -196,18 +202,16 @@ pnpm build               # Ensure everything builds
 
 **Main plugin (Rust)**:
 
-- `tauri` 2.9.4
+- `tauri` 2.10.1
 - `serde` / `serde_json` 1.0
 - `thiserror` 2
-- `rand` 0.8
-- `hex` 0.4
 - `base64` 0.22
 - `sha2` 0.10
-- Platform-specific: `libc` (macOS), `windows` + `winver` (Windows)
+- Platform-specific: `libc` (macOS), `windows` + `winver` + `raw-window-handle` (Windows)
 
 **Guest JS**:
 
-- `@tauri-apps/api` ^2.0.0
+- `@tauri-apps/api` ^2.10.1
 
 **Test app**:
 
