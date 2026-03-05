@@ -13,6 +13,8 @@ jobs:
   ci-rust:
     name: CI - Rust
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: tauri-plugin-secure-element
