@@ -39,7 +39,7 @@ tauri-plugin-secure-element/          # Root monorepo
 Ensure these are installed before starting:
 
 - Rust (latest stable)
-- Node.js 20.19+ or 22.12+
+- Node.js 20.19+ or 22.12+ or 24.13+
 - pnpm
 - Tauri CLI (via pnpm)
 - Platform-specific dependencies:
