@@ -506,7 +506,7 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             ))));
         }
 
-        if let Err(e) = NCryptFinalizeKey(key.0, NCRYPT_SILENT_FLAG) {
+        if let Err(e) = NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) {
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("NCryptFinalizeKey failed: {}", e),
                 "Failed to finalize key",
