@@ -40,9 +40,14 @@ pub fn raw_ecdsa_to_der(raw: &[u8]) -> crate::Result<Vec<u8>> {
     // Length encoding (DER definite form)
     if seq_len < 128 {
         der.push(seq_len as u8);
-    } else {
+    } else if seq_len <= 255 {
         der.push(0x81);
         der.push(seq_len as u8);
+    } else {
+        return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+            &format!("DER sequence length too large: {}", seq_len),
+            "Failed to sign",
+        ))));
     }
 
     der.extend_from_slice(&r_der);
