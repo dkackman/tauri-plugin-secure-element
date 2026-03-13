@@ -35,7 +35,10 @@ pub(crate) async fn list_keys<R: Runtime>(
     if let Some(ref key_name) = payload.key_name {
         validate_key_name(key_name)?;
     }
-    // Validate optional public key filter if provided
+    // Validate optional public key filter if provided.
+    // validate_public_key_filter returns the trimmed/normalized form, which we
+    // store back so callers get consistent exact-match behavior against
+    // plugin-generated base64 strings (which never have surrounding whitespace).
     if let Some(ref public_key) = payload.public_key {
         payload.public_key = Some(validate_public_key_filter(public_key)?);
     }
@@ -75,7 +78,10 @@ pub(crate) async fn delete_key<R: Runtime>(
         validate_key_name(key_name)?;
     }
 
-    // Validate optional public key if provided
+    // Validate optional public key if provided.
+    // validate_public_key_filter returns the trimmed/normalized form, which we
+    // store back so callers get consistent exact-match behavior against
+    // plugin-generated base64 strings (which never have surrounding whitespace).
     if let Some(ref public_key) = payload.public_key {
         payload.public_key = Some(validate_public_key_filter(public_key)?);
     }

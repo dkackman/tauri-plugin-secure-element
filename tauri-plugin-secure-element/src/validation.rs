@@ -81,6 +81,12 @@ pub fn validate_public_key_filter(public_key: &str) -> Result<String, Error> {
         ));
     }
 
+    // len() counts bytes, not Unicode scalar values. For the intended input
+    // (base64 ASCII), bytes and characters are equivalent, so this is correct.
+    // Non-ASCII characters will also be rejected by any eventual exact-match
+    // comparison against plugin-generated base64, but are not rejected here —
+    // see the comment on validate_public_key_filter for why strict format
+    // validation is intentionally omitted.
     if trimmed.len() < MIN_PUBLIC_KEY_FILTER_LENGTH {
         return Err(Error::Validation(format!(
             "Public key filter is too short (minimum {} characters, got {})",
@@ -178,6 +184,10 @@ mod tests {
     fn test_valid_public_key_filters() {
         assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc4OQ==").is_ok());
         assert!(validate_public_key_filter("dGVzdGtleTEyMzQ1Njc=").is_ok());
+        // Non-base64-conformant strings (e.g. wrong padding, invalid length) are
+        // intentionally accepted here. The filter is only used for exact equality
+        // comparison against plugin-generated base64 output, so format validation
+        // adds no security value — an invalid filter simply never matches.
         assert!(validate_public_key_filter(&"A".repeat(256)).is_ok());
 
         // Whitespace is trimmed and the cleaned string is returned
