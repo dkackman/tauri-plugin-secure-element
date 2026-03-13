@@ -774,9 +774,12 @@ pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
         let handle = key.take();
         match NCryptDeleteKey(handle, 0u32) {
             Ok(_) => Ok(true),
-            Err(_) => {
+            Err(e) => {
                 let _ = NCryptFreeObject(handle.into());
-                Ok(false)
+                Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                    &format!("Failed to delete key: {}", e),
+                    "Failed to delete key",
+                ))))
             }
         }
     }
