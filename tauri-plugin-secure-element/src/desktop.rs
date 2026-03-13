@@ -422,10 +422,7 @@ impl<R: Runtime> SecureElement<R> {
             } else if let Some(public_key) = &payload.public_key {
                 // Find key by public key - propagate provider errors, but treat
                 // an empty result as idempotent success (key already gone).
-                let keys = match windows::list_keys(&app_id, None, Some(public_key)) {
-                    Ok(keys) => keys,
-                    Err(e) => return Err(e),
-                };
+                let keys = windows::list_keys(&app_id, None, Some(public_key))?;
                 if keys.is_empty() {
                     return Ok(DeleteKeyResponse { success: true });
                 }
