@@ -680,11 +680,24 @@ class SecureKeysPlugin(
         // after an activity recreation that did not fire onAuthenticationError).
         pendingSignInvoke.getAndSet(invoke)?.reject("Authentication cancelled: a new sign request superseded this one")
 
-        // Create a new signature object for use with CryptoObject
-        val signature = Signature.getInstance("SHA256withECDSA")
-        signature.initSign(entry.privateKey)
-
-        val cryptoObject = BiometricPrompt.CryptoObject(signature)
+        // Create and initialize the signature object for the CryptoObject.
+        // initSign is expected to succeed for per-use auth keys (duration=0) even before
+        // authentication — the key can be initialized but not used until BiometricPrompt
+        // unlocks it. On some older/vendor-specific Android versions it may throw instead,
+        // so we handle that explicitly rather than letting the exception escape and
+        // double-reject via the outer catch in signWithKey.
+        val cryptoObject =
+            try {
+                val signature = Signature.getInstance("SHA256withECDSA")
+                signature.initSign(entry.privateKey)
+                BiometricPrompt.CryptoObject(signature)
+            } catch (e: Exception) {
+                val detailedMessage = "Failed to initialize signature for authentication: ${e.message}"
+                val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+                Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
+                pendingSignInvoke.getAndSet(null)?.reject(errorMessage)
+                return
+            }
 
         val biometricPrompt =
             BiometricPrompt(

@@ -337,6 +337,7 @@ public enum SecureEnclaveCore {
                       CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
                     continue
                 }
+                // swiftlint:disable:next force_cast
                 let privateKey = keyRef as! SecKey // safe: type ID verified above
 
                 // Extract key name from kSecAttrLabel
@@ -388,6 +389,7 @@ public enum SecureEnclaveCore {
         guard CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
             return .failure(.invalidData("Keychain returned unexpected type for key reference"))
         }
+        // swiftlint:disable:next force_cast
         let privateKey = keyRef as! SecKey // safe: type ID verified above
 
         // Create SHA256 digest using CryptoKit
@@ -449,6 +451,7 @@ public enum SecureEnclaveCore {
                       CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
                     continue
                 }
+                // swiftlint:disable:next force_cast
                 let privateKey = keyRef as! SecKey // safe: type ID verified above
 
                 // Check if this key's public key matches
