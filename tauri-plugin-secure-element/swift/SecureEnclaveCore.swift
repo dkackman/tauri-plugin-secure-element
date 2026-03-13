@@ -528,17 +528,8 @@ public enum SecureEnclaveCore {
         var testError: Unmanaged<CFError>?
         let testKey = SecKeyCreateRandomKey(testAttributes as CFDictionary, &testError)
 
-        // Clean up test key
-        defer {
-            if testKey != nil {
-                let deleteQuery: [String: Any] = [
-                    kSecClass as String: kSecClassKey,
-                    kSecAttrApplicationTag as String: testTag,
-                    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
-                ]
-                SecItemDelete(deleteQuery as CFDictionary)
-            }
-        }
+        // No cleanup needed: kSecAttrIsPermanent is false so the test key is
+        // ephemeral (never written to the Keychain) and is released with testKey.
 
         guard testKey != nil else {
             return SupportResponse(
