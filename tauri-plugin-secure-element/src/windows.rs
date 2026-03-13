@@ -4,7 +4,7 @@ use crate::windows_raii::{
     EnumStateGuard, HLocalGuard, KeyHandle, KeyNameBufferGuard, ProviderHandle,
 };
 use std::os::windows::io::FromRawHandle;
-use windows::core::{HSTRING, PCWSTR};
+use windows::core::{HRESULT, HSTRING, PCWSTR};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::Cryptography::{
@@ -22,6 +22,15 @@ pub const MS_PLATFORM_CRYPTO_PROVIDER: &str = "Microsoft Platform Crypto Provide
 
 /// Microsoft Passport Key Storage Provider - for Windows Hello protected keys
 pub const MS_NGC_KEY_STORAGE_PROVIDER: &str = "Microsoft Passport Key Storage Provider";
+
+/// NCrypt error: the requested key container does not exist (NTE_BAD_KEYSET)
+const NTE_BAD_KEYSET: HRESULT = HRESULT(0x80090016u32 as i32);
+
+/// NCrypt error: the requested item was not found (NTE_NOT_FOUND)
+const NTE_NOT_FOUND: HRESULT = HRESULT(0x80090011u32 as i32);
+
+/// NCrypt error: the key does not exist in this provider (NTE_NO_KEY)
+const NTE_NO_KEY: HRESULT = HRESULT(0x8009000Du32 as i32);
 
 /// Key name prefix base for TPM keys without Windows Hello protection
 /// Full format: tauri_se_tpm_{app_id}_{key_name}
@@ -311,7 +320,12 @@ pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, 
     if let Ok(sid) = get_current_user_sid() {
         let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
         if let Ok(ngc_provider) = open_ngc_provider() {
-            if let Ok(key) = open_key_internal(&ngc_provider, &ngc_full_name) {
+            // NGC provider is available. Use try_open_key so that only a genuine
+            // "key not found" falls through to the TPM path. Any other error
+            // (corrupted key, service fault, etc.) is propagated immediately —
+            // silently retrying in TPM could return a wrong key or hide the real
+            // cause behind a misleading "key not found in TPM" error.
+            if let Some(key) = try_open_key(&ngc_provider, &ngc_full_name)? {
                 return Ok((key, KeyProviderType::Ngc));
             }
         }
@@ -344,6 +358,37 @@ fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Resul
         })?;
 
         Ok(KeyHandle(key_handle))
+    }
+}
+
+/// Tries to open a key, returning `Ok(None)` specifically when the key does not
+/// exist (NTE_BAD_KEYSET / NTE_NOT_FOUND). Any other provider error is returned
+/// as `Err` so the caller can distinguish "not there" from a real failure.
+fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<Option<KeyHandle>> {
+    unsafe {
+        let mut key_handle = NCRYPT_KEY_HANDLE::default();
+        let key_name_h = HSTRING::from(full_name);
+
+        match NCryptOpenKey(
+            provider.0,
+            &mut key_handle,
+            PCWSTR(key_name_h.as_ptr()),
+            CERT_KEY_SPEC(0),
+            NCRYPT_FLAGS(0),
+        ) {
+            Ok(()) => Ok(Some(KeyHandle(key_handle))),
+            Err(e)
+                if e.code() == NTE_BAD_KEYSET
+                    || e.code() == NTE_NOT_FOUND
+                    || e.code() == NTE_NO_KEY =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to open key '{}': {}", full_name, e),
+                "Failed to open key",
+            )))),
+        }
     }
 }
 
