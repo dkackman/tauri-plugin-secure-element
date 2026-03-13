@@ -420,10 +420,11 @@ impl<R: Runtime> SecureElement<R> {
             let key_name = if let Some(name) = &payload.key_name {
                 name.clone()
             } else if let Some(public_key) = &payload.public_key {
-                // Find key by public key - fail silently if not found
+                // Find key by public key - propagate provider errors, but treat
+                // an empty result as idempotent success (key already gone).
                 let keys = match windows::list_keys(&app_id, None, Some(public_key)) {
                     Ok(keys) => keys,
-                    Err(_) => return Ok(DeleteKeyResponse { success: true }),
+                    Err(e) => return Err(e),
                 };
                 if keys.is_empty() {
                     return Ok(DeleteKeyResponse { success: true });
