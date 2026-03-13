@@ -94,16 +94,10 @@ macro_rules! define_raii_handle {
 define_raii_handle!(pub HLocalGuard(HLOCAL), LocalFree, is_invalid, into);
 
 impl HLocalGuard {
-    /// Creates a new guard with an invalid handle
-    /// The handle should be set by a Windows API call that allocates memory requiring LocalFree
-    pub fn new() -> Self {
-        Self(HLOCAL::default())
-    }
-
-    /// Sets the handle from a PWSTR pointer
-    /// This is used when a Windows API returns a PWSTR that needs to be freed with LocalFree
-    pub fn set_from_pwstr(&mut self, pwstr: windows::core::PWSTR) {
-        self.0 = HLOCAL(pwstr.as_ptr() as *mut _);
+    /// Takes ownership of a PWSTR allocated by a Windows API.
+    /// The memory will be freed with `LocalFree` when the guard is dropped.
+    pub fn from_pwstr(pwstr: windows::core::PWSTR) -> Self {
+        Self(HLOCAL(pwstr.as_ptr() as *mut _))
     }
 }
 

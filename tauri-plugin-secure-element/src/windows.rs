@@ -444,8 +444,7 @@ fn get_current_user_sid() -> crate::Result<String> {
             )))
         })?;
 
-        let mut sid_string_guard = HLocalGuard::new();
-        sid_string_guard.set_from_pwstr(sid_string_ptr);
+        let _sid_guard = HLocalGuard::from_pwstr(sid_string_ptr);
 
         let sid_string = sid_string_ptr.to_string().map_err(|e| {
             crate::Error::Io(std::io::Error::other(format!(
