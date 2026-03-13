@@ -30,6 +30,7 @@ import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.util.UUID
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicReference
 
 @InvokeArg
 class PingArgs {
@@ -91,6 +92,12 @@ class SecureKeysPlugin(
 
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private val executor: Executor = ContextCompat.getMainExecutor(activity)
+
+    // Tracks an in-flight biometric sign request so it can be resolved/rejected exactly
+    // once. If the Activity is recreated (e.g. screen rotation) while the prompt is shown,
+    // the next call to signWithBiometricPrompt will reject the stale invoke rather than
+    // leaving the JavaScript promise pending indefinitely.
+    private val pendingSignInvoke = AtomicReference<Invoke?>(null)
 
     private fun getKeyEntry(keyName: String): KeyStore.PrivateKeyEntry? = keyStore.getEntry(keyName, null) as? KeyStore.PrivateKeyEntry
 
@@ -646,7 +653,15 @@ class SecureKeysPlugin(
     }
 
     /**
-     * Shows BiometricPrompt and performs signing after successful authentication
+     * Shows BiometricPrompt and performs signing after successful authentication.
+     *
+     * The [invoke] is stored in [pendingSignInvoke] and cleared atomically on each
+     * callback path, ensuring it is resolved or rejected exactly once. If the Activity
+     * is recreated (e.g. screen rotation) while the prompt is visible, Android's
+     * BiometricPrompt will fire onAuthenticationError(ERROR_CANCELED), which clears the
+     * pending invoke via the normal rejection path. Any stale invoke that was not yet
+     * cleared (e.g. from a previous recreation that skipped the callback) is rejected
+     * immediately when the next sign request arrives.
      */
     private fun signWithBiometricPrompt(
         entry: KeyStore.PrivateKeyEntry,
@@ -661,6 +676,10 @@ class SecureKeysPlugin(
                     return
                 }
 
+        // Reject any previously-pending invoke that was never resolved (e.g. stale
+        // after an activity recreation that did not fire onAuthenticationError).
+        pendingSignInvoke.getAndSet(invoke)?.reject("Authentication cancelled: a new sign request superseded this one")
+
         // Create a new signature object for use with CryptoObject
         val signature = Signature.getInstance("SHA256withECDSA")
         signature.initSign(entry.privateKey)
@@ -674,12 +693,13 @@ class SecureKeysPlugin(
                 object : BiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                         super.onAuthenticationSucceeded(result)
+                        // Take ownership; if already cleared (e.g. concurrent cancellation) do nothing.
+                        val pending = pendingSignInvoke.getAndSet(null) ?: return
                         try {
-                            // Use the authenticated signature from the result
                             val authenticatedSignature =
                                 result.cryptoObject?.signature
                                     ?: run {
-                                        invoke.reject("No signature in crypto object after authentication")
+                                        pending.reject("No signature in crypto object after authentication")
                                         return
                                     }
 
@@ -687,12 +707,12 @@ class SecureKeysPlugin(
 
                             // Convert ByteArray to List<Int> (unsigned bytes 0-255) for proper JSON serialization
                             val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
-                            invoke.resolveObject(mapOf("signature" to signatureArray))
+                            pending.resolveObject(mapOf("signature" to signatureArray))
                         } catch (e: Exception) {
                             val detailedMessage = "Failed to sign after authentication: ${e.message}"
                             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
                             Log.e(TAG, "signWithKey (post-auth): $detailedMessage", e)
-                            invoke.reject(errorMessage)
+                            pending.reject(errorMessage)
                         }
                     }
 
@@ -701,16 +721,17 @@ class SecureKeysPlugin(
                         errString: CharSequence,
                     ) {
                         super.onAuthenticationError(errorCode, errString)
+                        val pending = pendingSignInvoke.getAndSet(null) ?: return
                         val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
                         val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
                         Log.e(TAG, "signWithKey: $detailedMessage")
-                        invoke.reject(errorMessage)
+                        pending.reject(errorMessage)
                     }
 
                     override fun onAuthenticationFailed() {
                         super.onAuthenticationFailed()
-                        // This is called when a biometric is valid but not recognized
-                        // Don't reject here - the user can try again
+                        // Called when a biometric is presented but not recognised.
+                        // Do not reject — the user can retry within the same prompt session.
                         Log.d(TAG, "signWithKey: Authentication attempt failed, user can retry")
                     }
                 },
