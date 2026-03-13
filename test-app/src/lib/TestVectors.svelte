@@ -218,7 +218,7 @@
 
   {#if vectorVerifyResults.length > 0}
     <div class="mt-2">
-      {#each vectorVerifyResults as result}
+      {#each vectorVerifyResults as result (result.label)}
         <div
           class="d-flex align-items-center gap-2 py-1 border-bottom"
           style="font-size: 0.8rem;"

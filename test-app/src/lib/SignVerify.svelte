@@ -128,7 +128,7 @@
           }}
         >
           <option value="">Choose a key...</option>
-          {#each keysList as key}
+          {#each keysList as key (key.keyName)}
             <option value={key.keyName}>{key.keyName}</option>
           {/each}
         </select>

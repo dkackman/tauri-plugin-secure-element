@@ -43,7 +43,9 @@ export default [
     plugins: {
       svelte,
     },
-    rules: {},
+    rules: {
+      "no-unused-vars": ["error", { args: "none" }],
+    },
   },
   {
     files: ["**/*.js", "**/*.mjs", "**/*.cjs"],

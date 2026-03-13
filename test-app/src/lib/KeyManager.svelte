@@ -145,7 +145,7 @@
       </div>
     {:else}
       <div class="list-group list-group-flush">
-        {#each keysList as key}
+        {#each keysList as key (key.keyName)}
           <div
             class="list-group-item px-0 {selectedKeyName === key.keyName
               ? 'bg-primary-subtle'

@@ -400,7 +400,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each testResults as test}
+          {#each testResults as test (test.name)}
             <TestResultRow {test} />
           {/each}
         </tbody>
@@ -417,7 +417,7 @@
     {#if testLog.length === 0}
       <span class="text-muted">Click "Run All Tests" to start...</span>
     {:else}
-      {#each testLog as line}
+      {#each testLog as line, i (i)}
         <div
           class={line.includes("PASSED")
             ? "text-success"
