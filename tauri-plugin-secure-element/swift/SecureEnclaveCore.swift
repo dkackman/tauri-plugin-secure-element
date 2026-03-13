@@ -333,11 +333,11 @@ public enum SecureEnclaveCore {
 
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
-                guard let keyRef = item[kSecValueRef as String] as? CFTypeRef else {
+                guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                      CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
                     continue
                 }
-                // swiftlint:disable:next force_cast
-                let privateKey = keyRef as! SecKey
+                let privateKey = keyRef as! SecKey // safe: type ID verified above
 
                 // Extract key name from kSecAttrLabel
                 let keyNameLabel = (item[kSecAttrLabel as String] as? String)?
@@ -385,8 +385,10 @@ public enum SecureEnclaveCore {
             return .failure(.keyNotFound(keyName))
         }
 
-        // swiftlint:disable:next force_cast
-        let privateKey = keyRef as! SecKey
+        guard CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
+            return .failure(.invalidData("Keychain returned unexpected type for key reference"))
+        }
+        let privateKey = keyRef as! SecKey // safe: type ID verified above
 
         // Create SHA256 digest using CryptoKit
         let digest = SHA256.hash(data: data)
@@ -443,11 +445,11 @@ public enum SecureEnclaveCore {
 
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
-                guard let keyRef = item[kSecValueRef as String] as? CFTypeRef else {
+                guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                      CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
                     continue
                 }
-                // swiftlint:disable:next force_cast
-                let privateKey = keyRef as! SecKey
+                let privateKey = keyRef as! SecKey // safe: type ID verified above
 
                 // Check if this key's public key matches
                 if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
