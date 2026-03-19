@@ -32,6 +32,10 @@ const NTE_NOT_FOUND: HRESULT = HRESULT(0x80090011u32 as i32);
 /// NCrypt error: the key does not exist in this provider (NTE_NO_KEY)
 const NTE_NO_KEY: HRESULT = HRESULT(0x8009000Du32 as i32);
 
+/// NCrypt error: access denied (NTE_PERM) - NGC provider returns this for
+/// keys that don't exist when probing without authentication
+const NTE_PERM: HRESULT = HRESULT(0x80090010u32 as i32);
+
 /// Key name prefix base for TPM keys without Windows Hello protection
 /// Full format: tauri_se_tpm_{app_id}_{key_name}
 const KEY_PREFIX_TPM_BASE: &str = "tauri_se_tpm_";
@@ -369,18 +373,23 @@ fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<Opt
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
         let key_name_h = HSTRING::from(full_name);
 
+        // Use NCRYPT_SILENT_FLAG to prevent Windows Hello UI prompts during
+        // provider probing. The NGC provider may return NTE_PERM (access denied)
+        // for keys that simply don't exist; we treat that as "not found" so the
+        // caller can fall through to the next provider.
         match NCryptOpenKey(
             provider.0,
             &mut key_handle,
             PCWSTR(key_name_h.as_ptr()),
             CERT_KEY_SPEC(0),
-            NCRYPT_FLAGS(0),
+            NCRYPT_SILENT_FLAG,
         ) {
             Ok(()) => Ok(Some(KeyHandle(key_handle))),
             Err(e)
                 if e.code() == NTE_BAD_KEYSET
                     || e.code() == NTE_NOT_FOUND
-                    || e.code() == NTE_NO_KEY =>
+                    || e.code() == NTE_NO_KEY
+                    || e.code() == NTE_PERM =>
             {
                 Ok(None)
             }
