@@ -549,6 +549,7 @@ class SecureKeysPlugin(
             val ret = JSObject()
             ret.put("publicKey", publicKeyBase64)
             ret.put("keyName", args.keyName)
+            ret.put("backing", if (usedStrongBox) "discrete" else "integrated")
             invoke.resolve(ret)
         } catch (e: Exception) {
             val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"

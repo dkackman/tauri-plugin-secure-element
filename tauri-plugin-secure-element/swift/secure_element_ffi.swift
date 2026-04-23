@@ -95,7 +95,8 @@ public func secureElementGenerateSecureKey(
 
     let result = SecureEnclaveCore.generateSecureKey(keyName: keyNameStr, authMode: authModeStr)
     let json = resultToJson(result) { response in
-        ["publicKey": response.publicKey, "keyName": response.keyName]
+        let backing = SecureEnclaveCore.checkSupport().strongest.rawValue
+        return ["publicKey": response.publicKey, "keyName": response.keyName, "backing": backing]
     }
 
     return toCString(json)

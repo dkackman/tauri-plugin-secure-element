@@ -15,16 +15,13 @@ export async function ping(value: string): Promise<string | null> {
 
 export type AuthenticationMode = "none" | "pinOrBiometric" | "biometricOnly";
 
-export type HardwareBacking =
-  | "secureEnclave"
-  | "strongBox"
-  | "tee"
-  | "ngc"
-  | "tpm";
-
 export interface GenerateSecureKeyResult {
   publicKey: string;
   keyName: string;
+  /** The actual hardware backing tier used for this key. On Android this may be
+   * `"integrated"` (TEE) even on a device that supports `"discrete"` (StrongBox),
+   * if StrongBox creation failed. Check this field to enforce a minimum tier. */
+  backing: SecureElementBacking;
 }
 
 export async function generateSecureKey(

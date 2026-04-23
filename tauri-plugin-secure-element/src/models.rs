@@ -44,6 +44,10 @@ pub struct GenerateSecureKeyResponse {
     pub public_key: String,
     /// The key name that was used
     pub key_name: String,
+    /// The actual hardware backing tier used for this key.
+    /// On Android this may differ from the device's strongest tier if StrongBox
+    /// creation failed and the plugin fell back to TEE.
+    pub backing: SecureElementBacking,
 }
 
 /// Request to list all available keys

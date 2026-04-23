@@ -60,9 +60,11 @@ class SecureEnclavePlugin: Plugin {
 
         switch SecureEnclaveCore.generateSecureKey(keyName: args.keyName, authMode: args.authMode) {
         case let .success(response):
+            let backing = SecureEnclaveCore.checkSupport().strongest.rawValue
             invoke.resolve([
                 "publicKey": response.publicKey,
                 "keyName": response.keyName,
+                "backing": backing,
             ])
         case let .failure(error):
             logError("generateSecureKey", error: error.localizedDescription)

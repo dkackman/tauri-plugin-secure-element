@@ -105,10 +105,11 @@ console.log(
 );
 
 // Generate a new secure key
-const { publicKey, keyName } = await generateSecureKey(
+const { publicKey, keyName, backing } = await generateSecureKey(
   "my-key-name",
   "pinOrBiometric" // or 'none' or 'biometricOnly'
 );
+console.log("Key backed by:", backing); // e.g. "discrete", "integrated", "firmware"
 
 // List all keys
 const keys = await listKeys();
@@ -202,6 +203,27 @@ Generates a new secure key in the device's secure element.
 interface GenerateSecureKeyResult {
   publicKey: string;
   keyName: string;
+  /** The actual hardware backing tier used for this key. */
+  backing: SecureElementBacking;
+}
+```
+
+The `backing` field reflects the tier that was **actually used**, not just what the device supports. This matters on Android: if the device has StrongBox (`"discrete"`) but key creation fails (e.g. quota exceeded), the plugin falls back to TEE (`"integrated"`) and `backing` will reflect that. On all other platforms, `backing` always matches `checkSecureElementSupport().strongest`.
+
+**Enforcing a minimum tier:**
+
+```typescript
+const result = await generateSecureKey("my-key", "pinOrBiometric");
+
+if (result.backing === "none") {
+  // No hardware security — delete the key and reject
+  await deleteKey(result.keyName);
+  throw new Error("Key was not created in hardware-backed storage");
+}
+
+if (result.backing !== "discrete") {
+  // Optionally enforce discrete (StrongBox / discrete TPM) for high-security use cases
+  console.warn(`Expected discrete backing, got ${result.backing}`);
 }
 ```
 
@@ -365,11 +387,13 @@ async function verifySignature(
 
 ### Android
 
-| Feature                   | Requirement | Notes                            |
-| ------------------------- | ----------- | -------------------------------- |
-| Hardware-backed keys      | API 23+     | TEE or StrongBox required        |
-| StrongBox                 | API 28+     | Falls back to TEE if unavailable |
-| `biometricOnly` auth mode | API 30+     | Rejected on older versions       |
+| Feature                   | Requirement | Notes                                                                 |
+| ------------------------- | ----------- | --------------------------------------------------------------------- |
+| Hardware-backed keys      | API 23+     | TEE or StrongBox required                                             |
+| StrongBox                 | API 28+     | Falls back to TEE if creation fails; check `backing` in the result    |
+| `biometricOnly` auth mode | API 30+     | Rejected on older versions                                            |
+
+When a StrongBox-capable device falls back to TEE, `generateSecureKey` still succeeds and `backing` will be `"integrated"` instead of `"discrete"`. Check `result.backing` if your application requires a specific minimum tier.
 
 ### iOS
 

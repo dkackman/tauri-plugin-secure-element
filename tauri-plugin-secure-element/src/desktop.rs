@@ -232,9 +232,13 @@ impl<R: Runtime> SecureElement<R> {
             let public_key_bytes = windows::export_public_key(&key)?;
             let public_key = base64::engine::general_purpose::STANDARD.encode(&public_key_bytes);
 
+            // Reflect the actual TPM backing tier (discrete, integrated, or firmware)
+            let backing = windows::get_secure_element_capabilities().strongest;
+
             Ok(GenerateSecureKeyResponse {
                 key_name: payload.key_name,
                 public_key,
+                backing,
             })
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]

@@ -131,8 +131,9 @@
           if (!result.keyName) throw new Error("Missing keyName in response");
           if (!result.publicKey)
             throw new Error("Missing publicKey in response");
+          if (!result.backing) throw new Error("Missing backing in response");
           testPublicKey = result.publicKey;
-          log(`  Created key: ${result.keyName}`);
+          log(`  Created key: ${result.keyName} (backing: ${result.backing})`);
         },
       },
       {
@@ -255,8 +256,8 @@
         fn: async () => {
           const workflowKey = `workflow_key_${Date.now()}`;
 
-          const { publicKey } = await generateSecureKey(workflowKey, "none");
-          log(`  Created: ${workflowKey}`);
+          const { publicKey, backing } = await generateSecureKey(workflowKey, "none");
+          log(`  Created: ${workflowKey} (backing: ${backing})`);
 
           const encoder = new TextEncoder();
           const message = "workflow test message";
