@@ -387,11 +387,11 @@ async function verifySignature(
 
 ### Android
 
-| Feature                   | Requirement | Notes                                                                 |
-| ------------------------- | ----------- | --------------------------------------------------------------------- |
-| Hardware-backed keys      | API 23+     | TEE or StrongBox required                                             |
-| StrongBox                 | API 28+     | Falls back to TEE if creation fails; check `backing` in the result    |
-| `biometricOnly` auth mode | API 30+     | Rejected on older versions                                            |
+| Feature                   | Requirement | Notes                                                              |
+| ------------------------- | ----------- | ------------------------------------------------------------------ |
+| Hardware-backed keys      | API 23+     | TEE or StrongBox required                                          |
+| StrongBox                 | API 28+     | Falls back to TEE if creation fails; check `backing` in the result |
+| `biometricOnly` auth mode | API 30+     | Rejected on older versions                                         |
 
 When a StrongBox-capable device falls back to TEE, `generateSecureKey` still succeeds and `backing` will be `"integrated"` instead of `"discrete"`. Check `result.backing` if your application requires a specific minimum tier.
 

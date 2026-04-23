@@ -256,7 +256,10 @@
         fn: async () => {
           const workflowKey = `workflow_key_${Date.now()}`;
 
-          const { publicKey, backing } = await generateSecureKey(workflowKey, "none");
+          const { publicKey, backing } = await generateSecureKey(
+            workflowKey,
+            "none"
+          );
           log(`  Created: ${workflowKey} (backing: ${backing})`);
 
           const encoder = new TextEncoder();

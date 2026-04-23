@@ -23,5 +23,8 @@
     "lint:rust": "pnpm -r lint:rust",
     "lint:swift": "pnpm -r lint:swift",
     "lint:kotlin": "pnpm -r lint:kotlin"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.1"
   }
 }
