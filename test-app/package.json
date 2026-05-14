@@ -39,8 +39,8 @@
     "globals": "^17.3.0",
     "lightningcss-win32-arm64-msvc": "1.32.0",
     "prettier-plugin-svelte": "^3.4.1",
-    "svelte": "^5.53.5",
+    "svelte": "^5.55.7",
     "svelte-eslint-parser": "^1.4.1",
-    "vite": "^8.0.10"
+    "vite": "^7.3.2"
   }
 }
