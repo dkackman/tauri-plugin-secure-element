@@ -83,8 +83,25 @@ fn ngc_key_name(sid: &str, app_id: &str, key_name: &str) -> String {
     )
 }
 
-/// Property to require gesture (biometric/PIN) for each operation
+/// Property to require gesture (biometric/PIN) for each operation.
+/// This is a *per-operation* property re-asserted on the key handle before every
+/// sign to force a fresh gesture (defeating the PIN cache). It is complementary to
+/// the persisted `NgcCacheType` auth-mandatory policy set at key creation.
 const NCRYPT_PIN_CACHE_IS_GESTURE_REQUIRED_PROPERTY: &str = "PinCacheIsGestureRequired";
+
+/// NGC cache-type property. Setting it to `AUTH_MANDATORY` before `NCryptFinalizeKey`
+/// persists an "authentication is required for every use" policy on the key itself.
+/// Once finalized the property is read-only and the OS enforces the requirement for
+/// any caller that opens the key — the durable equivalent of Apple's `SecAccessControl`
+/// flags and Android's `setUserAuthenticationRequired`. Newer Windows builds use the
+/// name "NgcCacheType"; older Windows 10 builds expect the legacy "NgcCacheTypeProperty"
+/// name, so we set the current name first and fall back to the legacy one.
+///
+/// Note: these NGC properties are only partially documented by Microsoft. This mirrors
+/// the established pattern used by Windows Hello consumers (e.g. KeePassWinHello).
+const NCRYPT_NGC_CACHE_TYPE_PROPERTY: &str = "NgcCacheType";
+const NCRYPT_NGC_CACHE_TYPE_PROPERTY_DEPRECATED: &str = "NgcCacheTypeProperty";
+const NCRYPT_NGC_CACHE_TYPE_AUTH_MANDATORY_FLAG: u32 = 0x0000_0001;
 
 /// Window handle property for UI parenting
 const NCRYPT_WINDOW_HANDLE_PROPERTY: &str = "HWND Handle";
@@ -557,6 +574,40 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
                 &format!("Failed to set key usage: {}", e),
                 "Failed to set key usage",
             ))));
+        }
+
+        // Persist an "authentication mandatory" policy on the key itself. This must be
+        // set before NCryptFinalizeKey; afterwards it is read-only and the OS enforces
+        // it for every caller that opens the key, so the requirement to authenticate on
+        // each use travels with the key rather than depending on this signing path.
+        //
+        // We fail key creation if neither the current nor the legacy property name is
+        // accepted: better to refuse than to hand back a `pinOrBiometric` key that does
+        // not actually enforce authentication.
+        let auth_mandatory = NCRYPT_NGC_CACHE_TYPE_AUTH_MANDATORY_FLAG.to_le_bytes();
+        let ngc_cache_type = HSTRING::from(NCRYPT_NGC_CACHE_TYPE_PROPERTY);
+        if NCryptSetProperty(
+            key.0.into(),
+            PCWSTR(ngc_cache_type.as_ptr()),
+            &auth_mandatory,
+            NCRYPT_FLAGS(0),
+        )
+        .is_err()
+        {
+            // Older Windows 10 builds expect the legacy property name.
+            let ngc_cache_type_legacy = HSTRING::from(NCRYPT_NGC_CACHE_TYPE_PROPERTY_DEPRECATED);
+            NCryptSetProperty(
+                key.0.into(),
+                PCWSTR(ngc_cache_type_legacy.as_ptr()),
+                &auth_mandatory,
+                NCRYPT_FLAGS(0),
+            )
+            .map_err(|e| {
+                crate::Error::Io(std::io::Error::other(sanitize_error(
+                    &format!("Failed to set NGC auth-mandatory policy: {}", e),
+                    "Failed to configure key authentication policy",
+                )))
+            })?;
         }
 
         if let Err(e) = NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) {
