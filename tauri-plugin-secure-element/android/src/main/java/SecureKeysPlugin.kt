@@ -20,7 +20,6 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
-import net.kackman.secureelement.BuildConfig
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -68,6 +67,26 @@ class SecureKeysPlugin(
 ) : Plugin(activity) {
     companion object {
         private const val TAG = "SecureKeysPlugin"
+
+        /**
+         * Prefix applied to every AndroidKeyStore alias so the plugin only ever
+         * enumerates, signs with, and deletes keys it created. The user-facing key
+         * name is the alias with this prefix removed; aliases created by other code
+         * in the same app (without this prefix) are invisible to the plugin.
+         *
+         * Internal visibility so the round-trip can be tested without an Android device.
+         */
+        internal const val KEY_ALIAS_PREFIX = "net.kackman.secureelement."
+
+        /** Maps a user-facing key name to its namespaced keystore alias. */
+        internal fun aliasFor(keyName: String): String = KEY_ALIAS_PREFIX + keyName
+
+        /**
+         * Recovers the user-facing key name from a keystore alias, or null if the
+         * alias is not in this plugin's namespace.
+         */
+        internal fun keyNameFromAlias(alias: String): String? =
+            if (alias.startsWith(KEY_ALIAS_PREFIX)) alias.removePrefix(KEY_ALIAS_PREFIX) else null
 
         /**
          * Converts a BigInteger to exactly 32 bytes.
@@ -155,7 +174,7 @@ class SecureKeysPlugin(
         operation: String,
         invoke: Invoke,
     ): Boolean {
-        if (keyStore.containsAlias(keyName)) {
+        if (keyStore.containsAlias(aliasFor(keyName))) {
             val message = sanitizeErrorWithKeyName(keyName, "Key already exists")
             Log.e(TAG, "$operation: Key already exists: $keyName")
             invoke.reject(message)
@@ -169,7 +188,7 @@ class SecureKeysPlugin(
         operation: String,
         invoke: Invoke,
     ): Boolean {
-        if (!keyStore.containsAlias(keyName)) {
+        if (!keyStore.containsAlias(aliasFor(keyName))) {
             val message = sanitizeErrorWithKeyName(keyName, "Key not found")
             Log.e(TAG, "$operation: Key not found: $keyName")
             invoke.reject(message)
@@ -490,7 +509,8 @@ class SecureKeysPlugin(
             var keyPairGenerator =
                 KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
 
-            var keyGenParameterSpec = buildKeyGenParameterSpec(args.keyName, authMode, useSecureElement)
+            val alias = aliasFor(args.keyName)
+            var keyGenParameterSpec = buildKeyGenParameterSpec(alias, authMode, useSecureElement)
 
             // Track whether we successfully used StrongBox
             var usedStrongBox = useSecureElement
@@ -512,7 +532,7 @@ class SecureKeysPlugin(
 
                     // Clean up any partial key entry left by the failed StrongBox attempt
                     try {
-                        keyStore.deleteEntry(args.keyName)
+                        keyStore.deleteEntry(alias)
                     } catch (deleteEx: Exception) {
                         Log.w(TAG, "generateSecureKey: Failed to clean up partial StrongBox key", deleteEx)
                     }
@@ -524,7 +544,7 @@ class SecureKeysPlugin(
                             "AndroidKeyStore",
                         )
 
-                    keyGenParameterSpec = buildKeyGenParameterSpec(args.keyName, authMode, false)
+                    keyGenParameterSpec = buildKeyGenParameterSpec(alias, authMode, false)
 
                     keyPairGenerator.initialize(keyGenParameterSpec)
                     keyPairGenerator.generateKeyPair()
@@ -538,7 +558,7 @@ class SecureKeysPlugin(
 
             // Get the public key
             val entry =
-                getKeyEntry(args.keyName)
+                getKeyEntry(alias)
                     ?: throw Exception("Failed to get key entry after key generation")
 
             val publicKeyBase64 =
@@ -566,15 +586,18 @@ class SecureKeysPlugin(
             val aliases = keyStore.aliases()
 
             while (aliases.hasMoreElements()) {
-                val keyName = aliases.nextElement() as String
+                val alias = aliases.nextElement() as String
+
+                // Only surface keys this plugin created; recover the user-facing name.
+                val userKeyName = keyNameFromAlias(alias) ?: continue
 
                 // Apply key name filter if provided
-                if (args.keyName != null && args.keyName != keyName) {
+                if (args.keyName != null && args.keyName != userKeyName) {
                     continue
                 }
 
                 // Get the public key
-                val entry = getKeyEntry(keyName) ?: continue
+                val entry = getKeyEntry(alias) ?: continue
                 val publicKeyBase64 = exportPublicKeyBase64(entry) ?: continue
 
                 // Apply public key filter if provided
@@ -584,7 +607,7 @@ class SecureKeysPlugin(
 
                 val keyInfo =
                     mapOf(
-                        "keyName" to keyName,
+                        "keyName" to userKeyName,
                         "publicKey" to publicKeyBase64,
                     )
                 keys.add(keyInfo)
@@ -768,7 +791,7 @@ class SecureKeysPlugin(
 
             // Get the private key entry
             val entry =
-                getKeyEntry(args.keyName)
+                getKeyEntry(aliasFor(args.keyName))
                     ?: run {
                         invoke.reject("Failed to get key entry")
                         return
@@ -817,9 +840,9 @@ class SecureKeysPlugin(
 
             // If keyName is provided, delete by name (fast path)
             if (args.keyName != null) {
-                val keyName = args.keyName!!
+                val alias = aliasFor(args.keyName!!)
 
-                if (!keyStore.containsAlias(keyName)) {
+                if (!keyStore.containsAlias(alias)) {
                     // Key doesn't exist, but we'll return success anyway (idempotent)
                     val ret = JSObject()
                     ret.put("success", true)
@@ -828,7 +851,7 @@ class SecureKeysPlugin(
                 }
 
                 try {
-                    keyStore.deleteEntry(keyName)
+                    keyStore.deleteEntry(alias)
                     val ret = JSObject()
                     ret.put("success", true)
                     invoke.resolve(ret)
@@ -852,16 +875,19 @@ class SecureKeysPlugin(
             var found = false
 
             while (aliases.hasMoreElements()) {
-                val keyName = aliases.nextElement() as String
+                val alias = aliases.nextElement() as String
+
+                // Only consider keys this plugin created.
+                if (keyNameFromAlias(alias) == null) continue
 
                 // Get the public key
-                val entry = getKeyEntry(keyName) ?: continue
+                val entry = getKeyEntry(alias) ?: continue
                 val publicKeyBase64 = exportPublicKeyBase64(entry) ?: continue
 
                 // Check if this key matches the target public key
                 if (publicKeyBase64 == targetPublicKey) {
                     try {
-                        keyStore.deleteEntry(keyName)
+                        keyStore.deleteEntry(alias)
                         found = true
                         break
                     } catch (e: Exception) {

@@ -175,11 +175,41 @@ public enum SecureEnclaveCore {
         return flags
     }
 
-    /// Creates a base query dictionary for Secure Enclave key operations
+    // MARK: - Key Namespacing
+
+    /// Prefix applied to every key's `kSecAttrApplicationTag` so the plugin only
+    /// ever enumerates, signs with, and deletes keys that it created. The
+    /// user-facing key name is the tag with this prefix removed. Secure Enclave
+    /// keys created by other code in the same app (without this prefix) are
+    /// invisible to this plugin.
+    ///
+    /// `kSecAttrApplicationTag` is Apple's idiomatic per-key identifier for
+    /// Secure Enclave keys; `kSecAttrLabel` is retained only as a human-readable
+    /// label (e.g. for Keychain Access on macOS) and is not used for matching.
+    private static let keyTagPrefix = "net.kackman.secureelement."
+
+    /// Builds the `kSecAttrApplicationTag` value (as `Data`) for a user-facing key name.
+    public static func applicationTag(for keyName: String) -> Data {
+        Data((keyTagPrefix + keyName).utf8)
+    }
+
+    /// Recovers the user-facing key name from a `kSecAttrApplicationTag` value,
+    /// or `nil` if the tag is not in this plugin's namespace.
+    public static func decodeKeyName(fromTag tag: Data) -> String? {
+        guard let full = String(data: tag, encoding: .utf8),
+              full.hasPrefix(keyTagPrefix) else {
+            return nil
+        }
+        return String(full.dropFirst(keyTagPrefix.count))
+    }
+
+    /// Creates a base query dictionary for Secure Enclave key operations.
+    /// Keys are matched by their namespaced `kSecAttrApplicationTag`, so this only
+    /// ever resolves keys created by this plugin.
     public static func createKeyQuery(keyName: String, returnRef: Bool = true) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrLabel as String: keyName,
+            kSecAttrApplicationTag as String: applicationTag(for: keyName),
             kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
         ]
         if returnRef {
@@ -294,6 +324,7 @@ public enum SecureEnclaveCore {
             kSecAttrLabel as String: keyName,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
+                kSecAttrApplicationTag as String: applicationTag(for: keyName),
                 kSecAttrAccessControl as String: accessControl,
             ],
         ]
@@ -333,17 +364,19 @@ public enum SecureEnclaveCore {
 
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
+                // Only surface keys this plugin created, identified by their tag
+                // namespace. The user-facing name is the tag minus the prefix.
+                guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
+                      let foundKeyName = decodeKeyName(fromTag: tagData) else {
+                    continue
+                }
+
                 guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
                       CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
                     continue
                 }
                 // swiftlint:disable:next force_cast
                 let privateKey = keyRef as! SecKey // safe: type ID verified above
-
-                // Extract key name from kSecAttrLabel
-                let keyNameLabel = (item[kSecAttrLabel as String] as? String)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let foundKeyName = keyNameLabel?.isEmpty == false ? keyNameLabel! : "<unnamed>"
 
                 // Apply name filter
                 if let filterName = keyName, filterName != foundKeyName {
@@ -447,6 +480,12 @@ public enum SecureEnclaveCore {
 
         if status == errSecSuccess, let items = result as? [[String: Any]] {
             for item in items {
+                // Only consider keys this plugin created.
+                guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
+                      let foundKeyName = decodeKeyName(fromTag: tagData) else {
+                    continue
+                }
+
                 guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
                       CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
                     continue
@@ -457,11 +496,6 @@ public enum SecureEnclaveCore {
                 // Check if this key's public key matches
                 if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
                    publicKeyBase64 == targetPublicKey {
-                    // Extract key name for deletion
-                    let keyNameLabel = (item[kSecAttrLabel as String] as? String)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let foundKeyName = keyNameLabel?.isEmpty == false ? keyNameLabel! : "<unnamed>"
-
                     let deleteQuery = createKeyQuery(keyName: foundKeyName, returnRef: false)
                     let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
 
