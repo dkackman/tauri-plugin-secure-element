@@ -586,15 +586,16 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
         // not actually enforce authentication.
         let auth_mandatory = NCRYPT_NGC_CACHE_TYPE_AUTH_MANDATORY_FLAG.to_le_bytes();
         let ngc_cache_type = HSTRING::from(NCRYPT_NGC_CACHE_TYPE_PROPERTY);
-        if NCryptSetProperty(
+        if let Err(primary_err) = NCryptSetProperty(
             key.0.into(),
             PCWSTR(ngc_cache_type.as_ptr()),
             &auth_mandatory,
             NCRYPT_FLAGS(0),
-        )
-        .is_err()
-        {
-            // Older Windows 10 builds expect the legacy property name.
+        ) {
+            // Older Windows 10 builds expect the legacy property name. If that also
+            // fails, surface BOTH errors: on modern Windows the primary (current-name)
+            // failure is the informative one, and the legacy name is expected to be
+            // rejected as unknown — so reporting only the legacy error would mislead.
             let ngc_cache_type_legacy = HSTRING::from(NCRYPT_NGC_CACHE_TYPE_PROPERTY_DEPRECATED);
             NCryptSetProperty(
                 key.0.into(),
@@ -602,9 +603,12 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
                 &auth_mandatory,
                 NCRYPT_FLAGS(0),
             )
-            .map_err(|e| {
+            .map_err(|legacy_err| {
                 crate::Error::Io(std::io::Error::other(sanitize_error(
-                    &format!("Failed to set NGC auth-mandatory policy: {}", e),
+                    &format!(
+                        "Failed to set NGC auth-mandatory policy (NgcCacheType: {}; NgcCacheTypeProperty: {})",
+                        primary_err, legacy_err
+                    ),
                     "Failed to configure key authentication policy",
                 )))
             })?;
