@@ -29,7 +29,7 @@
   "devDependencies": {
     "@esbuild/win32-arm64": "^0.27.3",
     "@eslint/js": "^10.0.1",
-    "@rolldown/binding-win32-arm64-msvc": "1.0.0-rc.9",
+    "@rolldown/binding-win32-arm64-msvc": "1.0.0-rc.17",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tauri-apps/cli": "^2.10.0",
     "@tauri-apps/cli-win32-arm64-msvc": "^2.10.0",

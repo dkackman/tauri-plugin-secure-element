@@ -346,7 +346,17 @@ pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, 
             // (corrupted key, service fault, etc.) is propagated immediately —
             // silently retrying in TPM could return a wrong key or hide the real
             // cause behind a misleading "key not found in TPM" error.
-            if let Some(key) = try_open_key(&ngc_provider, &ngc_full_name)? {
+            //
+            // The probe is silent purely to detect provider ownership without any
+            // chance of a UI prompt. The handle we return, however, must be opened
+            // in a NON-silent context: NGC keys carry a persisted auth-mandatory
+            // policy, so NCryptSignHash needs to display the Windows Hello gesture.
+            // A handle opened with NCRYPT_SILENT_FLAG would make signing fail with
+            // NTE_SILENT_CONTEXT (0x80090022). Opening non-silently does not itself
+            // prompt — only the subsequent crypto operation does. The probe handle
+            // is dropped immediately; we re-open for real use.
+            if try_open_key(&ngc_provider, &ngc_full_name)?.is_some() {
+                let key = open_key_internal(&ngc_provider, &ngc_full_name)?;
                 return Ok((key, KeyProviderType::Ngc));
             }
         }
@@ -438,11 +448,14 @@ fn key_exists(app_id: &str, key_name: &str) -> bool {
     false
 }
 
-/// Creates a new P-256 ECDSA key with the appropriate provider based on auth mode
+/// Creates a new P-256 ECDSA key with the appropriate provider based on auth mode.
+/// `hwnd` parents the one-time Windows Hello dialog shown when finalizing an NGC
+/// (`pinOrBiometric`) key; it is ignored for TPM (`none`) keys, which never prompt.
 pub fn create_key(
     app_id: &str,
     key_name: &str,
     auth_mode: &crate::models::AuthenticationMode,
+    hwnd: Option<isize>,
 ) -> crate::Result<KeyHandle> {
     // Check if a key with this name already exists in either provider
     if key_exists(app_id, key_name) {
@@ -467,7 +480,7 @@ pub fn create_key(
                     "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating keys with authentication.",
                 )));
             }
-            create_ngc_key(app_id, key_name)
+            create_ngc_key(app_id, key_name, hwnd)
         }
         crate::models::AuthenticationMode::None => create_tpm_key(app_id, key_name),
     }
@@ -528,7 +541,7 @@ fn get_current_user_sid() -> crate::Result<String> {
     }
 }
 
-fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
+fn create_ngc_key(app_id: &str, key_name: &str, hwnd: Option<isize>) -> crate::Result<KeyHandle> {
     let provider = open_ngc_provider()?;
 
     let sid = get_current_user_sid()?;
@@ -610,6 +623,17 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             })?;
         }
 
+        // Parent and label the one-time creation gesture (see below) so it appears
+        // attached to the app window rather than as a bare system dialog.
+        apply_ui_context(&key, hwnd, "Authenticate to create a secure signing key");
+
+        // Finalize the key in a NON-silent context. Because the auth-mandatory cache
+        // policy was set above, the NGC KSP binds the key to the user's Windows Hello
+        // credential and requires a one-time gesture here to prove user presence at
+        // creation. Passing NCRYPT_SILENT_FLAG fails with NTE_SILENT_CONTEXT
+        // (0x80090022) — verified empirically. This one-time creation prompt is
+        // inherent to persisting per-use authentication on Windows NGC keys; it is the
+        // price of the OS enforcing the policy for every caller (the S1 review finding).
         if let Err(e) = NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) {
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("NCryptFinalizeKey failed: {}", e),
@@ -763,6 +787,58 @@ pub fn sign_hash(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
     sign_hash_internal(key, hash)
 }
 
+/// Applies Windows Hello UI context to a key handle: parents the dialog to the
+/// app window and sets the prompt message. Any operation on this handle that
+/// triggers a Hello gesture (NCryptFinalizeKey for an auth-mandatory key, or
+/// NCryptSignHash) will then display a parented, labeled dialog.
+///
+/// Failures are non-fatal: the dialog still appears, just with default
+/// positioning/message. Must be called within an `unsafe` block and before the
+/// operation that triggers the gesture.
+unsafe fn apply_ui_context(key: &KeyHandle, hwnd: Option<isize>, message: &str) {
+    if let Some(handle) = hwnd {
+        let hwnd_property = HSTRING::from(NCRYPT_WINDOW_HANDLE_PROPERTY);
+        let hwnd_bytes = handle.to_ne_bytes();
+
+        if let Err(e) = NCryptSetProperty(
+            key.0.into(),
+            PCWSTR(hwnd_property.as_ptr()),
+            &hwnd_bytes,
+            NCRYPT_FLAGS(0),
+        ) {
+            // Log but don't fail - dialog will still work, just with default positioning
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Warning: Failed to set window handle property for Windows Hello dialog: {}",
+                e
+            );
+        }
+    } else {
+        #[cfg(debug_assertions)]
+        eprintln!("Warning: No HWND available for Windows Hello dialog parenting");
+    }
+
+    let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
+    let context_bytes: Vec<u8> = message
+        .encode_utf16()
+        .flat_map(|c| c.to_le_bytes())
+        .collect();
+
+    if let Err(e) = NCryptSetProperty(
+        key.0.into(),
+        PCWSTR(context_property.as_ptr()),
+        &context_bytes,
+        NCRYPT_FLAGS(0),
+    ) {
+        // Log but don't fail - dialog will still work with default message
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "Warning: Failed to set context message for Windows Hello dialog: {}",
+            e
+        );
+    }
+}
+
 /// Signs data with the given NGC key, triggering Windows Hello authentication
 /// The hwnd parameter is used to parent the Windows Hello dialog
 pub fn sign_hash_with_window(
@@ -771,47 +847,7 @@ pub fn sign_hash_with_window(
     hwnd: Option<isize>,
 ) -> crate::Result<Vec<u8>> {
     unsafe {
-        if let Some(handle) = hwnd {
-            let hwnd_property = HSTRING::from(NCRYPT_WINDOW_HANDLE_PROPERTY);
-            let hwnd_bytes = handle.to_ne_bytes();
-
-            if let Err(e) = NCryptSetProperty(
-                key.0.into(),
-                PCWSTR(hwnd_property.as_ptr()),
-                &hwnd_bytes,
-                NCRYPT_FLAGS(0),
-            ) {
-                // Log but don't fail - dialog will still work, just with default positioning
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "Warning: Failed to set window handle property for Windows Hello dialog: {}",
-                    e
-                );
-            }
-        } else {
-            #[cfg(debug_assertions)]
-            eprintln!("Warning: No HWND available for Windows Hello dialog parenting");
-        }
-
-        let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
-        let context_bytes: Vec<u8> = "Authenticate to sign data"
-            .encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
-            .collect();
-
-        if let Err(e) = NCryptSetProperty(
-            key.0.into(),
-            PCWSTR(context_property.as_ptr()),
-            &context_bytes,
-            NCRYPT_FLAGS(0),
-        ) {
-            // Log but don't fail - dialog will still work with default message
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "Warning: Failed to set context message for Windows Hello dialog: {}",
-                e
-            );
-        }
+        apply_ui_context(key, hwnd, "Authenticate to sign data");
 
         // Set gesture required property to force biometric/PIN prompt
         let gesture_property = HSTRING::from(NCRYPT_PIN_CACHE_IS_GESTURE_REQUIRED_PROPERTY);

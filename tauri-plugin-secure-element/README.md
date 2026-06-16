@@ -380,6 +380,7 @@ async function verifySignature(
 
 - Windows 11 (build 22000 or higher) requires TPM 2.0
 - TPM 2.0 is supported on Windows 10 (since version 1507)
+- **`pinOrBiometric` keys prompt for Windows Hello once at creation.** Unlike iOS/macOS and Android — where the per-use authentication policy is declarative and key generation is silent — Windows binds the key to the user's Windows Hello credential when the key is finalized, and the OS requires a one-time gesture (PIN or biometric) at that moment. This is what makes the "authenticate on every use" policy travel with the key and be enforced for every caller (not just this plugin). After creation, each signing operation prompts again for a fresh gesture. There is no supported way to persist this policy without the one-time creation prompt.
 
 ### macOS
 

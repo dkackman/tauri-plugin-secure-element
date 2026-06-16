@@ -225,8 +225,12 @@ impl<R: Runtime> SecureElement<R> {
 
             let app_id = self.get_app_id();
 
+            // HWND parents the one-time Windows Hello dialog shown when finalizing an
+            // NGC (pinOrBiometric) key. Ignored for TPM keys, which never prompt.
+            let hwnd = self.get_main_window_hwnd();
+
             // Create the key with the appropriate provider based on auth mode
-            let key = windows::create_key(&app_id, &payload.key_name, &payload.auth_mode)?;
+            let key = windows::create_key(&app_id, &payload.key_name, &payload.auth_mode, hwnd)?;
 
             // Export the public key
             let public_key_bytes = windows::export_public_key(&key)?;
