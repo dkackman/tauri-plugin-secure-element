@@ -11,4 +11,3 @@ commands.allow = ["list_keys"]
 identifier = "deny-list-keys"
 description = "Denies the list_keys command without any pre-configured scope."
 commands.deny = ["list_keys"]
-

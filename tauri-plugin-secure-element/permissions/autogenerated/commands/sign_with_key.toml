@@ -11,4 +11,3 @@ commands.allow = ["sign_with_key"]
 identifier = "deny-sign-with-key"
 description = "Denies the sign_with_key command without any pre-configured scope."
 commands.deny = ["sign_with_key"]
-

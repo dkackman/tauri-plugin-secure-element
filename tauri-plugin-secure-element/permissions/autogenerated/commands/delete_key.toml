@@ -11,4 +11,3 @@ commands.allow = ["delete_key"]
 identifier = "deny-delete-key"
 description = "Denies the delete_key command without any pre-configured scope."
 commands.deny = ["delete_key"]
-

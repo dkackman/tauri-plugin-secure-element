@@ -11,4 +11,3 @@ commands.allow = ["generate_secure_key"]
 identifier = "deny-generate-secure-key"
 description = "Denies the generate_secure_key command without any pre-configured scope."
 commands.deny = ["generate_secure_key"]
-
