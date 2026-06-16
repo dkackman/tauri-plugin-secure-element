@@ -13,6 +13,18 @@ export async function ping(value: string): Promise<string | null> {
   }).then((r) => (r.value ? r.value : null));
 }
 
+/**
+ * Controls whether the secure element key requires user authentication before signing.
+ *
+ * - `"pinOrBiometric"` — requires Windows Hello (PIN or biometric) on Windows, or device
+ *   credential on iOS/Android. Recommended for most use cases.
+ * - `"biometricOnly"` — biometric-only (not supported on Windows; use `"pinOrBiometric"`).
+ * - `"none"` — no authentication prompt required at signing time. On Windows this creates
+ *   a Platform Crypto Provider (TPM) key that any process running as the same user can use
+ *   silently, given knowledge of the key name. Choose this only when silent background
+ *   signing is an intentional requirement and you accept that user-level process isolation
+ *   is the only boundary protecting the key.
+ */
 export type AuthenticationMode = "none" | "pinOrBiometric" | "biometricOnly";
 
 export interface GenerateSecureKeyResult {

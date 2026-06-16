@@ -81,6 +81,15 @@ pub fn validate_public_key_filter(public_key: &str) -> Result<String, Error> {
         ));
     }
 
+    // Reject control characters (including NUL). A NUL byte would be silently
+    // converted to a null pointer on the macOS FFI path, which Swift interprets
+    // as "no filter" — returning all keys instead of none.
+    if trimmed.bytes().any(|b| b < 0x20 || b == 0x7F) {
+        return Err(Error::Validation(
+            "Public key filter contains invalid control characters".to_string(),
+        ));
+    }
+
     // len() counts bytes, not Unicode scalar values. For the intended input
     // (base64 ASCII), bytes and characters are equivalent, so this is correct.
     // Non-ASCII characters will also be rejected by any eventual exact-match
@@ -203,5 +212,12 @@ mod tests {
         assert!(validate_public_key_filter("   ").is_err());
         assert!(validate_public_key_filter("short").is_err());
         assert!(validate_public_key_filter(&"A".repeat(257)).is_err());
+
+        // Control characters (including NUL) must be rejected — a NUL byte would
+        // silently become "no filter" on the macOS FFI path.
+        assert!(validate_public_key_filter("dGVzdA==\x00extra").is_err());
+        assert!(validate_public_key_filter("dGVzdA==\x01extra").is_err());
+        assert!(validate_public_key_filter("dGVzdA==\x1Fextra").is_err());
+        assert!(validate_public_key_filter("dGVzdA==\x7Fextra").is_err());
     }
 }
