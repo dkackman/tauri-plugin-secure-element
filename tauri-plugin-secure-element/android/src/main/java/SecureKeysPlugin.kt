@@ -314,12 +314,26 @@ class SecureKeysPlugin(
                 if (privateKey != null) {
                     val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
                     val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-                    return keyInfo.isInsideSecureHardware
+                    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        // getSecurityLevel() replaces the deprecated isInsideSecureHardware on API 31+
+                        when (keyInfo.securityLevel) {
+                            KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
+                            KeyProperties.SECURITY_LEVEL_STRONGBOX,
+                            KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
+                            -> true
+                            else -> false
+                        }
+                    } else {
+                        @Suppress("DEPRECATION")
+                        keyInfo.isInsideSecureHardware
+                    }
                 }
             }
 
-            // If we can't check KeyInfo (API < 23), assume TEE is available if key creation succeeded
-            // and we're on API 18+ (hardware-backed keystore was introduced)
+            // API < 23 (Marshmallow) predates KeyInfo, so the backing cannot be
+            // inspected at all. Hardware-backed keystore exists from API 18+, but a
+            // software-only device on these old API levels could still be reported
+            // as TEE here. This is a best-effort assumption for legacy devices.
             return true
         } catch (e: Exception) {
             Log.e(TAG, "TEE check failed", e)

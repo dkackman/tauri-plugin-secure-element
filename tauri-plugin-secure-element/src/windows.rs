@@ -477,9 +477,9 @@ fn get_current_user_sid() -> crate::Result<String> {
     unsafe {
         let mut raw_token = HANDLE::default();
         OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw_token).map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to open process token: {}",
-                e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to open process token: {}", e),
+                "Failed to determine user identity",
             )))
         })?;
         let token_handle = std::os::windows::io::OwnedHandle::from_raw_handle(raw_token.0);
@@ -500,27 +500,27 @@ fn get_current_user_sid() -> crate::Result<String> {
         );
 
         result.map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to get token information: {}",
-                e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to get token information: {}", e),
+                "Failed to determine user identity",
             )))
         })?;
 
         let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
         let mut sid_string_ptr = windows::core::PWSTR::null();
         ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string_ptr).map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to convert SID to string: {}",
-                e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to convert SID to string: {}", e),
+                "Failed to determine user identity",
             )))
         })?;
 
         let _sid_guard = HLocalGuard::from_pwstr(sid_string_ptr);
 
         let sid_string = sid_string_ptr.to_string().map_err(|e| {
-            crate::Error::Io(std::io::Error::other(format!(
-                "Failed to read SID string: {}",
-                e
+            crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to read SID string: {}", e),
+                "Failed to determine user identity",
             )))
         })?;
 

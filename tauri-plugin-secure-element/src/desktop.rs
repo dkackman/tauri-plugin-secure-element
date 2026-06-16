@@ -173,14 +173,24 @@ impl<R: Runtime> SecureElement<R> {
         })
     }
 
-    /// Gets the HWND from the main window for Windows Hello UI parenting
+    /// Gets the HWND to parent the Windows Hello prompt to.
+    ///
+    /// Prefers the currently focused window (the one the user is interacting
+    /// with), then a window conventionally labeled `"main"`, then any window.
+    /// `webview_windows()` returns a `HashMap`, so iteration order is otherwise
+    /// nondeterministic and the modal could attach to the wrong window in
+    /// multi-window apps.
     #[cfg(target_os = "windows")]
     fn get_main_window_hwnd(&self) -> Option<isize> {
         use raw_window_handle::HasWindowHandle;
         use tauri::Manager;
 
         let webview_windows = self.0.webview_windows();
-        let window = webview_windows.values().next()?;
+        let window = webview_windows
+            .values()
+            .find(|w| w.is_focused().unwrap_or(false))
+            .or_else(|| webview_windows.get("main"))
+            .or_else(|| webview_windows.values().next())?;
         let handle = window.window_handle().ok()?;
         windows::hwnd_from_raw(handle.as_raw())
     }
