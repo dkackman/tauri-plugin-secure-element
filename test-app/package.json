@@ -27,7 +27,7 @@
     "tauri-plugin-secure-element-api": "file:../tauri-plugin-secure-element"
   },
   "devDependencies": {
-    "@esbuild/win32-arm64": "^0.27.3",
+    "@esbuild/win32-arm64": "^0.28.1",
     "@eslint/js": "^10.0.1",
     "@rolldown/binding-win32-arm64-msvc": "1.0.0-rc.9",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
@@ -38,7 +38,7 @@
     "eslint-plugin-svelte": "^3.15.0",
     "globals": "^17.3.0",
     "lightningcss-win32-arm64-msvc": "1.32.0",
-    "prettier-plugin-svelte": "^3.4.1",
+    "prettier-plugin-svelte": "^4.1.0",
     "svelte": "^5.53.5",
     "svelte-eslint-parser": "^1.4.1",
     "vite": "^8.0.10"
