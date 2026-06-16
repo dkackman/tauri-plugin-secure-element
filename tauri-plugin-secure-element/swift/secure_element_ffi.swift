@@ -95,7 +95,11 @@ public func secureElementGenerateSecureKey(
 
     let result = SecureEnclaveCore.generateSecureKey(keyName: keyNameStr, authMode: authModeStr)
     let json = resultToJson(result) { response in
-        let backing = SecureEnclaveCore.checkSupport().strongest.rawValue
+        // The key was just created in the Secure Enclave, so availability is
+        // already proven — derive the backing tier from platform detection
+        // rather than calling checkSupport(), which would create an extra
+        // ephemeral SE test key on every key generation.
+        let backing = SecureEnclaveCore.strongestBacking().rawValue
         return ["publicKey": response.publicKey, "keyName": response.keyName, "backing": backing]
     }
 

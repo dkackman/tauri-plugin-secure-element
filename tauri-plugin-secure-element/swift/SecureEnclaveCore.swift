@@ -533,6 +533,30 @@ public enum SecureEnclaveCore {
         }
     #endif
 
+    /// Detects the (discrete, integrated) Secure Enclave tiers available on the
+    /// current platform from hardware/OS facts alone — no key creation.
+    static func detectSecureElementTiers() -> (discrete: Bool, integrated: Bool) {
+        #if os(iOS) || os(watchOS) || os(tvOS)
+            // iOS devices always have an integrated Secure Enclave on the SoC
+            return (discrete: false, integrated: true)
+        #elseif os(macOS)
+            return detectMacSecureElementType()
+        #else
+            return (discrete: false, integrated: false)
+        #endif
+    }
+
+    /// The strongest backing tier from platform detection alone, with no test
+    /// keygen. Valid only once Secure Enclave availability has already been
+    /// established (e.g. a key was just created successfully). Use this instead
+    /// of `checkSupport()` when you only need to label a key's backing tier, to
+    /// avoid the ephemeral test key that `checkSupport()` creates to probe
+    /// availability.
+    static func strongestBacking() -> SecureElementBacking {
+        let (discrete, integrated) = detectSecureElementTiers()
+        return discrete ? .discrete : (integrated ? .integrated : .none)
+    }
+
     /// Check if Secure Enclave is supported on this device
     public static func checkSupport() -> SupportResponse {
         // Try to create access control with basic flags
@@ -585,17 +609,8 @@ public enum SecureEnclaveCore {
         // This uses LAContext to verify both hardware availability AND enrollment
         let canEnforceBiometric = checkBiometricAvailability() == nil
 
-        // Determine the type of secure element
-        #if os(iOS) || os(watchOS) || os(tvOS)
-            // iOS devices always have an integrated Secure Enclave on the SoC
-            let discrete = false
-            let integrated = true
-        #elseif os(macOS)
-            let (discrete, integrated) = detectMacSecureElementType()
-        #else
-            let discrete = false
-            let integrated = false
-        #endif
+        // Determine the type of secure element (hardware/OS facts, no keygen)
+        let (discrete, integrated) = detectSecureElementTiers()
 
         // Determine strongest backing (discrete > integrated > firmware > none)
         let strongest: SecureElementBacking = discrete ? .discrete : (integrated ? .integrated : .none)
