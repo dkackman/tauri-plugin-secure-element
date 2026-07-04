@@ -23,7 +23,7 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-os": "^2.3.2",
     "bootstrap": "^5.3.8",
-    "lucide-svelte": "^1.0.1",
+    "@lucide/svelte": "^1.0.1",
     "tauri-plugin-secure-element-api": "file:../tauri-plugin-secure-element"
   },
   "devDependencies": {
