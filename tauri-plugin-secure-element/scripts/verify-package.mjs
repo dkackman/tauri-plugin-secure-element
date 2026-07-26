@@ -1,7 +1,7 @@
 // Verifies that every entry point package.json declares actually ships in the
 // tarball npm would publish.
 //
-// This exists because 0.1.0-beta.5 published with "types": "./dist-js/index.d.ts"
+// This exists because 0.1.0-beta.6 published with "types": "./dist-js/index.d.ts"
 // while the declaration file had landed at dist-js/guest-js/index.d.ts. A
 // TypeScript upgrade changed how tsc infers rootDir, the emit path moved, and
 // nothing failed: rollup succeeded, prepublishOnly succeeded, and the broken

@@ -29,7 +29,7 @@ Already fixed (see git history):
   `rootDir`, so TypeScript inferred it — and that inference shifted under a newer
   compiler, moving declarations from `dist-js/index.d.ts` to
   `dist-js/guest-js/index.d.ts` while `package.json` `"types"` still pointed at the
-  former. **`0.1.0-beta.5` is live on npm with types that do not resolve at all**
+  former. **`0.1.0-beta.6` is live on npm with types that do not resolve at all**
   (beta.3 and beta.4 were fine). `rootDir` is now pinned explicitly. This alone
   justifies a prompt beta.6.
 - The expensive keygen probes are now memoized at the platform layer, which also

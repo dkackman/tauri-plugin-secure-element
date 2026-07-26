@@ -92,10 +92,10 @@ version — but prefer `@beta` so your intent survives the 1.0 release.
 
 ```toml
 [dependencies]
-tauri-plugin-secure-element = "0.1.0-beta.5"
+tauri-plugin-secure-element = "0.1.0-beta.6"
 ```
 
-Cargo does not treat prereleases as compatible with one another: `"0.1.0-beta.5"` will
+Cargo does not treat prereleases as compatible with one another: `"0.1.0-beta.6"` will
 **not** resolve to `0.1.0-beta.6`. Bump this line by hand for each beta.
 
 ### Setup
