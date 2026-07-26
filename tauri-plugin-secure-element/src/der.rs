@@ -40,7 +40,10 @@ pub fn raw_ecdsa_to_der(raw: &[u8]) -> crate::Result<Vec<u8>> {
     // optional sign-padding byte), so the SEQUENCE body is at most 70 bytes —
     // always within DER short-form length encoding (< 128). Longer forms are
     // unreachable for valid 64-byte input.
-    debug_assert!(seq_len < 128, "P-256 DER sequence length must fit short form");
+    debug_assert!(
+        seq_len < 128,
+        "P-256 DER sequence length must fit short form"
+    );
 
     let mut der = vec![0x30, seq_len as u8]; // SEQUENCE tag + short-form length
     der.extend_from_slice(&r_der);

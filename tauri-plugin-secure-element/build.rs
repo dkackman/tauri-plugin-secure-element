@@ -114,10 +114,18 @@ fn main() {
             }
         };
 
-        // Compile Swift files to object file (swiftc can compile multiple files at once)
+        // Compile Swift files to object file (swiftc can compile multiple files at once).
+        //
+        // Invoked via `xcrun` rather than a bare `swiftc` so the compiler comes from the
+        // same toolchain as the `--show-sdk-path` SDK above. A bare `swiftc` resolves
+        // through PATH, so any independently installed Swift (swiftly, swift.org
+        // toolchain, Homebrew) shadows Xcode's and gets paired with Xcode's SDK — the
+        // resulting version mismatch fails while parsing the SDK's own .swiftinterface
+        // files, which reads as a bug in this crate but is not one.
         let object_file = format!("{}/secure_element.o", out_dir);
-        let swift_status = Command::new("swiftc")
+        let swift_status = Command::new("xcrun")
             .args([
+                "swiftc",
                 "-c",
                 swift_core.to_str().unwrap(),
                 swift_ffi.to_str().unwrap(),
@@ -134,12 +142,19 @@ fn main() {
         match swift_status {
             Ok(output) => {
                 if !output.status.success() {
+                    // Hard failure, not a warning. The `extern "C" secure_element_*`
+                    // symbols in desktop.rs come only from this Swift code, so a failed
+                    // compile means a macOS build with no working secure element at all.
+                    // Emitting a warning and returning let `cargo check` pass — which is
+                    // exactly what CI runs — so a Swift syntax error could reach a
+                    // release without any job going red.
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    println!("cargo:warning=Swift compilation failed: {}", stderr);
-                    return;
+                    panic!("Swift compilation failed:\n{}", stderr);
                 }
             }
             Err(e) => {
+                // Missing/unusable toolchain is an environment problem rather than a
+                // defect in this crate, so it stays a warning.
                 println!("cargo:warning=Failed to run swiftc: {}", e);
                 return;
             }

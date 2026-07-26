@@ -1,37 +1,240 @@
-Fable 5 Review complete. I read every source file across the five implementations (Rust core, Windows NCrypt, macOS/iOS Swift, Android Kotlin, TypeScript bindings), ran the Rust test suite (30/30 pass), and cross-checked the docs against git history. Overall verdict: this is a well-built plugin — centralized input validation before platform dispatch, consistent P-256/X9.62/DER formats across all platforms, RAII wrappers on every Windows handle, debug/release error sanitization everywhere, and per-plugin key namespacing on all platforms. The findings below are mostly edge cases and doc drift, with one lost-work discovery that I'd fix first.
+# Road to 1.0
 
-The headline finding: security documentation was never merged
+Remaining work from the security/quality/correctness reviews of `0.1.0-beta.4`.
+Items are ordered by what should gate the next release.
 
-Commit 8dd9697 ("document that delete is unauthenticated") lives on the unmerged branch docs/delete-not-authenticated and never landed on main. Your session history says this work was "completed," but main doesn't have it. What's missing from the current README and guest-js/index.ts:
+This file replaces an earlier prose review that lived here; its findings are folded in
+below (the two reviews independently agreed on items 1, 2, 4 and 5, which is worth
+weighting when triaging). One claim from that review could **not** be reproduced and is
+not carried forward: it reported that commit `8dd9697` on a branch
+`docs/delete-not-authenticated` held unmerged security documentation. No such commit,
+branch, or commit message exists in any ref of this repository, and no README revision in
+history contains that text. The underlying _content_ gap is real, so it is captured as
+item 2 below — but there is no lost branch to cherry-pick from; the docs need writing.
 
-- The security note that key deletion is not gated by authentication on any platform — a pinOrBiometric key can be deleted without any prompt. This is the most important security caveat the plugin has, and it's currently undocumented.
-- The Signature Format section (DER ECDSA over SHA-256, cross-platform verifiable).
-- The Windows 10 1607 / build 14393 minimum — the code enforces it (windows.rs:128), but the README's Platform Limitations section instead says TPM 2.0 is supported "since version 1507," which contradicts the runtime check.
-- JSDoc for deleteKey explaining idempotency and the exactly-one-parameter rule.
+Already fixed (see git history):
 
-The branch itself is stale (it predates newer main work), so don't merge it — cherry-pick the README/index.ts doc hunks from 8dd9697 onto current main. (I verified the other suspect branch, windows-per-use-auth tip 13aeb4d, did land content-wise — its windows.rs is byte-identical to main's.)
+- The capabilities cache freezing `canEnforceBiometricOnly` for the process lifetime.
+- Windows `deleteKey` reporting `success: true` on unknown failure.
+- The Android `minSdk` 21/23 mismatch (`KeyGenParameterSpec` is API 23+).
+- `cargo test` missing from every CI job.
+- The release workflow gating on only 2 of 6 CI jobs — it now reuses `ci.yml` wholesale,
+  so Windows, macOS, Swift and Kotlin all gate a release.
+- The macOS Swift FFI silently not compiling: a trailing comma in a call argument list
+  (Swift 6.1+ only) broke the build, `build.rs` downgraded the failure to a
+  `cargo:warning`, and `cargo check` — exactly what CI runs — passed with zero FFI
+  symbols built. `build.rs` now panics on a Swift compile error, and invokes swiftc via
+  `xcrun` so the compiler and SDK always come from the same toolchain.
+- The expensive keygen probes are now memoized at the platform layer, which also
+  resolves the "iOS burns an ephemeral Secure Enclave key on every `generateSecureKey`"
+  finding: `Plugin.swift` still calls `checkSupport()`, but the probe inside it now runs
+  at most once per process.
 
-Security
+---
 
-1. README auth-mode table contradicts the code (README ~line 348): it says biometricOnly is "❌ Not supported" on iOS/macOS, but SecureEnclaveCore.swift:169 implements it with .biometryCurrentSet (the strict variant that invalidates on re-enrollment — good), plus an enrollment precheck. The table is wrong in a security-relevant matrix; a developer could settle for pinOrBiometric believing biometric-only isn't available.
-2. Windows key_exists probes without the silent flag (windows.rs:421-439): it uses open_key_internal rather than try_open_key, so probing the NGC provider during create_key could trigger a Windows Hello prompt, and any provider error is conflated with "doesn't exist." You built try_open_key for exactly this; key_exists should use it.
-3. Informational, both fine but worth being deliberate about: the default permission set grants all six commands including delete-key and sign-with-key; and Windows key scoping (tauri_se_tpm_{app_id}_, NGC marker) is namespacing, not a security boundary — any process running as the user can reach these keys, silently for authMode: "none". The TS doc for "none" covers this well; the lost README note would cover deletion.
+## Must fix before dropping `-beta`
 
-Correctness
+### 1. Verify `pinOrBiometric` signing on Android API 23-29
 
-4. Windows delete swallows real errors and reports success (desktop.rs:453-455): Err(_) => return Ok(DeleteKeyResponse { success: true }) treats every open_key_auto failure — including the "corrupted key / service fault" errors that open_key_auto deliberately propagates — as "already deleted." The same pattern compounds in the delete-by-public-key path: windows::list_keys swallows provider errors (if let Ok at windows.rs:1057-1074, and the enum loop at windows.rs:928 breaks on any error), so a transient provider failure yields an empty list → success: true while the key still exists. Callers doing "delete then verify gone" get a false confirmation. Only genuine not-found errors should map to idempotent success.
-5. Capability cache goes stale on Apple platforms (commands.rs:10): the OnceLock caches check_secure_element_support for the process lifetime on the premise that "hardware capabilities don't change at runtime" — but canEnforceBiometricOnly on iOS/macOS reflects biometric enrollment and lockout state (SecureEnclaveCore.swift:610), which does change at runtime. A user who enrolls Face ID after launch will see false until app restart, and the README explicitly tells developers to consult this field before creating biometric-only keys. Android (API-level check) and Windows (hardcoded false) are genuinely static. Suggest caching only the hardware tiers, or skipping the cache on Apple platforms.
-6. Android pinOrBiometric is likely broken on API 28–29 (SecureKeysPlugin.kt:206-256, 794): androidx BiometricPrompt doesn't support BIOMETRIC_STRONG | DEVICE_CREDENTIAL on API 28–29, and CryptoObject-based authentication with DEVICE_CREDENTIAL requires API 30+ — authenticate(promptInfo, cryptoObject) should error out on those versions. The pre-R key spec fallback setUserAuthenticationValidityDurationSeconds(0) also has murky semantics (0 was historically "auth token must be ≤0 seconds old," which can render keys unusable; the documented per-use value is -1, which is biometric-only). I can't verify without a device; either test on Android 9/10 hardware or reject pinOrBiometric below API 30 the way you already reject biometricOnly.
-7. iOS still burns a test key per keygen (ios/Sources/Plugin.swift:63): generateSecureKey derives backing via checkSupport(), which creates an ephemeral SE probe key each call. Commit 2f04b51 fixed exactly this on the macOS FFI path with strongestBacking() (secure_element_ffi.swift:102); the iOS wrapper was missed. Same pattern on Android: generateSecureKey calls isTeeSupported() (SecureKeysPlugin.kt:472) — a throwaway keygen+delete — on every generate on non-StrongBox devices; worth caching in the plugin instance.
+`buildPromptInfo` always allows `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`
+(`android/src/main/java/SecureKeysPlugin.kt`), and that prompt is passed to
+`biometricPrompt.authenticate(promptInfo, cryptoObject)`. androidx.biometric is
+believed to throw `IllegalArgumentException("Crypto-based authentication is not
+supported for Device Credential prior to API 30")` in that combination.
 
-Minor quality notes
+If confirmed, **every `pinOrBiometric` signature fails on API 23-29** — which is most
+of the range the README advertises.
 
-- windows.rs:509 — &*(buffer.as_ptr() as *const TOKEN_USER) on a Vec<u8> is technically unaligned-reference UB (fine in practice given allocator alignment, but easy to fix with an aligned buffer).
-- CLAUDE.md says tauri 2.10.1; Cargo.toml has 2.11.2.
-- secure_element_ffi.swift:120 — var info never mutated; should be let.
-- The Windows Hello context string "Authenticate to sign data" (windows.rs:801) isn't localizable.
-- macOS FFI calls (including a sign that blocks on a Touch ID prompt) run synchronously on the async runtime's worker thread; spawn_blocking would be kinder in multi-command apps.
+- [ ] Reproduce on an API 29 emulator/device, or confirm against the androidx.biometric
+      1.1.0 source.
+- [ ] If confirmed: on pre-30, build prompt info with `BIOMETRIC_STRONG` only and offer
+      device-credential fallback through a separate non-crypto path (or reject
+      `pinOrBiometric` on pre-30 the way `biometricOnly` is already rejected, and say so
+      in the README).
+- [ ] Fix the double-reject: the throw escapes into `signWithKey`'s outer `catch` _after_
+      `pendingSignInvoke` already holds the invoke, so the same invoke can be rejected
+      twice. Wrap the `authenticate` call so failure goes through
+      `pendingSignInvoke.getAndSet(null)`.
+- [ ] Add a regression test for the "prompt construction fails" path.
+- [ ] Separately, audit the pre-R fallback `setUserAuthenticationValidityDurationSeconds(0)`.
+      AOSP's `KeymasterUtils` does treat `0` as per-use authentication, but the documented
+      per-use value for that deprecated API is `-1`, and `0` has historically been read as
+      "auth token must be ≤ 0 seconds old," which can render a key permanently unusable.
+      Confirm on API 23-29 hardware which semantics apply.
 
-Things I checked that are solid: the iOS/macOS shared-core symlink is real (not a drifting copy); build.rs COMMANDS matches all six registered commands and permissions; the DER converter handles all edge cases with good tests; NUL/control-char injection into the macOS FFI filter path is blocked by validation; the NGC auth-mandatory policy is persisted at key creation with a sensible legacy-name fallback; and the Android biometric invoke lifecycle (pendingSignInvoke) correctly guarantees exactly-once resolution.
+### 2. Write the threat model / security model docs
 
-If you want, I can cherry-pick the lost docs from 8dd9697 and fix items 4, 5, and 7 — those are the concrete, low-risk ones.
+The per-platform boundaries differ sharply and callers cannot infer them. Add a
+`## Security model` section to the README (and a `SECURITY.md` with a reporting address).
+Must state, at minimum:
+
+- [ ] **Windows `authMode: "none"`** creates a Platform Crypto Provider key that _any_
+      process running as the same user can sign with silently, given the key name — and
+      the name is `tauri_se_tpm_{app_id}_{key_name}`, derivable from the public app
+      identifier. `guest-js/index.ts` documents this honestly; the README does not
+      mention it at all.
+- [ ] **Windows keys are scoped per-user, not per-app.** `app_id` is only a name prefix,
+      so a different app run by the same user can open them. Contrast with iOS/macOS
+      (keychain access groups) and Android (per-app keystore), where the OS enforces the
+      app boundary.
+- [ ] **`sanitize_app_id` collisions**: `.` → `_` means identifiers `a.b` and `a_b` land
+      in the same Windows namespace.
+- [ ] **Deletion never requires authentication on any platform** (`SecItemDelete`,
+      `NCryptDeleteKey`, `keyStore.deleteEntry` all proceed for auth-mandatory keys). Any
+      code that can reach the plugin — including injected webview JS holding
+      `secure-element:default` — can destroy every key. Document it as an availability
+      property, and recommend a narrower capability for apps that never delete.
+- [ ] **The default capability grants all six commands.** Show a minimal capability
+      example (e.g. sign-only) alongside `secure-element:default`.
+- [ ] What the plugin does _not_ protect against: a compromised renderer can request
+      signatures over attacker-chosen bytes for any non-auth key; auth-required keys
+      limit this to one signature per user gesture, over data the user cannot see.
+
+### 3. Reconcile `biometricOnly` docs with behavior
+
+The README auth-mode table says `biometricOnly` is ❌ not supported on iOS/macOS, but
+`SecureEnclaveCore.getAccessControlFlags` implements it with `.biometryCurrentSet` and
+`checkSupport()` reports `canEnforceBiometricOnly: true` when biometrics are enrolled.
+Docs and code disagree on a security-relevant setting.
+
+- [ ] Decide which is true and make them agree (the code looks correct — fix the table).
+- [ ] Document that `.biometryCurrentSet` **permanently invalidates the key when the
+      enrolled biometric set changes** — adding a fingerprint or re-enrolling Face ID
+      destroys the key and its signing capability forever. This is currently documented
+      nowhere and will surprise anyone using `biometricOnly` for anything durable.
+- [ ] Decide whether `biometricOnly` should use `.biometryAny` instead, which survives
+      enrollment changes, and document the tradeoff either way.
+- [ ] Align the semantics of `canEnforceBiometricOnly` across platforms: Apple returns
+      _current enrollment_, Android returns _API level ≥ 30_ regardless of enrollment.
+      Same field name, two different questions.
+
+---
+
+## Should fix before 1.0
+
+### 4. Verify Windows Hello prompting during `listKeys` / `generateSecureKey`
+
+`list_ngc_keys` and `key_exists` open NGC keys via `open_key_internal` with
+`NCRYPT_FLAGS(0)`, while the enumeration itself and `try_open_key` correctly pass
+`NCRYPT_SILENT_FLAG`. If opening or `export_public_key` on an auth-mandatory NGC key
+triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
+
+- [ ] Test on hardware with several `pinOrBiometric` keys present.
+- [ ] If it prompts, switch both call sites to the silent path.
+
+### 5. Cross-provider name collisions on Windows
+
+- [ ] `key_exists` returns `false` whenever `open_ngc_provider()` fails, so a TPM key can
+      be created under a name an NGC key already owns. `open_key_auto` then always
+      resolves NGC first, so sign/delete hit a different key than the one just created,
+      and `list_keys` returns two entries with the same `keyName`. Make `key_exists`
+      propagate "could not determine" instead of treating it as "does not exist".
+- [ ] `key_exists` also uses the non-silent `open_key_internal` (same as item 4).
+- [ ] Delete-by-public-key matches a key, takes `keys[0].key_name`, then re-resolves _by
+      name_ (`desktop.rs`) instead of deleting the key it matched. Carry the provider and
+      full key name through so the matched key is the deleted key.
+- [ ] Consider returning the provider/auth-mode in `KeyInfo` so callers can tell a
+      silent TPM key from a Hello-protected one. Right now `listKeys` cannot distinguish
+      them, which matters for any security decision made from the list.
+
+### 6. Verify the cross-platform test vectors in CI
+
+`test-app/src/cross-platform-test-vectors.json` holds real iOS/Android/Windows
+signatures with public keys and messages, and nothing automated checks them. `der.rs`
+tests assert DER _structure_ but no test anywhere verifies an actual signature.
+
+- [ ] Add a `cargo test` that loads the vectors and verifies each signature against its
+      public key with a P-256 verifier (`p256`/`ecdsa` crate, dev-dependency only).
+      This single test locks down DER encoding, X9.62 public-key export, and the
+      hash-then-sign convention across all four platforms.
+- [ ] Add a vector for macOS once the FFI is exercised on a signed build.
+- [ ] Add a negative case (tampered message must fail) so the test can't pass vacuously.
+
+### 7. Close the remaining CI gaps
+
+- [ ] `SecureEnclaveCore.swift` — the largest and most security-critical Swift file — is
+      **not linted or format-checked at all**. `swiftformat --lint ios/` reports "2 files
+      skipped" because it is a symlink into `swift/`. Point the lint at `swift/` too, or
+      resolve symlinks. Note `swift/` currently has ~4 pre-existing `guard`/`else`
+      formatting diffs that will need fixing once it is covered.
+- [ ] Add a `.swift-version` file — swiftformat warns that some rules are disabled
+      without it.
+- [ ] Kotlin unit tests (`android/src/test/java/PluginUnitTest.kt`) never run in CI; the
+      kotlin job only runs ktlint. Wire up `gradlew test` if the `:tauri-android`
+      project dependency can be resolved in CI.
+- [ ] The local `~/.ktlint/ktlint` binary rejects valid Kotlin trailing commas
+      ("Not a valid Kotlin file") on pristine `main` — version skew with the `1.1.1`
+      pinned in `build.gradle.kts`. Pin one version across gradle, the pnpm script, and
+      the docs so local and CI agree.
+- [ ] Consider a build job (not just `cargo check`) on macOS/Windows so link errors —
+      e.g. missing Swift FFI symbols — are caught. `cargo check` does not link.
+- [ ] `cargo test` now runs on all three platforms, but nothing runs `cargo package
+--dry-run`; the `build.rs` packaging path is untested.
+
+---
+
+## Quality / polish
+
+### Soundness
+
+- [ ] `windows.rs:530` — `&*(buffer.as_ptr() as *const TOKEN_USER)` creates a reference
+      into a `Vec<u8>` (alignment 1) for a type requiring 8-byte alignment. Creating an
+      unaligned reference is UB even if the read never faults; it works today only because
+      the allocator happens to return aligned memory. Use `std::ptr::read_unaligned`, or
+      allocate the buffer as `Vec<u64>`/via a properly aligned type.
+- [ ] `KeyNameBufferGuard::as_ref` (`windows_raii.rs`) dereferences a raw pointer in a
+      safe `fn` with only a doc comment saying it must be called from an unsafe context.
+      Make it `unsafe fn`.
+
+### Everything else
+
+- [ ] `der.rs` uses `debug_assert!` for the DER short-form length invariant. Unreachable
+      for valid 64-byte input, but returning `Err` costs nothing and removes a
+      release-only silent-corruption path.
+- [ ] `getAccessControlFlags` (`SecureEnclaveCore.swift`) silently downgrades unknown
+      auth modes to `.userPresence` via `case "pinOrBiometric", _`. The Rust enum gates
+      this today, but the `@_cdecl` FFI entry points are public. Fail closed instead.
+- [ ] `probeTeeSupport` now returns `false` when the generated key can't be inspected
+      (it previously assumed TEE). Confirm on a range of devices that this doesn't
+      false-negative anyone.
+- [ ] `isEmulator()` fingerprint sniffing is easily defeated and easily wrong. Either
+      document `emulated` as best-effort on Android or derive it from the keystore
+      security level, which is already being read.
+- [ ] `signWithKey` marshals `data` as a JSON number array (`guest-js/index.ts`); at the
+      1 MB validation ceiling that is ~4 MB of JSON per call. Consider base64 over the
+      IPC boundary, or lower the ceiling to something a signing API actually needs.
+- [ ] Windows error sanitization is inconsistent: the "already exists" and Windows-Hello
+      -not-configured messages use plain `format!`, bypassing `sanitize_error`, so
+      release builds still emit the key name.
+- [ ] Bump Android deps — `androidx.biometric:biometric:1.1.0` (2020),
+      `core-ktx:1.9.0`, `appcompat:1.6.0`, `material:1.7.0` are all 2022-era against
+      `compileSdk = 36`. The biometric bump may interact with item 1.
+- [ ] `build.rs` comment says the permissions files are included "via the `include`
+      field"; `Cargo.toml` uses `exclude`.
+- [ ] README's `GenerateSecureKeyResult` omits the `backing` field the API returns.
+- [ ] README "Platform Limitations → Windows" says TPM 2.0 is supported on Windows 10
+      "since version 1507", but the code requires build 14393 (1607) and errors below it.
+- [ ] Add `CHANGELOG.md` and a stated MSRV / deprecation policy before 1.0.
+- [ ] `CLAUDE.md` says `tauri` 2.10.1; `Cargo.toml` pins 2.11.5.
+- [ ] `secure_element_ffi.swift:120` — `var info` is never mutated; should be `let`.
+- [ ] The Windows Hello prompt string `"Authenticate to sign data"` (`windows.rs`) is
+      hardcoded English and not localizable. Consider accepting it from the caller, which
+      also lets apps explain _what_ is being signed.
+- [ ] macOS FFI calls run synchronously on the async runtime's worker thread — including
+      `sign`, which blocks on a Touch ID prompt. Wrap them in `spawn_blocking` so one
+      pending signature can't stall other plugin commands.
+
+---
+
+## Open questions
+
+- [ ] Should `listKeys` require a capability separate from `signWithKey`? Enumerating
+      public keys is a much weaker operation than signing, and apps may want to grant
+      them differently.
+- [ ] Is there a use case for `authMode: "none"` on Windows given that any same-user
+      process can use the key? If not, consider requiring an explicit opt-in flag so it
+      can't be reached by passing a default.
+- [ ] Key attestation is not exposed on any platform (Android `KeyStore` attestation
+      certificates, TPM attestation). Without it, a relying party cannot verify a public
+      key really came from hardware. Worth scoping for a post-1.0 release — it is the
+      main thing a remote verifier would want from a plugin like this.

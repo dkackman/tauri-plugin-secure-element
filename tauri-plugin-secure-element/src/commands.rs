@@ -1,13 +1,9 @@
-use std::sync::OnceLock;
 use tauri::{command, AppHandle, Runtime};
 
 use crate::models::*;
 use crate::validation::{validate_key_name, validate_public_key_filter, validate_sign_data_size};
 use crate::Result;
 use crate::SecureElementExt;
-
-/// Hardware capabilities don't change at runtime, so we only need to check once.
-static SE_CAPABILITIES_CACHE: OnceLock<CheckSecureElementSupportResponse> = OnceLock::new();
 
 #[command]
 pub(crate) async fn ping<R: Runtime>(
@@ -89,16 +85,24 @@ pub(crate) async fn delete_key<R: Runtime>(
     app.secure_element().delete_key(payload)
 }
 
+/// Queries the platform on every call — deliberately uncached.
+///
+/// The hardware tier fields (`discrete`/`integrated`/`firmware`/`emulated`/`strongest`)
+/// really are fixed for the life of the process, but `can_enforce_biometric_only` is
+/// not: it reflects whether biometrics are currently *enrolled and usable*, which
+/// changes when the user enrolls or removes a biometric, or when biometry locks out
+/// after repeated failures. Caching the whole response froze that flag at whatever it
+/// was on first call, so an app gating `generateSecureKey(.., "biometricOnly")` on it
+/// would keep refusing on a device where biometrics had since been enrolled (or keep
+/// trying on one that had since locked out).
+///
+/// The expensive, genuinely immutable probes are memoized in the platform layers
+/// instead — see `SecureEnclaveCore.checkSupport` (iOS/macOS) and
+/// `SecureKeysPlugin.checkSecureElementSupport` (Android) — so repeat calls stay cheap
+/// without freezing the mutable authentication state.
 #[command]
 pub(crate) async fn check_secure_element_support<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<CheckSecureElementSupportResponse> {
-    // Return cached result if available (capabilities don't change at runtime)
-    if let Some(cached) = SE_CAPABILITIES_CACHE.get() {
-        return Ok(cached.clone());
-    }
-
-    // Query platform and cache the result
-    let result = app.secure_element().check_secure_element_support()?;
-    Ok(SE_CAPABILITIES_CACHE.get_or_init(|| result).clone())
+    app.secure_element().check_secure_element_support()
 }

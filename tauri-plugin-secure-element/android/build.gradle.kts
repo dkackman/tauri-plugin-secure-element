@@ -13,7 +13,11 @@ android {
     }
 
     defaultConfig {
-        minSdk = 21
+        // API 23 (Marshmallow) is the real floor: KeyGenParameterSpec, KeyInfo and
+        // UserNotAuthenticatedException are all API 23+, and the key generation path
+        // uses them unconditionally. Declaring 21 here meant API 21-22 devices got a
+        // NoClassDefFoundError instead of a clean "unsupported" rejection.
+        minSdk = 23
         consumerProguardFiles("consumer-rules.pro")
     }
 

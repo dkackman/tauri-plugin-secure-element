@@ -8,6 +8,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Callable so the release workflow can gate on this exact set of jobs rather than
+  # maintaining a partial copy that drifts out of sync.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,6 +54,9 @@ jobs:
 
       - name: Check compilation
         run: cargo check
+
+      - name: Run tests
+        run: cargo test
 
   typescript:
     name: TypeScript Build
@@ -156,6 +162,9 @@ jobs:
       - name: Check compilation
         run: cargo check
 
+      - name: Run tests
+        run: cargo test
+
   rust-macos:
     name: Rust Checks (macOS)
     runs-on: macos-latest
@@ -186,3 +195,6 @@ jobs:
 
       - name: Check compilation
         run: cargo check
+
+      - name: Run tests
+        run: cargo test

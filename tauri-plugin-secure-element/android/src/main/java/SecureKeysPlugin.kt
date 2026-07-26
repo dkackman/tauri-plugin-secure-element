@@ -256,10 +256,25 @@ class SecureKeysPlugin(
             }.build()
 
     /**
+     * StrongBox availability. Probed once and memoized — this is a hardware fact that
+     * cannot change while the process runs.
+     */
+    private val strongBoxSupported: Boolean by lazy { probeStrongBoxSupport() }
+
+    /**
+     * Hardware-backed (TEE) keystore availability. Probed once and memoized: the probe
+     * generates and deletes a real keystore key pair, which is far too expensive to
+     * repeat on every `checkSecureElementSupport()` call.
+     */
+    private val teeSupported: Boolean by lazy { probeTeeSupport() }
+
+    /**
      * Check if Secure Element (StrongBox) is supported on this device.
      * StrongBox requires Android API level 28 (Android 9) or higher.
+     *
+     * Prefer the memoized [strongBoxSupported] over calling this directly.
      */
-    private fun isSecureElementSupported(): Boolean {
+    private fun probeStrongBoxSupport(): Boolean {
         // StrongBox requires API level 28+
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             return false
@@ -277,13 +292,11 @@ class SecureKeysPlugin(
      * Check if Trusted Execution Environment (TEE) / hardware-backed keystore is supported.
      * This checks if keys can be stored in hardware-backed storage (TEE) even without
      * StrongBox, i.e. ARM TrustZone
+     *
+     * Generates and deletes a throwaway keystore key pair, so it is expensive. Prefer
+     * the memoized [teeSupported] over calling this directly.
      */
-    private fun isTeeSupported(): Boolean {
-        // TEE requires API level 18+ for hardware-backed keystore
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            return false
-        }
-
+    private fun probeTeeSupport(): Boolean {
         // Try to create a test key and check if it's hardware-backed
         // Use a unique test key name that's unlikely to collide with real keys
         val testAlias = "__tee_test_${UUID.randomUUID()}"
@@ -307,34 +320,34 @@ class SecureKeysPlugin(
             keyPairGenerator.initialize(keyGenParameterSpec)
             keyPairGenerator.generateKeyPair()
 
-            // Check if the key is hardware-backed
+            // Check if the key is hardware-backed. KeyInfo is available from API 23,
+            // which is this library's minSdk, so the backing is always inspectable.
             val entry = keyStore.getEntry(testAlias, null) as? KeyStore.PrivateKeyEntry
-            if (entry != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val privateKey = entry.privateKey as? ECPrivateKey
-                if (privateKey != null) {
-                    val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
-                    val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-                    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        // getSecurityLevel() replaces the deprecated isInsideSecureHardware on API 31+
-                        when (keyInfo.securityLevel) {
-                            KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
-                            KeyProperties.SECURITY_LEVEL_STRONGBOX,
-                            KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
-                            -> true
-                            else -> false
-                        }
-                    } else {
-                        @Suppress("DEPRECATION")
-                        keyInfo.isInsideSecureHardware
-                    }
-                }
+            val privateKey = entry?.privateKey as? ECPrivateKey
+            if (privateKey == null) {
+                // Could not inspect the generated key, so hardware backing is unproven.
+                // Report false rather than assuming TEE — callers use this to decide
+                // whether keys are hardware-protected.
+                Log.w(TAG, "TEE check: generated key could not be inspected")
+                return false
             }
 
-            // API < 23 (Marshmallow) predates KeyInfo, so the backing cannot be
-            // inspected at all. Hardware-backed keystore exists from API 18+, but a
-            // software-only device on these old API levels could still be reported
-            // as TEE here. This is a best-effort assumption for legacy devices.
-            return true
+            val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
+            val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // getSecurityLevel() replaces the deprecated isInsideSecureHardware on API 31+
+                when (keyInfo.securityLevel) {
+                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
+                    KeyProperties.SECURITY_LEVEL_STRONGBOX,
+                    KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
+                    -> true
+
+                    else -> false
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                keyInfo.isInsideSecureHardware
+            }
         } catch (e: Exception) {
             Log.e(TAG, "TEE check failed", e)
             return false
@@ -431,9 +444,9 @@ class SecureKeysPlugin(
     fun checkSecureElementSupport(invoke: Invoke) {
         try {
             // StrongBox = discrete physical security chip
-            val discrete = isSecureElementSupported()
+            val discrete = strongBoxSupported
             // TEE/TrustZone = on-die isolated security core
-            val integrated = isTeeSupported()
+            val integrated = teeSupported
             // Android doesn't have firmware-only TPM tier
             val firmware = false
             // Check if running in emulator
@@ -469,7 +482,7 @@ class SecureKeysPlugin(
     @Command
     fun generateSecureKey(invoke: Invoke) {
         try {
-            if (!isSecureElementSupported() && !isTeeSupported()) {
+            if (!strongBoxSupported && !teeSupported) {
                 invoke.reject(
                     "Hardware-backed keystore is not available on this device. Secure element keys require hardware-backed storage.",
                 )
@@ -483,7 +496,7 @@ class SecureKeysPlugin(
             }
 
             // Check if Secure Element (StrongBox) is supported upfront
-            val useSecureElement = isSecureElementSupported()
+            val useSecureElement = strongBoxSupported
             val authMode = args.authMode ?: "pinOrBiometric"
 
             // Validate authentication mode requirements

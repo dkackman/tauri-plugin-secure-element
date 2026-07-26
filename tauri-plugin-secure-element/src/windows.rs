@@ -335,8 +335,16 @@ pub enum KeyProviderType {
     Tpm,
 }
 
-/// Opens an existing key by name, automatically detecting the correct provider
-pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, KeyProviderType)> {
+/// Opens an existing key by name, automatically detecting the correct provider.
+///
+/// Returns `Ok(None)` only when the key genuinely does not exist in either provider.
+/// Every other failure is an `Err`, so callers can tell "not there" apart from
+/// "could not tell" — a distinction that matters for delete, where reporting success
+/// on an unknown failure would tell the caller a key was destroyed when it was not.
+pub fn try_open_key_auto(
+    app_id: &str,
+    key_name: &str,
+) -> crate::Result<Option<(KeyHandle, KeyProviderType)>> {
     // Try NGC provider first (keys have format {SID}//tauri_se/{app_id}/{key_name})
     if let Ok(sid) = get_current_user_sid() {
         let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
@@ -347,7 +355,7 @@ pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, 
             // silently retrying in TPM could return a wrong key or hide the real
             // cause behind a misleading "key not found in TPM" error.
             if let Some(key) = try_open_key(&ngc_provider, &ngc_full_name)? {
-                return Ok((key, KeyProviderType::Ngc));
+                return Ok(Some((key, KeyProviderType::Ngc)));
             }
         }
     }
@@ -355,8 +363,21 @@ pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, 
     // Try TPM provider
     let tpm_full_name = tpm_key_name(app_id, key_name);
     let tpm_provider = open_provider()?;
-    let key = open_key_internal(&tpm_provider, &tpm_full_name)?;
-    Ok((key, KeyProviderType::Tpm))
+    match try_open_key(&tpm_provider, &tpm_full_name)? {
+        Some(key) => Ok(Some((key, KeyProviderType::Tpm))),
+        None => Ok(None),
+    }
+}
+
+/// Opens an existing key by name, automatically detecting the correct provider.
+/// Fails with `NotFound` if the key does not exist in either provider.
+pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, KeyProviderType)> {
+    try_open_key_auto(app_id, key_name)?.ok_or_else(|| {
+        crate::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            sanitize_error(&format!("Key '{}' not found", key_name), "Key not found"),
+        ))
+    })
 }
 
 fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Result<KeyHandle> {

@@ -393,9 +393,12 @@ public enum SecureEnclaveCore {
                     continue
                 }
 
+                // No trailing comma after the last argument: trailing commas in call
+                // argument lists are only accepted by Swift 6.1+, and this must build
+                // on the Swift 5.x toolchains still shipping in older Xcode releases.
                 keys.append(KeyInfo(
                     keyName: foundKeyName,
-                    publicKey: publicKeyBase64,
+                    publicKey: publicKeyBase64
                 ))
             }
         } else if status != errSecItemNotFound {
@@ -557,9 +560,17 @@ public enum SecureEnclaveCore {
         return discrete ? .discrete : (integrated ? .integrated : .none)
     }
 
-    /// Check if Secure Enclave is supported on this device
-    public static func checkSupport() -> SupportResponse {
-        // Try to create access control with basic flags
+    /// Whether the Secure Enclave can actually be used on this device.
+    ///
+    /// Probed once and memoized: this is a hardware/OS fact that cannot change while
+    /// the process is running, and the probe is not free (it builds an access-control
+    /// object and creates an ephemeral Secure Enclave key). `checkSupport()` is called
+    /// on every `checkSecureElementSupport()` invocation, so the probe must not run
+    /// every time. Swift `static let` initialization is lazy and thread-safe.
+    ///
+    /// Deliberately does NOT memoize biometric enrollment — see `checkSupport()`.
+    private static let isSecureEnclaveAvailable: Bool = {
+        // Access control with the flags a real key would use must be constructible.
         var accessError: Unmanaged<CFError>?
         let flags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence]
         guard SecAccessControlCreateWithFlags(
@@ -568,17 +579,10 @@ public enum SecureEnclaveCore {
             flags,
             &accessError
         ) != nil else {
-            return SupportResponse(
-                discrete: false,
-                integrated: false,
-                firmware: false,
-                emulated: isSimulator,
-                strongest: .none,
-                canEnforceBiometricOnly: false
-            )
+            return false
         }
 
-        // Try to create a test key to verify Secure Enclave availability
+        // Creating a key is the only reliable way to confirm Secure Enclave availability.
         let testTag = Data("secure_element_test_\(UUID().uuidString)".utf8)
         let testAttributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
@@ -593,8 +597,18 @@ public enum SecureEnclaveCore {
 
         // No cleanup needed: kSecAttrIsPermanent is false so the test key is
         // ephemeral (never written to the Keychain) and is released with testKey.
+        return testKey != nil
+    }()
 
-        guard testKey != nil else {
+    /// Check if Secure Enclave is supported on this device.
+    ///
+    /// The hardware availability probe is memoized (see `isSecureEnclaveAvailable`),
+    /// but `canEnforceBiometricOnly` is re-evaluated on every call. Biometric
+    /// enrollment is mutable at runtime — the user can enroll or remove a Face ID /
+    /// Touch ID identity, and biometry can lock out after repeated failures — so
+    /// caching it would hand callers a stale answer for the rest of the process.
+    public static func checkSupport() -> SupportResponse {
+        guard isSecureEnclaveAvailable else {
             return SupportResponse(
                 discrete: false,
                 integrated: false,

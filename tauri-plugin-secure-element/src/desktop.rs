@@ -448,11 +448,13 @@ impl<R: Runtime> SecureElement<R> {
                 )));
             };
 
-            // Open key - fail silently if key not found
-            // Use open_key_auto to find the key in either provider
-            let (key, _provider_type) = match windows::open_key_auto(&app_id, &key_name) {
-                Ok(result) => result,
-                Err(_) => return Ok(DeleteKeyResponse { success: true }),
+            // Deletion is idempotent: a key that genuinely does not exist is success.
+            // But only a genuine "not found" may be reported that way — any other
+            // failure (access denied, provider fault, corrupted key) must propagate,
+            // or the caller is told the key was destroyed when it may still exist.
+            let (key, _provider_type) = match windows::try_open_key_auto(&app_id, &key_name)? {
+                Some(result) => result,
+                None => return Ok(DeleteKeyResponse { success: true }),
             };
             let success = windows::delete_key(key)?;
 

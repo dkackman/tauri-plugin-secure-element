@@ -9,72 +9,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Run CI checks first to ensure quality
-  ci-rust:
-    name: CI - Rust
-    runs-on: ubuntu-latest
+  # Run the full CI suite first. This reuses .github/workflows/ci.yml rather than
+  # duplicating a subset of it, so a release cannot pass while the Windows, macOS,
+  # Swift or Kotlin checks are broken — the previous copy here only ran the Ubuntu
+  # Rust and TypeScript jobs, neither of which compiles the Windows or macOS code.
+  ci:
+    name: CI
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: tauri-plugin-secure-element
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Check compilation
-        run: cargo check
-
-  ci-typescript:
-    name: CI - TypeScript
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    defaults:
-      run:
-        working-directory: tauri-plugin-secure-element
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Check formatting
-        run: pnpm exec prettier --check .
-
-      - name: Build TypeScript
-        run: pnpm build
+    uses: ./.github/workflows/ci.yml
 
   # Publish to crates.io using Trusted Publishing (OIDC)
   publish-crates:
     name: Publish to crates.io
-    needs: [ci-rust, ci-typescript]
+    needs: [ci]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -116,7 +64,7 @@ jobs:
   # Publish to npm using Trusted Publishing (OIDC)
   publish-npm:
     name: Publish to npm
-    needs: [ci-rust, ci-typescript]
+    needs: [ci]
     runs-on: ubuntu-latest
     environment: release
     permissions:
