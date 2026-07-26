@@ -33,9 +33,16 @@ public struct SignResponse {
     public let signature: Data
 }
 
-/// Secure element hardware backing tiers
+/// Secure element hardware backing tiers, weakest → strongest.
+///
+/// `software` exists for cross-platform parity with Android, where a key can be
+/// created in a software-only keystore. Apple platforms do not produce it: a
+/// `kSecAttrTokenIDSecureEnclave` key either lands in the Secure Enclave or fails
+/// to be created at all. On the Simulator the Enclave is emulated in software, but
+/// it is still reported as `integrated` and flagged via `SupportResponse.emulated`.
 public enum SecureElementBacking: String, Codable {
     case none
+    case software
     case firmware
     case integrated
     case discrete

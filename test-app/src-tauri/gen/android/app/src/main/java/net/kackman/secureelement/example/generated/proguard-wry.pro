@@ -13,7 +13,9 @@
 
   void setWebView(net.kackman.secureelement.example.RustWebView);
   java.lang.Class getAppClass(...);
+  int getId();
   java.lang.String getVersion();
+  int startActivity(...);
 }
 
 -keep class net.kackman.secureelement.example.Ipc {

@@ -125,9 +125,15 @@ pub struct DeleteKeyResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SecureElementBacking {
-    /// No secure element available (software-only)
+    /// No key storage available at all.
     #[default]
     None,
+    /// The key exists but is protected only by the OS, not by hardware (e.g. the
+    /// Android emulator's software KeyMint, or a device with no TEE). The key is
+    /// functional — it signs and verifies correctly — but it is extractable by a
+    /// sufficiently privileged attacker. Callers that require hardware protection
+    /// must reject this tier explicitly.
+    Software,
     /// Firmware-backed, no dedicated secure processor (e.g. Windows fTPM via Intel PTT or AMD PSP)
     Firmware,
     /// On-die isolated security core (e.g. Apple Silicon Secure Enclave, ARM TrustZone/TEE)
@@ -140,12 +146,26 @@ pub enum SecureElementBacking {
 mod backing_tests {
     use super::*;
 
-    // Ordering: None < Firmware < Integrated < Discrete
+    // Ordering: None < Software < Firmware < Integrated < Discrete
     #[test]
     fn backing_order_is_weakest_to_strongest() {
-        assert!(SecureElementBacking::None < SecureElementBacking::Firmware);
+        assert!(SecureElementBacking::None < SecureElementBacking::Software);
+        assert!(SecureElementBacking::Software < SecureElementBacking::Firmware);
         assert!(SecureElementBacking::Firmware < SecureElementBacking::Integrated);
         assert!(SecureElementBacking::Integrated < SecureElementBacking::Discrete);
+    }
+
+    // The hardware/software boundary is the comparison callers gate on, so pin it:
+    // everything at or above Firmware is hardware-protected, everything below is not.
+    #[test]
+    fn software_sorts_below_every_hardware_tier() {
+        for hw in [
+            SecureElementBacking::Firmware,
+            SecureElementBacking::Integrated,
+            SecureElementBacking::Discrete,
+        ] {
+            assert!(SecureElementBacking::Software < hw);
+        }
     }
 
     #[test]
@@ -179,6 +199,10 @@ mod backing_tests {
             "\"none\""
         );
         assert_eq!(
+            serde_json::to_string(&SecureElementBacking::Software).unwrap(),
+            "\"software\""
+        );
+        assert_eq!(
             serde_json::to_string(&SecureElementBacking::Firmware).unwrap(),
             "\"firmware\""
         );
@@ -199,6 +223,10 @@ mod backing_tests {
             SecureElementBacking::None
         );
         assert_eq!(
+            serde_json::from_str::<SecureElementBacking>("\"software\"").unwrap(),
+            SecureElementBacking::Software
+        );
+        assert_eq!(
             serde_json::from_str::<SecureElementBacking>("\"firmware\"").unwrap(),
             SecureElementBacking::Firmware
         );
@@ -216,6 +244,7 @@ mod backing_tests {
     fn backing_serde_roundtrip() {
         for variant in [
             SecureElementBacking::None,
+            SecureElementBacking::Software,
             SecureElementBacking::Firmware,
             SecureElementBacking::Integrated,
             SecureElementBacking::Discrete,
