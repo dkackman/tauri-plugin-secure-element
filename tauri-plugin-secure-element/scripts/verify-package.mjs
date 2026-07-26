@@ -58,14 +58,38 @@ function collectEntryPoints() {
 
 // --ignore-scripts matters: npm pack fires prepack/prepublishOnly, and this
 // script is itself wired into prepublishOnly. Without it the two recurse.
+//
+// The --json shape is not stable across npm majors, and the publish workflow
+// installs npm@latest mid-job, so this can run under a newer npm than the one
+// that ran it in CI:
+//   npm 11: [ { id, files: [...] } ]              -- array
+//   npm 12: { "<pkg-name>": { id, files: [...] } } -- object keyed by name
+// Normalize both to a list of entries rather than assuming either.
 function tarballContents() {
   const raw = execFileSync(
     "npm",
     ["pack", "--dry-run", "--json", "--ignore-scripts"],
     { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }
   );
-  const [result] = JSON.parse(raw);
-  return new Set(result.files.map((f) => f.path));
+
+  const parsed = JSON.parse(raw);
+  const entries = Array.isArray(parsed) ? parsed : Object.values(parsed ?? {});
+
+  // Fail loudly on an unrecognized shape. Returning an empty set here would
+  // report every entry point as missing and read as a packaging bug, sending
+  // the next person after the wrong problem.
+  const files = entries.flatMap((entry) => entry?.files ?? []);
+  if (entries.length === 0 || files.length === 0) {
+    console.error(
+      "verify-package: could not read a file list from 'npm pack --json'.\n" +
+        `npm version: ${execFileSync("npm", ["--version"], { encoding: "utf8" }).trim()}\n` +
+        "The output shape may have changed again. Raw output:\n"
+    );
+    console.error(raw);
+    exit(1);
+  }
+
+  return new Set(files.map((f) => f.path));
 }
 
 const entryPoints = collectEntryPoints();
