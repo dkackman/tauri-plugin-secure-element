@@ -69,22 +69,34 @@ pnpm tauri dev
 
 ### Installation
 
+> **Beta.** Every release so far is a prerelease, and the API may still change between
+> betas. Pin an exact version and read the release notes before upgrading. See
+> [`tauri-plugin-secure-element/todo.md`](tauri-plugin-secure-element/todo.md) for the
+> known issues and the remaining work before 1.0.
+
 #### npm
 
 ```bash
-npm install tauri-plugin-secure-element-api
+npm install tauri-plugin-secure-element-api@beta
 # or
-pnpm add tauri-plugin-secure-element-api
+pnpm add tauri-plugin-secure-element-api@beta
 # or
-yarn add tauri-plugin-secure-element-api
+yarn add tauri-plugin-secure-element-api@beta
 ```
+
+The `beta` tag always points at the newest prerelease. While there is no stable release
+yet, `latest` is kept in sync with it, so a plain `npm install` resolves to the same
+version — but prefer `@beta` so your intent survives the 1.0 release.
 
 #### Cargo
 
 ```toml
 [dependencies]
-tauri-plugin-secure-element = "0.1.0-beta.4"
+tauri-plugin-secure-element = "0.1.0-beta.5"
 ```
+
+Cargo does not treat prereleases as compatible with one another: `"0.1.0-beta.5"` will
+**not** resolve to `0.1.0-beta.6`. Bump this line by hand for each beta.
 
 ### Setup
 
@@ -155,7 +167,10 @@ import {
 // Check device secure element capabilities
 const capabilities = await checkSecureElementSupport();
 console.log("Strongest backing:", capabilities.strongest);
-console.log("Can enforce biometric-only:", capabilities.canEnforceBiometricOnly);
+console.log(
+  "Can enforce biometric-only:",
+  capabilities.canEnforceBiometricOnly
+);
 
 // Generate a new secure key
 const { publicKey, keyName } = await generateSecureKey(
