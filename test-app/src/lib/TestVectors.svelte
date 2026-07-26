@@ -190,8 +190,7 @@
         class="form-control font-monospace"
         style="font-size: 0.7rem; height: 200px;"
         readonly
-        value={generatedVectorsJson}
-      ></textarea>
+        value={generatedVectorsJson}></textarea>
     </div>
   {/if}
 </div>

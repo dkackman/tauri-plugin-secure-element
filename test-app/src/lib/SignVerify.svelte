@@ -143,8 +143,7 @@
           bind:value={messageToSign}
           placeholder="Enter message to sign"
           rows="3"
-          disabled={!selectedKeyName}
-        ></textarea>
+          disabled={!selectedKeyName}></textarea>
       </div>
 
       <!-- Sign Button -->
@@ -194,8 +193,7 @@
               class="form-control form-control-sm"
               bind:value={verifyPublicKey}
               placeholder="Public key (base64)"
-              rows="3"
-            ></textarea>
+              rows="3"></textarea>
             <small class="text-muted">
               Uses p256 crate (independent of plugin)
             </small>
