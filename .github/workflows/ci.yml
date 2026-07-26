@@ -87,6 +87,12 @@ jobs:
       - name: Build TypeScript
         run: pnpm build
 
+      # Catches the beta.5 failure mode: the build succeeds but emits declarations
+      # to a path package.json does not point at, so the published package has no
+      # resolvable types. Only a tarball listing reveals it.
+      - name: Verify package entry points
+        run: pnpm verify:package
+
   swift:
     name: Swift Lint
     runs-on: macos-latest

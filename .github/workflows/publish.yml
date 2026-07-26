@@ -119,6 +119,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Explicit rather than relying on prepublishOnly, so a bad tarball fails
+      # before the publish step rather than mid-publish.
+      - name: Verify package entry points
+        run: pnpm verify:package
+
       - name: Install latest npm
         run: npm install -g npm@latest
 
