@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { platform } from "@tauri-apps/plugin-os";
-  import { Copy } from "lucide-svelte";
+  import { Copy } from "@lucide/svelte";
   import {
     deleteKey,
     generateSecureKey,

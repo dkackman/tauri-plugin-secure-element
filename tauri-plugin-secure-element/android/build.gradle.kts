@@ -22,7 +22,7 @@ android {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
         }
     }
@@ -47,6 +47,9 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.6.2")
     implementation("com.google.android.material:material:1.7.0")
     implementation(project(":tauri-android"))
+
+    // Host-JVM unit tests (src/test) use JUnit 4.
+    testImplementation("junit:junit:4.13.2")
 }
 
 ktlint {

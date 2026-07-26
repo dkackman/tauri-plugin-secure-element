@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Copy, Key, Plus, Trash2 } from "lucide-svelte";
+  import { Copy, Key, Plus, Trash2 } from "@lucide/svelte";
   import {
     deleteKey,
     generateSecureKey,

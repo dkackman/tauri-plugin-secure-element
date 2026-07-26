@@ -11,4 +11,3 @@ commands.allow = ["check_secure_element_support"]
 identifier = "deny-check-secure-element-support"
 description = "Denies the check_secure_element_support command without any pre-configured scope."
 commands.deny = ["check_secure_element_support"]
-

@@ -35,21 +35,14 @@ pub fn raw_ecdsa_to_der(raw: &[u8]) -> crate::Result<Vec<u8>> {
     let s_der = encode_integer(s);
 
     let seq_len = r_der.len() + s_der.len();
-    let mut der = vec![0x30]; // SEQUENCE tag
 
-    // Length encoding (DER definite form)
-    if seq_len < 128 {
-        der.push(seq_len as u8);
-    } else if seq_len <= 255 {
-        der.push(0x81);
-        der.push(seq_len as u8);
-    } else {
-        return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
-            &format!("DER sequence length too large: {}", seq_len),
-            "Failed to sign",
-        ))));
-    }
+    // For P-256, R and S are each at most 33 bytes (32-byte scalar plus an
+    // optional sign-padding byte), so the SEQUENCE body is at most 70 bytes —
+    // always within DER short-form length encoding (< 128). Longer forms are
+    // unreachable for valid 64-byte input.
+    debug_assert!(seq_len < 128, "P-256 DER sequence length must fit short form");
 
+    let mut der = vec![0x30, seq_len as u8]; // SEQUENCE tag + short-form length
     der.extend_from_slice(&r_der);
     der.extend_from_slice(&s_der);
 

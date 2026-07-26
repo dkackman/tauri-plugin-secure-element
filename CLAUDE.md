@@ -206,7 +206,7 @@ pnpm build               # Ensure everything builds
 - `serde` / `serde_json` 1.0
 - `thiserror` 2
 - `base64` 0.22
-- `sha2` 0.10
+- `sha2` 0.11
 - Platform-specific: `libc` (macOS), `windows` + `winver` + `raw-window-handle` (Windows)
 
 **Guest JS**:

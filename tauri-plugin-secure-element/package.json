@@ -64,6 +64,6 @@
     "@rollup/rollup-win32-arm64-msvc": "^4.54.0",
     "rollup": "^4.59.0",
     "tslib": "^2.6.2",
-    "typescript": "^5.3.3"
+    "typescript": "^6.0.3"
   }
 }

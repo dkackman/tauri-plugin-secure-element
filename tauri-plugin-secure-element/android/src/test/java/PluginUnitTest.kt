@@ -19,7 +19,10 @@ class PluginUnitTest {
 
     @Test
     fun `exact 32 bytes is returned unchanged`() {
-        val input = BigInteger(1, ByteArray(32) { it.toByte() })
+        // First byte must be non-zero (and high bit clear) so the magnitude is a
+        // genuine 32 significant bytes: a leading 0x00 would make toByteArray()
+        // return 31 bytes, and a high bit would add a 33rd sign byte.
+        val input = BigInteger(1, ByteArray(32) { (it + 1).toByte() })
         val result = SecureKeysPlugin.bigIntegerTo32Bytes(input)
         assertEquals(32, result.size)
         // The 32-byte two's-complement representation of a positive BigInteger
@@ -101,5 +104,31 @@ class PluginUnitTest {
             val result = SecureKeysPlugin.bigIntegerTo32Bytes(input)
             assertEquals("Expected 32 bytes for input $input", 32, result.size)
         }
+    }
+
+    // ── key alias namespacing ────────────────────────────────────────────────
+    // Every key is stored under a prefixed alias so the plugin only ever sees
+    // keys it created. listKeys returns the user-facing name with the prefix
+    // stripped, so aliasFor/keyNameFromAlias must round-trip exactly.
+
+    @Test
+    fun `aliasFor then keyNameFromAlias round-trips`() {
+        for (name in listOf("mykey", "my-key_1", "a", "z".repeat(64))) {
+            val alias = SecureKeysPlugin.aliasFor(name)
+            assertEquals(name, SecureKeysPlugin.keyNameFromAlias(alias))
+        }
+    }
+
+    @Test
+    fun `aliasFor applies the plugin prefix`() {
+        assertEquals("net.kackman.secureelement.k", SecureKeysPlugin.aliasFor("k"))
+    }
+
+    @Test
+    fun `keyNameFromAlias rejects foreign aliases`() {
+        // Aliases another library would create (no plugin prefix) are not ours.
+        assertNull(SecureKeysPlugin.keyNameFromAlias("mykey"))
+        assertNull(SecureKeysPlugin.keyNameFromAlias("AndroidKeyStore_default"))
+        assertNull(SecureKeysPlugin.keyNameFromAlias(""))
     }
 }

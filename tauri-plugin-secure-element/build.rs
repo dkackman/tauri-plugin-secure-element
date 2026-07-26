@@ -2,7 +2,14 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-const COMMANDS: &[&str] = &["ping"];
+const COMMANDS: &[&str] = &[
+    "ping",
+    "generate_secure_key",
+    "list_keys",
+    "sign_with_key",
+    "delete_key",
+    "check_secure_element_support",
+];
 
 fn main() {
     // Declare cfg flags for Tauri platform detection

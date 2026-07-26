@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { Copy } from "lucide-svelte";
+  import { Copy } from "@lucide/svelte";
   import { signWithKey, type KeyInfo } from "tauri-plugin-secure-element-api";
   import SpinnerButton from "./SpinnerButton.svelte";
   import { copyToClipboard } from "./utils.js";
