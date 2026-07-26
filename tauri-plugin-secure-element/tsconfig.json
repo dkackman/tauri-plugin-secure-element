@@ -6,7 +6,7 @@
     // Must be set explicitly. Without it TypeScript infers the common source directory,
     // and that inference changed in newer releases: declarations started landing at
     // dist-js/guest-js/index.d.ts while package.json "types" points at
-    // dist-js/index.d.ts. That shipped in 0.1.0-beta.7 with no type definitions
+    // dist-js/index.d.ts. That shipped in 0.1.0-beta.8 with no type definitions
     // resolvable at all. Pinning rootDir keeps the emit path stable.
     "rootDir": "./guest-js",
     "skipLibCheck": true,
@@ -15,6 +15,11 @@
     "noImplicitAny": true,
     "noEmit": true
   },
-  "include": ["guest-js/*.ts"],
-  "exclude": ["dist-js", "node_modules"]
+  "include": [
+    "guest-js/*.ts"
+  ],
+  "exclude": [
+    "dist-js",
+    "node_modules"
+  ]
 }
