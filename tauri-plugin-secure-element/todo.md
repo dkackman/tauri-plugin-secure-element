@@ -25,6 +25,13 @@ Already fixed (see git history):
   `cargo:warning`, and `cargo check` — exactly what CI runs — passed with zero FFI
   symbols built. `build.rs` now panics on a Swift compile error, and invokes swiftc via
   `xcrun` so the compiler and SDK always come from the same toolchain.
+- **Broken TypeScript types in the published package.** `tsconfig.json` never set
+  `rootDir`, so TypeScript inferred it — and that inference shifted under a newer
+  compiler, moving declarations from `dist-js/index.d.ts` to
+  `dist-js/guest-js/index.d.ts` while `package.json` `"types"` still pointed at the
+  former. **`0.1.0-beta.5` is live on npm with types that do not resolve at all**
+  (beta.3 and beta.4 were fine). `rootDir` is now pinned explicitly. This alone
+  justifies a prompt beta.6.
 - The expensive keygen probes are now memoized at the platform layer, which also
   resolves the "iOS burns an ephemeral Secure Enclave key on every `generateSecureKey`"
   finding: `Plugin.swift` still calls `checkSupport()`, but the probe inside it now runs
@@ -206,9 +213,25 @@ tests assert DER _structure_ but no test anywhere verifies an actual signature.
 - [ ] Windows error sanitization is inconsistent: the "already exists" and Windows-Hello
       -not-configured messages use plain `format!`, bypassing `sanitize_error`, so
       release builds still emit the key name.
-- [ ] Bump Android deps — `androidx.biometric:biometric:1.1.0` (2020),
-      `core-ktx:1.9.0`, `appcompat:1.6.0`, `material:1.7.0` are all 2022-era against
-      `compileSdk = 36`. The biometric bump may interact with item 1.
+- [ ] Android toolchain upgrade — blocks all androidx dependency bumps. Attempted and
+      reverted; the constraints are: - **`androidx.biometric` has no stable upgrade.** 1.1.0 (2020) is still the newest
+      stable release; 1.2.0, 1.3.0 and 1.4.0 have only ever shipped as alphas. So
+      item 1 cannot be fixed by bumping the library — it needs a code change. - `core-ktx:1.19.0`, `appcompat:1.7.1`, `fragment-ktx:1.8.9` and `material:1.14.0`
+      all ship **Kotlin 2.1.0 metadata**, but `settings.gradle` pins Kotlin **1.8.20**
+      (and AGP **8.0.2**), which reads at most 1.9.0. Bumping them fails the build with
+      "Module was compiled with an incompatible version of Kotlin". - Raising the plugin's Kotlin version is not purely local: this is a **library**,
+      and its metadata must be readable by the consuming app. Tauri's generated Android
+      project currently uses Kotlin **1.9.25**, so compiling the plugin against 2.x
+      would break consumers until Tauri's template moves. Check what Tauri generates
+      before touching this. - Sequence when it is time: Tauri template Kotlin version → plugin `settings.gradle`
+      (Kotlin + AGP) → `compileOptions`/`jvmTarget` (Java 8 is likely too old for
+      AGP 8.1+) → ktlint gradle plugin → then the androidx versions.
+- [ ] `android/build.gradle.kts` declares `consumerProguardFiles("consumer-rules.pro")`
+      but that file does not exist; every build logs
+      "Supplied consumer proguard configuration does not exist". Create it or drop the
+      declaration.
+- [ ] The Android build warns it is "incompatible with Gradle 9.0" (deprecated features).
+      Worth resolving as part of the toolchain upgrade above.
 - [ ] `build.rs` comment says the permissions files are included "via the `include`
       field"; `Cargo.toml` uses `exclude`.
 - [ ] README's `GenerateSecureKeyResult` omits the `backing` field the API returns.

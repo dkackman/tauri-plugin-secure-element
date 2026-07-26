@@ -102,10 +102,7 @@ export async function deleteKey(
  * Ordered weakest → strongest: none < firmware < integrated < discrete
  */
 export type SecureElementBacking =
-  | "none"
-  | "firmware"
-  | "integrated"
-  | "discrete";
+  "none" | "firmware" | "integrated" | "discrete";
 
 /**
  * Secure element capabilities for the current device.

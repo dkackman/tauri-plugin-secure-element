@@ -54,7 +54,11 @@ tauri = { version = "2.11.5" }
 serde = "1.0"
 serde_json = "1.0.150"
 thiserror = "2"
-base64 = "0.22"
+# 0.23 added a default-on `simd-unsafe` feature (hand-written AVX2/NEON with runtime
+# detection). This crate only base64-encodes public keys, signatures and sign-input —
+# small, infrequent payloads where SIMD gains nothing measurable — so the extra unsafe
+# code paths are not worth it here. Drop `default-features = false` to opt back in.
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 sha2 = "0.11"
 
 [target.'cfg(target_os = "macos")'.dependencies]
