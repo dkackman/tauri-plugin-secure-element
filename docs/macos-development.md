@@ -155,7 +155,13 @@ If you see errors, re-run `./build-macos-dev.sh`.
 
 ### Error: "No provisioning profile found"
 
-Make sure the profile is in the correct location:
+This is expected on a fresh clone. The provisioning profile is **deliberately not
+committed** and is git-ignored: it is bound to a single Apple developer team, that
+team's certificates, and an explicit list of provisioned device UDIDs, so one
+developer's profile cannot work for anyone else.
+
+Create your own by following [Step 3](#step-3-create-a-provisioning-profile) and
+[Step 4](#step-4-install-the-provisioning-profile) above. The profile must end up at:
 
 ```bash
 test-app/embedded.provisionprofile

@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Apple code signing
+# The provisioning profile is per-developer: it is bound to one team, one set of
+# certificates and a specific list of provisioned devices, so a committed copy is
+# unusable by anyone else and embeds device UDIDs. Create your own — see
+# docs/macos-development.md.
+embedded.provisionprofile
+*.mobileprovision
