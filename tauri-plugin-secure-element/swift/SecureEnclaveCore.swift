@@ -204,7 +204,8 @@ public enum SecureEnclaveCore {
     /// or `nil` if the tag is not in this plugin's namespace.
     public static func decodeKeyName(fromTag tag: Data) -> String? {
         guard let full = String(data: tag, encoding: .utf8),
-              full.hasPrefix(keyTagPrefix) else {
+              full.hasPrefix(keyTagPrefix)
+        else {
             return nil
         }
         return String(full.dropFirst(keyTagPrefix.count))
@@ -374,12 +375,14 @@ public enum SecureEnclaveCore {
                 // Only surface keys this plugin created, identified by their tag
                 // namespace. The user-facing name is the tag minus the prefix.
                 guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
-                      let foundKeyName = decodeKeyName(fromTag: tagData) else {
+                      let foundKeyName = decodeKeyName(fromTag: tagData)
+                else {
                     continue
                 }
 
                 guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
-                      CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
+                      CFGetTypeID(keyRef) == SecKeyGetTypeID()
+                else {
                     continue
                 }
                 // swiftlint:disable:next force_cast
@@ -422,7 +425,7 @@ public enum SecureEnclaveCore {
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
-        guard status == errSecSuccess, let keyRef = keyRef else {
+        guard status == errSecSuccess, let keyRef else {
             if status == errSecInteractionNotAllowed {
                 return .failure(.keyNotAccessible)
             }
@@ -459,7 +462,7 @@ public enum SecureEnclaveCore {
     /// Delete a key from the Secure Enclave by name or public key
     public static func deleteKey(keyName: String?, publicKey: String?) -> Result<Bool, SecureEnclaveError> {
         // If keyName is provided, delete by name (fast path)
-        if let keyName = keyName {
+        if let keyName {
             let query = createKeyQuery(keyName: keyName, returnRef: false)
             let status = SecItemDelete(query as CFDictionary)
 
@@ -492,12 +495,14 @@ public enum SecureEnclaveCore {
             for item in items {
                 // Only consider keys this plugin created.
                 guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
-                      let foundKeyName = decodeKeyName(fromTag: tagData) else {
+                      let foundKeyName = decodeKeyName(fromTag: tagData)
+                else {
                     continue
                 }
 
                 guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
-                      CFGetTypeID(keyRef) == SecKeyGetTypeID() else {
+                      CFGetTypeID(keyRef) == SecKeyGetTypeID()
+                else {
                     continue
                 }
                 // swiftlint:disable:next force_cast
@@ -505,7 +510,8 @@ public enum SecureEnclaveCore {
 
                 // Check if this key's public key matches
                 if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
-                   publicKeyBase64 == targetPublicKey {
+                   publicKeyBase64 == targetPublicKey
+                {
                     let deleteQuery = createKeyQuery(keyName: foundKeyName, returnRef: false)
                     let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
 
@@ -527,7 +533,7 @@ public enum SecureEnclaveCore {
         }
     }
 
-    /// Detects the type of secure element on macOS (Apple Silicon vs T2 vs none)
+    // Detects the type of secure element on macOS (Apple Silicon vs T2 vs none)
     #if os(macOS)
         private static func detectMacSecureElementType() -> (discrete: Bool, integrated: Bool) {
             // Check if running on Apple Silicon (arm64)
@@ -639,8 +645,8 @@ public enum SecureEnclaveCore {
         return SupportResponse(
             discrete: discrete,
             integrated: integrated,
-            firmware: false,        // Apple platforms don't have firmware-only TPM
-            emulated: isSimulator,  // Real device or emulated
+            firmware: false, // Apple platforms don't have firmware-only TPM
+            emulated: isSimulator, // Real device or emulated
             strongest: strongest,
             canEnforceBiometricOnly: canEnforceBiometric
         )

@@ -44,23 +44,23 @@
     "test:swift": "cd ios && swift test",
     "test:android": "cd android && (./gradlew test || gradle test || echo 'Note: Gradle wrapper not found. Install Gradle or run from Android Studio')",
     "test:android:instrumented": "cd android && (./gradlew connectedAndroidTest || gradle connectedAndroidTest || echo 'Note: Gradle wrapper not found. Install Gradle or run from Android Studio')",
-    "format": "prettier --write . && cargo fmt && swiftformat ios/ 2>/dev/null || echo 'Note: swiftformat not installed. Install with: brew install swiftformat' && pnpm format:kotlin",
-    "format:check": "prettier --check . && cargo fmt --check && (swiftformat --lint ios/ 2>/dev/null || echo 'Note: swiftformat not installed') && pnpm format:check:kotlin",
+    "format": "prettier --write . && cargo fmt && swiftformat ios/ swift/ 2>/dev/null || echo 'Note: swiftformat not installed. Install with: brew install swiftformat' && pnpm format:kotlin",
+    "format:check": "prettier --check . && cargo fmt --check && (swiftformat --lint ios/ swift/ 2>/dev/null || echo 'Note: swiftformat not installed') && pnpm format:check:kotlin",
     "format:js": "prettier --write .",
     "format:rust": "cargo fmt",
-    "format:swift": "swiftformat ios/ || echo 'Note: swiftformat not installed. Install with: brew install swiftformat'",
-    "format:kotlin": "ktlint -F 'android/src/**/*.kt'",
-    "format:check:kotlin": "ktlint 'android/src/**/*.kt'",
-    "lint": "cargo clippy -- -D warnings && (swiftlint lint --no-cache ios/ 2>/dev/null || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')) && pnpm lint:kotlin",
+    "format:swift": "swiftformat ios/ swift/ || echo 'Note: swiftformat not installed. Install with: brew install swiftformat'",
+    "format:kotlin": "pnpm exec ktlint -F 'android/src/**/*.kt'",
+    "format:check:kotlin": "pnpm exec ktlint 'android/src/**/*.kt'",
+    "lint": "cargo clippy -- -D warnings && (swiftlint lint --no-cache 2>/dev/null || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')) && pnpm lint:kotlin",
     "lint:rust": "cargo clippy -- -D warnings",
-    "lint:swift": "swiftlint lint --no-cache ios/ || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')",
-    "lint:kotlin": "ktlint 'android/src/**/*.kt'"
+    "lint:swift": "swiftlint lint --no-cache || (command -v swiftlint >/dev/null 2>&1 || echo 'Note: swiftlint not installed. Install with: brew install swiftlint')",
+    "lint:kotlin": "pnpm exec ktlint 'android/src/**/*.kt'"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1"
   },
   "devDependencies": {
-    "@naturalcycles/ktlint": "^1.16.1",
+    "@naturalcycles/ktlint": "1.16.1",
     "@rollup/plugin-typescript": "^12.3.0",
     "@rollup/rollup-win32-arm64-msvc": "^4.62.2",
     "rollup": "^4.62.2",

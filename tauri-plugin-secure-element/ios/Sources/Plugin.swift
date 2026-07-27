@@ -138,5 +138,5 @@ class SecureEnclavePlugin: Plugin {
 
 @_cdecl("init_plugin_secure_element")
 func initPlugin() -> Plugin {
-    return SecureEnclavePlugin()
+    SecureEnclavePlugin()
 }

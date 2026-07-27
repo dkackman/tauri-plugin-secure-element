@@ -495,3 +495,31 @@ impl<R: Runtime> SecureElement<R> {
         }
     }
 }
+
+/// Forces the linker to resolve every Swift FFI symbol.
+///
+/// `cargo check` does not link, and a plain `cargo test` links a binary that never
+/// references these symbols — so a name mismatch between an `extern "C"` declaration
+/// here and the `@_cdecl` attribute in `swift/secure_element_ffi.swift` compiles and
+/// tests clean, and only surfaces when an application links the plugin. Taking each
+/// symbol's address emits a relocation the linker has to satisfy from the static
+/// archive `build.rs` builds, which turns that into a CI failure.
+#[cfg(all(test, target_os = "macos"))]
+mod ffi_link_tests {
+    #[test]
+    fn every_ffi_symbol_resolves() {
+        let symbols: [*const (); 5] = [
+            super::secure_element_list_keys as *const (),
+            super::secure_element_check_support as *const (),
+            super::secure_element_generate_secure_key as *const (),
+            super::secure_element_sign_with_key as *const (),
+            super::secure_element_delete_key as *const (),
+        ];
+
+        // The addresses are never called: the Secure Enclave needs entitlements CI does
+        // not have. Linking them is the whole point of the test.
+        for symbol in symbols {
+            assert!(!symbol.is_null());
+        }
+    }
+}

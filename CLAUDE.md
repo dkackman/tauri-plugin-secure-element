@@ -11,7 +11,11 @@ This is a **pnpm workspace monorepo**: the main plugin lives in `tauri-plugin-se
 Beyond Rust/Node/pnpm/Tauri CLI, the non-obvious platform tooling:
 
 - iOS: Xcode, swiftformat, swiftlint
-- Android: Android Studio, Android SDK, ktlint (installed via pnpm)
+- Android: Android Studio, Android SDK, ktlint — do not install it yourself. The lint
+  scripts run `pnpm exec ktlint`, which resolves the pinned `@naturalcycles/ktlint`,
+  and `android/build.gradle.kts` hands the ktlint Gradle plugin that same version. A
+  `ktlint` on `PATH` from Homebrew or `~/.ktlint` is a different version that will
+  disagree with CI about the same files; if you bump one, bump all three.
 - macOS: Xcode (for Secure Enclave FFI), provisioning profile (see docs/)
 - Windows: Visual Studio Build Tools, Windows SDK (for Windows Hello/TPM)
 

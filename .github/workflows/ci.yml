@@ -58,6 +58,12 @@ jobs:
       - name: Run tests
         run: cargo test
 
+      # The only thing that exercises build.rs's packaging branch and proves the crate
+      # that would be published actually builds. Left unchecked, a break here surfaces
+      # at `cargo publish`, after the release tag has already been cut.
+      - name: Verify the crate packages
+        run: cargo package
+
   typescript:
     name: TypeScript Build
     runs-on: ubuntu-latest
@@ -105,14 +111,20 @@ jobs:
       - name: Install SwiftLint
         run: brew install swiftlint swiftformat
 
+      # Both paths, not just ios/. ios/Sources/SecureEnclaveCore.swift is a symlink into
+      # swift/, and swiftformat skips symlinks — so the largest and most
+      # security-critical Swift file was reported as "skipped" and never checked, along
+      # with the macOS-only swift/secure_element_ffi.swift.
       - name: Check Swift formatting
-        run: swiftformat --lint ios/
+        run: swiftformat --lint ios/ swift/
 
+      # No path argument: .swiftlint.yml lists what to lint, including swift/, and
+      # excludes the symlink so nothing is linted twice.
       - name: Run SwiftLint
-        run: swiftlint lint ios/
+        run: swiftlint lint
 
   kotlin:
-    name: Kotlin Lint
+    name: Kotlin Lint & Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -134,8 +146,52 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      # Runs the ktlint bundled with @naturalcycles/ktlint, which is pinned to the exact
+      # version android/build.gradle.kts hands the ktlint Gradle plugin. Keep them equal
+      # or the CLI and Gradle disagree about the same files.
       - name: Run ktlint
         run: pnpm lint:kotlin
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tauri-plugin-secure-element/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # android/settings.gradle includes :tauri-android from android/.tauri/tauri-api,
+      # which build.rs materialises out of the tauri crate. It is gitignored, so without
+      # a cargo run first the Gradle build cannot resolve the project dependency.
+      - name: Generate the Tauri Android project
+        run: cargo check
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # The unit tests in android/src/test have existed since before this job did and
+      # had never run anywhere but a developer's machine.
+      - name: Run Kotlin unit tests
+        run: ./gradlew test --no-daemon
+        working-directory: tauri-plugin-secure-element/android
 
   rust-windows:
     name: Rust Checks (Windows)
@@ -168,6 +224,9 @@ jobs:
       - name: Check compilation
         run: cargo check
 
+      # Also a link check: src/windows.rs has a test that takes the address of every
+      # function calling into NCrypt, so the linker has to resolve those imports.
+      # `cargo check` never links, and nothing else in a test binary references them.
       - name: Run tests
         run: cargo test
 
@@ -202,5 +261,10 @@ jobs:
       - name: Check compilation
         run: cargo check
 
+      # Also a link check: src/desktop.rs has a test that takes the address of every
+      # Swift `@_cdecl` entry point, so a name mismatch between the Rust `extern "C"`
+      # declarations and swift/secure_element_ffi.swift fails here rather than in a
+      # consuming application. `cargo check` runs build.rs — which does catch a Swift
+      # compile error — but never links.
       - name: Run tests
         run: cargo test

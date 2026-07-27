@@ -43,6 +43,37 @@ Already fixed (see git history):
   exercised on a signed build. `cargo test` already runs on Linux, macOS and Windows, so
   this gates every release. `/tests` is excluded from the published crate because the
   test `include_str!`s a path under `test-app/`.
+- **The remaining CI gaps are closed.**
+  - `SecureEnclaveCore.swift` and the macOS-only `secure_element_ffi.swift` are
+    format-checked and linted now. swiftformat runs against `ios/ swift/` — it skips the
+    symlink, so `swift/` is where the shared file actually gets checked — and
+    `.swiftlint.yml` adds `swift` to `included` while excluding the symlink so nothing is
+    linted twice. Fixing the backlog of diffs also surfaced one real violation the gap
+    had been hiding.
+  - The swiftformat "no Swift version was specified" warning is gone, but via
+    `--swiftversion 5.7` in a new `.swiftformat` rather than the `.swift-version` file
+    the item asked for: swiftly reads `.swift-version` as a _toolchain selector_ and
+    refuses to run when no toolchain of exactly that version is installed, which breaks
+    every `swift` command in the tree. 5.7 rather than the newest because at 5.9 the
+    `redundantReturn` rule rewrites `switch` statements into implicit-return switch
+    _expressions_, raising the minimum toolchain to Xcode 15 for anyone building the iOS
+    package.
+  - Kotlin unit tests run in CI. `:tauri-android` does resolve: `build.rs` materialises
+    the project under `android/.tauri`, so the job runs `cargo check` before
+    `./gradlew test` (and therefore needs the Rust toolchain and the Linux Tauri
+    dependencies). 10 tests that had only ever run on a developer's machine now gate PRs.
+  - ktlint is pinned in all three places. `@naturalcycles/ktlint` is pinned exactly, the
+    scripts call it through `pnpm exec` so a Homebrew or `~/.ktlint` binary can no longer
+    shadow it, and the Gradle plugin moved from `1.1.1` to the `1.8.0` that ships with it.
+  - Link errors are caught without adding a build job. The gap was verified first, by
+    renaming an `extern "C"` declaration to a symbol Swift does not export — check,
+    clippy and test all passed. `desktop.rs` and `windows.rs` now
+    each carry a test that takes the address of every FFI entry point, forcing the linker
+    to resolve them, and the same experiment now fails to link. This catches more than a
+    build job would, since `cargo build` on a lib crate does not link an executable
+    either.
+  - `cargo package` runs in the Linux job, the only thing that exercises `build.rs`'s
+    packaging branch and proves the crate that would be published builds.
 - The expensive keygen probes are now memoized at the platform layer, which also
   resolves the "iOS burns an ephemeral Secure Enclave key on every `generateSecureKey`"
   finding: `Plugin.swift` still calls `checkSupport()`, but the probe inside it now runs
@@ -154,27 +185,6 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 - [ ] Consider returning the provider/auth-mode in `KeyInfo` so callers can tell a
       silent TPM key from a Hello-protected one. Right now `listKeys` cannot distinguish
       them, which matters for any security decision made from the list.
-
-### 6. Close the remaining CI gaps
-
-- [ ] `SecureEnclaveCore.swift` — the largest and most security-critical Swift file — is
-      **not linted or format-checked at all**. `swiftformat --lint ios/` reports "2 files
-      skipped" because it is a symlink into `swift/`. Point the lint at `swift/` too, or
-      resolve symlinks. Note `swift/` currently has ~4 pre-existing `guard`/`else`
-      formatting diffs that will need fixing once it is covered.
-- [ ] Add a `.swift-version` file — swiftformat warns that some rules are disabled
-      without it.
-- [ ] Kotlin unit tests (`android/src/test/java/PluginUnitTest.kt`) never run in CI; the
-      kotlin job only runs ktlint. Wire up `gradlew test` if the `:tauri-android`
-      project dependency can be resolved in CI.
-- [ ] The local `~/.ktlint/ktlint` binary rejects valid Kotlin trailing commas
-      ("Not a valid Kotlin file") on pristine `main` — version skew with the `1.1.1`
-      pinned in `build.gradle.kts`. Pin one version across gradle, the pnpm script, and
-      the docs so local and CI agree.
-- [ ] Consider a build job (not just `cargo check`) on macOS/Windows so link errors —
-      e.g. missing Swift FFI symbols — are caught. `cargo check` does not link.
-- [ ] `cargo test` now runs on all three platforms, but nothing runs `cargo package
---dry-run`; the `build.rs` packaging path is untested.
 
 ---
 
