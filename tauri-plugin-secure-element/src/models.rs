@@ -1,5 +1,27 @@
 use serde::{Deserialize, Serialize};
 
+/// (De)serializes `Vec<u8>` as a base64 string on the wire instead of serde's default
+/// JSON number array, which is ~4x larger once JSON's per-element separators are
+/// counted. Used for fields that can carry substantial payloads across the IPC
+/// boundary (e.g. `SignWithKeyRequest::data`).
+mod base64_bytes {
+    use base64::Engine;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        base64::engine::general_purpose::STANDARD
+            .encode(bytes)
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        base64::engine::general_purpose::STANDARD
+            .decode(&s)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// Authentication mode for secure element operations
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,7 +136,8 @@ pub struct ListKeysResponse {
 pub struct SignWithKeyRequest {
     /// The name of the key to use for signing
     pub key_name: String,
-    /// The data to sign
+    /// The data to sign, base64-encoded on the wire (see `base64_bytes`)
+    #[serde(with = "base64_bytes")]
     pub data: Vec<u8>,
     // Note: Authentication is enforced automatically by the platform based on the key's requirements
     // set at creation time. The auth_mode parameter is ignored for signing operations.
@@ -126,6 +149,42 @@ pub struct SignWithKeyRequest {
 pub struct SignWithKeyResponse {
     /// The signature in bytes
     pub signature: Vec<u8>,
+}
+
+#[cfg(test)]
+mod sign_with_key_request_tests {
+    use super::*;
+
+    // The wire format must be a base64 string, not a JSON number array: that's the
+    // whole point (~4x smaller over IPC), and native platforms (iOS's `Data`,
+    // Android's Jackson `ByteArray`) decode `data` expecting exactly this shape.
+    #[test]
+    fn data_serializes_as_base64_string_not_number_array() {
+        let req = SignWithKeyRequest {
+            key_name: "k".to_string(),
+            data: vec![0, 1, 2, 253, 254, 255],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(json, r#"{"keyName":"k","data":"AAEC/f7/"}"#);
+    }
+
+    #[test]
+    fn data_round_trips_through_json() {
+        let data = vec![0u8, 1, 2, 253, 254, 255, 128, 127];
+        let req = SignWithKeyRequest {
+            key_name: "k".to_string(),
+            data: data.clone(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: SignWithKeyRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.data, data);
+    }
+
+    #[test]
+    fn rejects_non_base64_string() {
+        let json = r#"{"keyName":"k","data":"not valid base64!!"}"#;
+        assert!(serde_json::from_str::<SignWithKeyRequest>(json).is_err());
+    }
 }
 
 /// Request to delete a key
@@ -309,7 +368,10 @@ pub struct CheckSecureElementSupportResponse {
     pub integrated: bool,
     /// Firmware-backed security is available but no dedicated secure processor (e.g. fTPM)
     pub firmware: bool,
-    /// The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator)
+    /// The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator). Authoritative
+    /// on iOS/macOS and Windows (a compile-time check and the TBS-reported TPM interface
+    /// type, respectively); on Android it's a build-fingerprint heuristic and should be
+    /// treated as best-effort.
     pub emulated: bool,
     /// The strongest tier available on this device
     pub strongest: SecureElementBacking,

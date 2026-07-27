@@ -25,7 +25,10 @@ class ListKeysArgs: Decodable {
 
 class SignWithKeyArgs: Decodable {
     let keyName: String
-    let data: [UInt8]
+    /// `Data` decodes a base64 string by default (JSONDecoder.dataDecodingStrategy
+    /// .base64), matching the wire format Rust's `SignWithKeyRequest` now uses —
+    /// a JSON number array here costs ~4x the bytes over the IPC boundary.
+    let data: Data
 }
 
 class DeleteKeyArgs: Decodable {
@@ -96,9 +99,8 @@ class SecureEnclavePlugin: Plugin {
 
     @objc func signWithKey(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(SignWithKeyArgs.self)
-        let dataToSign = Data(args.data)
 
-        switch SecureEnclaveCore.signWithKey(keyName: args.keyName, data: dataToSign) {
+        switch SecureEnclaveCore.signWithKey(keyName: args.keyName, data: args.data) {
         case let .success(response):
             invoke.resolve(["signature": [UInt8](response.signature)])
         case let .failure(error):

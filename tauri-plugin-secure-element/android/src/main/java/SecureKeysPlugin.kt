@@ -452,7 +452,12 @@ class SecureKeysPlugin(
     }
 
     /**
-     * Detect if running on an Android emulator
+     * Detect if running on an Android emulator.
+     *
+     * Best-effort only: this is build-fingerprint string matching, not a hardware- or
+     * OS-reported signal (unlike iOS's compile-time simulator check or Windows' TBS TPM
+     * interface type). It can be spoofed by a custom ROM or rooted device, and can
+     * misfire on real hardware that ships with unusual build properties.
      */
     private fun isEmulator(): Boolean =
         (

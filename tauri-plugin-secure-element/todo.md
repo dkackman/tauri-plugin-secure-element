@@ -217,50 +217,44 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       provider it was found in, so delete-by-public-key no longer goes back through
       name resolution. This did not need the public `KeyInfo` change below — `list_keys`
       is now a thin projection of `find_keys`, so the provider stays internal to the
-      Windows layer until that item is taken up.
-      - Collapsed `list_keys_from_provider` and `list_ngc_keys`, which were near-identical
-        copies of the same unsafe enumeration loop, into one `find_keys_in_provider` over
-        `enumerate_key_names`. The two differed only in how a caller-facing name is
-        recovered from an enumerated one, which is now a closure parameter.
-      - **Behavior change beyond the bullet:** `find_keys` propagates provider-open and
-        enumeration failures instead of skipping that provider, so `listKeys` now errors
-        where it used to return a partial list. Deliberate — delete-by-public-key treats
-        an empty result as "already gone, success", so a swallowed enumeration failure
-        there reports a key destroyed that still exists. It also makes the pre-existing
-        "propagate provider errors" comment in `desktop.rs` true, which it was not.
-      - Residual: a key that enumerates but cannot be opened or exported is still skipped
-        rather than propagated, so it too reads as "already gone" on a delete-by-public-key.
-        Left tolerant on purpose — one unreadable key should not break `listKeys` entirely.
+      Windows layer until that item is taken up. - Collapsed `list_keys_from_provider` and `list_ngc_keys`, which were near-identical
+      copies of the same unsafe enumeration loop, into one `find_keys_in_provider` over
+      `enumerate_key_names`. The two differed only in how a caller-facing name is
+      recovered from an enumerated one, which is now a closure parameter. - **Behavior change beyond the bullet:** `find_keys` propagates provider-open and
+      enumeration failures instead of skipping that provider, so `listKeys` now errors
+      where it used to return a partial list. Deliberate — delete-by-public-key treats
+      an empty result as "already gone, success", so a swallowed enumeration failure
+      there reports a key destroyed that still exists. It also makes the pre-existing
+      "propagate provider errors" comment in `desktop.rs` true, which it was not. - Residual: a key that enumerates but cannot be opened or exported is still skipped
+      rather than propagated, so it too reads as "already gone" on a delete-by-public-key.
+      Left tolerant on purpose — one unreadable key should not break `listKeys` entirely.
 - [x] Return the provider/auth-mode in `KeyInfo` so callers can tell a silent TPM key
       from a Hello-protected one. **Decision: won't do — dropped deliberately, do not
       re-propose without new platform capability.** It cannot be given the same meaning
-      on all four platforms:
-      - Windows: OS-attested and free. NGC vs Platform Crypto Provider is already
-        computed at enumeration and lives in `FoundKey`.
-      - Android: OS-attested, one `KeyFactory.getKeySpec(privateKey, KeyInfo::class.java)`
-        per key per listing — a metadata read of the Keymaster characteristics, so no
-        prompt. `isUserAuthenticationRequired()` is API 23+; the `biometricOnly` vs
-        `pinOrBiometric` discriminator `getUserAuthenticationType()` is API 30+, but
-        `biometricOnly` is already rejected below 30, so it is unambiguous by construction.
-      - Apple: **not recoverable at all.** All three modes are created with the same
-        `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; the only difference is the
-        `SecAccessControlCreateFlags`, and `SecAccessControl` has no public flags
-        accessor (`SecAccessControlCreateWithFlags` and `SecAccessControlGetTypeID` are
-        the whole API). The mode is write-only: converted to flags at creation and
-        discarded.
+      on all four platforms: - Windows: OS-attested and free. NGC vs Platform Crypto Provider is already
+      computed at enumeration and lives in `FoundKey`. - Android: OS-attested, one `KeyFactory.getKeySpec(privateKey, KeyInfo::class.java)`
+      per key per listing — a metadata read of the Keymaster characteristics, so no
+      prompt. `isUserAuthenticationRequired()` is API 23+; the `biometricOnly` vs
+      `pinOrBiometric` discriminator `getUserAuthenticationType()` is API 30+, but
+      `biometricOnly` is already rejected below 30, so it is unambiguous by construction. - Apple: **not recoverable at all.** All three modes are created with the same
+      `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; the only difference is the
+      `SecAccessControlCreateFlags`, and `SecAccessControl` has no public flags
+      accessor (`SecAccessControlCreateWithFlags` and `SecAccessControlGetTypeID` are
+      the whole API). The mode is write-only: converted to flags at creation and
+      discarded.
 
       So the field would be OS-attested on two platforms and self-persisted on the third,
-      with no way for a caller to tell which one they are holding — the same trap as the
-      old `canEnforceBiometricOnly` split (one field name, two different questions), which
-      was fixed by aligning semantics rather than shipping the ambiguity. For a field
-      whose whole purpose is informing a security decision, sometimes-attested is worse
-      than absent. Apple keys created before any such change would also have no recorded
-      mode, so it could never be more than optional anyway.
+          with no way for a caller to tell which one they are holding — the same trap as the
+          old `canEnforceBiometricOnly` split (one field name, two different questions), which
+          was fixed by aligning semantics rather than shipping the ambiguity. For a field
+          whose whole purpose is informing a security decision, sometimes-attested is worse
+          than absent. Apple keys created before any such change would also have no recorded
+          mode, so it could never be more than optional anyway.
 
-      Nothing needs it: the delete-by-public-key fix carries the provider internally in
-      `FoundKey` and never exposes it, and the caller already knows the mode because they
-      passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
-      do reliably on all four platforms.
+          Nothing needs it: the delete-by-public-key fix carries the provider internally in
+          `FoundKey` and never exposes it, and the caller already knows the mode because they
+          passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
+          do reliably on all four platforms.
 
 ---
 
@@ -285,15 +279,30 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 - [x] `getAccessControlFlags` (`SecureEnclaveCore.swift`) silently downgrades unknown
       auth modes to `.userPresence` via `case "pinOrBiometric", _`. The Rust enum gates
       this today, but the `@_cdecl` FFI entry points are public. Fail closed instead.
-- [ ] `probeTeeSupport` now returns `false` when the generated key can't be inspected
-      (it previously assumed TEE). Confirm on a range of devices that this doesn't
-      false-negative anyone.
-- [ ] `isEmulator()` fingerprint sniffing is easily defeated and easily wrong. Either
+- [ ] `probeTeeSupport`/`backingOf` report `BACKING_SOFTWARE` whenever a generated key
+      can't be inspected (`entry?.privateKey == null`, or `KeyFactory.getKeySpec` throws)
+      rather than assuming TEE. The fail-closed design is sound and documented in code;
+      what's unverified is whether any real OEM `KeyFactory`/`KeyInfo` implementation
+      throws for a key that IS actually hardware-backed (buggy AOSP forks / low-end
+      OEMs are the usual suspects), which would false-negative that device. Needs
+      physical-device testing across a spread of OEMs and API levels — not
+      reproducible in this environment (no real secure hardware in emulators/CI).
+- [x] `isEmulator()` fingerprint sniffing is easily defeated and easily wrong. Either
       document `emulated` as best-effort on Android or derive it from the keystore
-      security level, which is already being read.
-- [ ] `signWithKey` marshals `data` as a JSON number array (`guest-js/index.ts`); at the
+      security level, which is already being read. (Documented as best-effort — deriving
+      from keystore security level was considered and rejected: `BACKING_SOFTWARE` means
+      "no hardware backing," which real TEE-less devices also report, so that derivation
+      would misclassify genuine hardware as emulated.)
+- [x] `signWithKey` marshals `data` as a JSON number array (`guest-js/index.ts`); at the
       1 MB validation ceiling that is ~4 MB of JSON per call. Consider base64 over the
       IPC boundary, or lower the ceiling to something a signing API actually needs.
+      (Chose base64: the API deliberately signs raw pre-hash data up to 1 MB, so there's
+      no smaller ceiling that's actually correct for the use case. `SignWithKeyRequest`
+      now (de)serializes `data` as base64 via a `#[serde(with = "base64_bytes")]` module in
+      `models.rs`; `guest-js` base64-encodes before `invoke()`. This also changed what iOS
+      gets over the mobile IPC bridge — `SignWithKeyArgs.data` in `Plugin.swift` moved from
+      `[UInt8]` to `Data`, which decodes base64 by default. Android's Jackson `ByteArray`
+      deserializer already accepts both encodings, so no Kotlin change was needed.)
 - [ ] Windows error sanitization is inconsistent: the "already exists" and Windows-Hello
       -not-configured messages use plain `format!`, bypassing `sanitize_error`, so
       release builds still emit the key name.

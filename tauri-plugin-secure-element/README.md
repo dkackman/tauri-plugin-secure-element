@@ -144,7 +144,9 @@ interface SecureElementCapabilities {
   integrated: boolean;
   /** Firmware-backed security is available but no dedicated secure processor (e.g. Windows fTPM via Intel PTT or AMD PSP) */
   firmware: boolean;
-  /** The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator, Android Emulator) */
+  /** The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator, Android Emulator).
+   *  Authoritative on iOS/macOS and Windows; on Android this is a build-fingerprint
+   *  heuristic, not a hardware-reported signal — treat it as best-effort there. */
   emulated: boolean;
   /** The strongest hardware backing tier available on this device */
   strongest: SecureElementBacking;

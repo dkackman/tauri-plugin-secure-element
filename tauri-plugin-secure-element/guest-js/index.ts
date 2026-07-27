@@ -81,6 +81,19 @@ export async function listKeys(
   }).then((r) => r.keys);
 }
 
+/**
+ * Encodes bytes as a base64 string. Chunked to stay well under JS engines'
+ * argument-count limits for `String.fromCharCode(...)` on large inputs.
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export async function signWithKey(
   keyName: string,
   data: Uint8Array
@@ -90,7 +103,7 @@ export async function signWithKey(
     {
       payload: {
         keyName,
-        data: Array.from(data),
+        data: bytesToBase64(data),
       },
     }
   ).then((r) => new Uint8Array(r.signature));
@@ -158,7 +171,14 @@ export interface SecureElementCapabilities {
   integrated: boolean;
   /** Firmware-backed security is available but no dedicated secure processor (e.g. fTPM) */
   firmware: boolean;
-  /** The security is emulated/virtual (e.g. vTPM in VM, iOS Simulator, Android Emulator) */
+  /**
+   * The security is emulated/virtual (e.g. vTPM in VM, iOS Simulator, Android Emulator).
+   * Authoritative on iOS/macOS (compile-time simulator check) and Windows (TPM interface
+   * type reported by the TBS API). On Android this is a build-fingerprint heuristic —
+   * there is no OS API that reports emulation reliably, so it can be spoofed by a custom
+   * ROM/rooted device and can misfire on real hardware with unusual build properties.
+   * Treat it as best-effort on Android.
+   */
   emulated: boolean;
   /** The strongest tier available on this device */
   strongest: SecureElementBacking;
