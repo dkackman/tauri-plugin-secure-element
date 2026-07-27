@@ -268,12 +268,12 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 
 ### Soundness
 
-- [ ] `windows.rs:530` — `&*(buffer.as_ptr() as *const TOKEN_USER)` creates a reference
+- [x] `windows.rs:530` — `&*(buffer.as_ptr() as *const TOKEN_USER)` creates a reference
       into a `Vec<u8>` (alignment 1) for a type requiring 8-byte alignment. Creating an
       unaligned reference is UB even if the read never faults; it works today only because
       the allocator happens to return aligned memory. Use `std::ptr::read_unaligned`, or
       allocate the buffer as `Vec<u64>`/via a properly aligned type.
-- [ ] `KeyNameBufferGuard::as_ref` (`windows_raii.rs`) dereferences a raw pointer in a
+- [x] `KeyNameBufferGuard::as_ref` (`windows_raii.rs`) dereferences a raw pointer in a
       safe `fn` with only a doc comment saying it must be called from an unsafe context.
       Make it `unsafe fn`.
 

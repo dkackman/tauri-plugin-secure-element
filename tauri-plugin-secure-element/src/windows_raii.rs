@@ -150,8 +150,8 @@ impl KeyNameBufferGuard {
 
     /// Gets a reference to the key name structure
     /// # Safety
-    /// Must be called from an unsafe context. The pointer must be valid and non-null.
-    pub fn as_ref(&self) -> &NCryptKeyName {
+    /// The pointer must be valid and non-null.
+    pub unsafe fn as_ref(&self) -> &NCryptKeyName {
         unsafe { &*self.0 }
     }
 }

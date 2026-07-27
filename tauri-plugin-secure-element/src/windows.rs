@@ -660,7 +660,7 @@ fn get_current_user_sid() -> crate::Result<String> {
             )))
         })?;
 
-        let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
+        let token_user = std::ptr::read_unaligned(buffer.as_ptr() as *const TOKEN_USER);
         let mut sid_string_ptr = windows::core::PWSTR::null();
         ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string_ptr).map_err(|e| {
             crate::Error::Io(std::io::Error::other(sanitize_error(
