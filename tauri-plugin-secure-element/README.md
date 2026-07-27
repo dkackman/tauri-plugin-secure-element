@@ -423,6 +423,34 @@ irrecoverably. This holds on both iOS/macOS (`.biometryCurrentSet`) and Android
 (`setInvalidatedByBiometricEnrollment` defaults to `true`). Do not use `biometricOnly` for
 keys that must survive routine biometric re-enrollment.
 
+### When the user is prompted
+
+Platforms agree on prompting for every signature, but differ on whether creating an
+authenticated key prompts as well:
+
+| Platform    | `generateSecureKey` (`pinOrBiometric`) | `signWithKey`   |
+| ----------- | -------------------------------------- | --------------- |
+| iOS / macOS | No prompt                              | Prompt each use |
+| Android     | No prompt                              | Prompt each use |
+| **Windows** | **Windows Hello prompt**               | Prompt each use |
+
+Windows is the outlier. Authenticated keys live in the Microsoft Passport key storage
+provider (`Microsoft Passport Key Storage Provider`), and binding a new key to your
+Windows Hello credential unlocks the NGC container — so `NCryptFinalizeKey` raises a
+Hello prompt as the key is created. This is enforced by the OS and cannot be suppressed:
+passing `NCRYPT_SILENT_FLAG` fails with `NTE_SILENT_CONTEXT` (`0x80090022`) instead of
+creating the key quietly. `none` keys use the Platform Crypto Provider (TPM) and never
+prompt, on Windows or anywhere else.
+
+On iOS/macOS the key is created with a `SecAccessControl` policy but no authentication
+context, and on Android with a `KeyGenParameterSpec` alone — in both cases the OS defers
+the gesture to first use. Windows has no equivalent deferral.
+
+Because of this, call `generateSecureKey` from an explicit user action — an "enable
+secure signing" button rather than app startup — so the prompt arrives when the user
+expects it. This costs nothing on iOS/macOS/Android and avoids an unexplained Hello
+dialog on Windows.
+
 ## License
 
 Apache-2.0

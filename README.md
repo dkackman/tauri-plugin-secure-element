@@ -375,6 +375,29 @@ All keys use the **secp256r1 (P-256)** elliptic curve.
 removing one, or re-enrolling Face ID destroys the key irrecoverably. Do not use
 `biometricOnly` for keys that must survive routine biometric re-enrollment.
 
+### When the user is prompted
+
+Platforms agree on prompting for every signature, but differ on whether creating an
+authenticated key prompts as well:
+
+| Platform    | `generateSecureKey` (`pinOrBiometric`) | `signWithKey`   |
+| ----------- | -------------------------------------- | --------------- |
+| iOS / macOS | No prompt                              | Prompt each use |
+| Android     | No prompt                              | Prompt each use |
+| **Windows** | **Windows Hello prompt**               | Prompt each use |
+
+Windows is the outlier. Authenticated keys live in the Microsoft Passport key storage
+provider, and binding a new key to your Windows Hello credential unlocks the NGC
+container — so creating the key raises a Hello prompt. This is enforced by the OS and
+cannot be suppressed: asking for silent creation fails with `NTE_SILENT_CONTEXT`
+(`0x80090022`) instead of creating the key quietly. `none` keys use the Platform Crypto
+Provider (TPM) and never prompt, on Windows or anywhere else.
+
+Because of this, call `generateSecureKey` from an explicit user action — an "enable
+secure signing" button rather than app startup — so the prompt arrives when the user
+expects it. This costs nothing on iOS/macOS/Android and avoids an unexplained Hello
+dialog on Windows.
+
 ## License
 
 Apache-2.0
