@@ -184,8 +184,8 @@ Docs and code disagree on a security-relevant setting.
 `NCRYPT_SILENT_FLAG`. If opening or `export_public_key` on an auth-mandatory NGC key
 triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 
-- [ ] Test on hardware with several `pinOrBiometric` keys present.
-- [ ] If it prompts, switch both call sites to the silent path.
+- [x] Test on hardware with several `pinOrBiometric` keys present. Confirmed: `listKeys`
+      does not prompt with multiple pin/biometric keys present.
 
 ### 5. Cross-provider name collisions on Windows
 
