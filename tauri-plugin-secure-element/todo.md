@@ -58,10 +58,19 @@ Already fixed (see git history):
     `redundantReturn` rule rewrites `switch` statements into implicit-return switch
     _expressions_, raising the minimum toolchain to Xcode 15 for anyone building the iOS
     package.
-  - Kotlin unit tests run in CI. `:tauri-android` does resolve: `build.rs` materialises
-    the project under `android/.tauri`, so the job runs `cargo check` before
-    `./gradlew test` (and therefore needs the Rust toolchain and the Linux Tauri
-    dependencies). 10 tests that had only ever run on a developer's machine now gate PRs.
+  - Kotlin unit tests run in CI — 10 tests that had only ever run on a developer's
+    machine. `:tauri-android` resolves only if `android/.tauri/tauri-api` exists, and
+    nothing in this repository's build creates it: it is a copy of the tauri crate's
+    `mobile/android` project that the Tauri CLI drops there while building an app for
+    Android, and it is gitignored, so a fresh checkout cannot run `./gradlew` at all.
+    `scripts/materialize-tauri-android.sh` does that copy from the crate source cargo
+    already has, and CI runs it before Gradle.
+  - The whole kotlin job was run locally under `act` against a Linux Docker host, which
+    caught two things a reading would not have: the ktlint step needs a JDK (the npm
+    package is a shell wrapper around a jar, and it was ordered before the JDK setup,
+    working on GitHub's runners only by accident of a preinstalled Java), and the
+    `:tauri-android` problem above, which had been masked locally by a copy left behind
+    from an earlier `tauri android` build.
   - ktlint is pinned in all three places. `@naturalcycles/ktlint` is pinned exactly, the
     scripts call it through `pnpm exec` so a Homebrew or `~/.ktlint` binary can no longer
     shadow it, and the Gradle plugin moved from `1.1.1` to the `1.8.0` that ships with it.

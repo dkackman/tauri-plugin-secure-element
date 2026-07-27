@@ -23,6 +23,8 @@ Beyond Rust/Node/pnpm/Tauri CLI, the non-obvious platform tooling:
 
 Build order matters: the plugin's TypeScript bindings (`dist-js/`) must exist before the test app builds. The test app's `prebuild`/`predev` scripts handle this automatically; `pnpm build` from the root does it in dependency order.
 
+To run anything Gradle in `tauri-plugin-secure-element/android` — `./gradlew test`, `ktlintCheck` — `android/.tauri/tauri-api` has to exist. It is the `:tauri-android` project `settings.gradle` includes: a copy of the tauri crate's own `mobile/android` library that the Tauri CLI drops there while building an app for Android. It is gitignored and no build step in this repository creates it, so on a fresh checkout Gradle fails with "No matching variant of project :tauri-android ... No variants exist". Run `scripts/materialize-tauri-android.sh` (what CI does) to copy it from the crate source cargo has already downloaded.
+
 ### Running the Test App
 
 ```bash

@@ -61,8 +61,12 @@ jobs:
       # The only thing that exercises build.rs's packaging branch and proves the crate
       # that would be published actually builds. Left unchecked, a break here surfaces
       # at `cargo publish`, after the release tag has already been cut.
+      #
+      # --allow-dirty because the earlier steps in this job run build.rs, which writes
+      # generated permission files back into the source tree. What is being verified is
+      # that the crate packages and builds, not that the checkout is pristine.
       - name: Verify the crate packages
-        run: cargo package
+        run: cargo package --allow-dirty
 
   typescript:
     name: TypeScript Build
@@ -146,17 +150,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      # Before ktlint, not just before Gradle: @naturalcycles/ktlint ships a shell
+      # wrapper that execs `java`, so the lint step needs a JDK too. Relying on
+      # whatever the runner image preinstalls means the ktlint step silently runs on a
+      # different Java than the Gradle step.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
       # Runs the ktlint bundled with @naturalcycles/ktlint, which is pinned to the exact
       # version android/build.gradle.kts hands the ktlint Gradle plugin. Keep them equal
       # or the CLI and Gradle disagree about the same files.
       - name: Run ktlint
         run: pnpm lint:kotlin
 
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
+      # Needed only for `cargo metadata` in the next step — nothing here compiles Rust,
+      # so this job does not need the Tauri Linux dependencies.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -166,23 +178,16 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            tauri-plugin-secure-element/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
       # android/settings.gradle includes :tauri-android from android/.tauri/tauri-api,
-      # which build.rs materialises out of the tauri crate. It is gitignored, so without
-      # a cargo run first the Gradle build cannot resolve the project dependency.
-      - name: Generate the Tauri Android project
-        run: cargo check
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
+      # which is gitignored and normally only appears when the Tauri CLI builds an app
+      # for Android. Without it Gradle resolves an empty project and fails with
+      # "No matching variant of project :tauri-android ... No variants exist".
+      - name: Materialise the Tauri Android project
+        run: ./scripts/materialize-tauri-android.sh
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
