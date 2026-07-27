@@ -2,35 +2,7 @@
 
 A Tauri plugin providing secure element functionality for iOS, Android, macOS, and Windows platforms.
 
-## Project Structure
-
-This is a **pnpm workspace monorepo** with the following structure:
-
-```bash
-tauri-plugin-secure-element/          # Root monorepo
-├── tauri-plugin-secure-element/      # Main plugin code
-│   ├── src/                          # Rust plugin implementation
-│   ├── guest-js/                     # TypeScript guest bindings
-│   ├── swift/                        # Shared Swift code (Secure Enclave, FFI)
-│   ├── ios/                          # Swift iOS plugin wrapper
-│   ├── android/                      # Kotlin implementation
-│   ├── permissions/                  # Plugin permissions
-│   └── dist-js/                      # Built JavaScript bindings (generated)
-├── test-app/                         # Example Tauri application
-│   ├── src/                          # Svelte frontend
-│   └── src-tauri/                    # Tauri backend
-└── docs/                             # Additional documentation
-```
-
-## Tech Stack
-
-- **Rust**: Plugin backend (v1.77.2+)
-- **TypeScript**: Guest JavaScript API
-- **Swift**: iOS implementation
-- **Kotlin**: Android implementation
-- **Svelte**: Test app UI
-- **Tauri**: v2.x framework
-- **pnpm**: Package manager
+This is a **pnpm workspace monorepo** — see `pnpm-workspace.yaml` for package layout.
 
 ## Development Workflow
 
@@ -197,27 +169,6 @@ pnpm format              # Format all code
 pnpm lint                # Ensure all lints pass
 pnpm build               # Ensure everything builds
 ```
-
-## Dependencies
-
-**Main plugin (Rust)**:
-
-- `tauri` 2.10.1
-- `serde` / `serde_json` 1.0
-- `thiserror` 2
-- `base64` 0.22
-- `sha2` 0.11
-- Platform-specific: `libc` (macOS), `windows` + `winver` + `raw-window-handle` (Windows)
-
-**Guest JS**:
-
-- `@tauri-apps/api` ^2.10.1
-
-**Test app**:
-
-- Svelte 5
-- Vite 7
-- Tauri CLI 2
 
 ## Platform Support
 
