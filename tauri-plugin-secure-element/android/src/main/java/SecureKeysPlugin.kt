@@ -24,7 +24,6 @@ import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.Signature
-import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.util.UUID
@@ -67,6 +66,15 @@ class SecureKeysPlugin(
 ) : Plugin(activity) {
     companion object {
         private const val TAG = "SecureKeysPlugin"
+
+        /**
+         * Wire values for `SecureElementBacking`. These strings cross the JS bridge
+         * verbatim and must match the Rust `SecureElementBacking` serde representation
+         * and the TypeScript `SecureElementBacking` union.
+         */
+        private const val BACKING_SOFTWARE = "software"
+        private const val BACKING_INTEGRATED = "integrated"
+        private const val BACKING_DISCRETE = "discrete"
 
         /**
          * Prefix applied to every AndroidKeyStore alias so the plugin only ever
@@ -320,34 +328,9 @@ class SecureKeysPlugin(
             keyPairGenerator.initialize(keyGenParameterSpec)
             keyPairGenerator.generateKeyPair()
 
-            // Check if the key is hardware-backed. KeyInfo is available from API 23,
-            // which is this library's minSdk, so the backing is always inspectable.
-            val entry = keyStore.getEntry(testAlias, null) as? KeyStore.PrivateKeyEntry
-            val privateKey = entry?.privateKey as? ECPrivateKey
-            if (privateKey == null) {
-                // Could not inspect the generated key, so hardware backing is unproven.
-                // Report false rather than assuming TEE — callers use this to decide
-                // whether keys are hardware-protected.
-                Log.w(TAG, "TEE check: generated key could not be inspected")
-                return false
-            }
-
-            val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
-            val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // getSecurityLevel() replaces the deprecated isInsideSecureHardware on API 31+
-                when (keyInfo.securityLevel) {
-                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
-                    KeyProperties.SECURITY_LEVEL_STRONGBOX,
-                    KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
-                    -> true
-
-                    else -> false
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                keyInfo.isInsideSecureHardware
-            }
+            val backing = backingOf(testAlias)
+            Log.i(TAG, "TEE check: probe key backing=$backing")
+            return backing == BACKING_INTEGRATED || backing == BACKING_DISCRETE
         } catch (e: Exception) {
             Log.e(TAG, "TEE check failed", e)
             return false
@@ -357,6 +340,54 @@ class SecureKeysPlugin(
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to clean up test key", e)
             }
+        }
+    }
+
+    /**
+     * Determine the backing tier an already-created keystore key actually landed in,
+     * by inspecting the key itself rather than trusting what was requested.
+     *
+     * Returns one of [BACKING_DISCRETE], [BACKING_INTEGRATED] or [BACKING_SOFTWARE].
+     * A key that cannot be inspected is reported as [BACKING_SOFTWARE]: hardware
+     * backing is a claim this plugin should only make when it can prove it, and
+     * over-reporting would let a caller believe a key is protected when it isn't.
+     */
+    private fun backingOf(alias: String): String {
+        // KeyInfo is available from API 23, which is this library's minSdk, so the
+        // backing is always inspectable in principle.
+        val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+        // NB: must NOT be narrowed to `ECPrivateKey`. AndroidKeyStore EC keys are
+        // `AndroidKeyStoreECPrivateKey`, which implements `ECKey` but NOT
+        // `java.security.interfaces.ECPrivateKey` — the private scalar is
+        // non-extractable, so `getS()` cannot be honoured. Casting to `ECPrivateKey`
+        // always yields null and reports "no hardware" on every device, backed or not.
+        val privateKey = entry?.privateKey
+        if (privateKey == null) {
+            Log.w(TAG, "Backing check: key '$alias' could not be inspected, assuming software")
+            return BACKING_SOFTWARE
+        }
+
+        return try {
+            val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
+            val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // getSecurityLevel() replaces the deprecated isInsideSecureHardware on API 31+
+                when (keyInfo.securityLevel) {
+                    KeyProperties.SECURITY_LEVEL_STRONGBOX -> BACKING_DISCRETE
+
+                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
+                    KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
+                    -> BACKING_INTEGRATED
+
+                    else -> BACKING_SOFTWARE
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                if (keyInfo.isInsideSecureHardware) BACKING_INTEGRATED else BACKING_SOFTWARE
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Backing check: failed to read KeyInfo for '$alias', assuming software", e)
+            BACKING_SOFTWARE
         }
     }
 
@@ -454,13 +485,18 @@ class SecureKeysPlugin(
             // API 30+ (Android 11+) supports biometric-only enforcement at key level
             val canEnforceBiometricOnly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
 
-            // Determine strongest backing (discrete > integrated > firmware > none)
+            // Determine strongest backing (discrete > integrated > firmware > software)
+            //
+            // The floor is "software", not "none": AndroidKeyStore is always present,
+            // so a key can always be created here — it just may not be hardware-backed.
+            // Reporting "none" would imply key generation is unavailable, which is what
+            // this plugin used to (wrongly) enforce.
             val strongest =
                 when {
-                    discrete -> "discrete"
-                    integrated -> "integrated"
+                    discrete -> BACKING_DISCRETE
+                    integrated -> BACKING_INTEGRATED
                     firmware -> "firmware"
-                    else -> "none"
+                    else -> BACKING_SOFTWARE
                 }
 
             val ret = JSObject()
@@ -482,13 +518,12 @@ class SecureKeysPlugin(
     @Command
     fun generateSecureKey(invoke: Invoke) {
         try {
-            if (!strongBoxSupported && !teeSupported) {
-                invoke.reject(
-                    "Hardware-backed keystore is not available on this device. Secure element keys require hardware-backed storage.",
-                )
-                return
-            }
-
+            // NB: deliberately no hardware-availability gate here. A device without a
+            // TEE (notably the emulator) can still create a working keystore key, and
+            // refusing it made Android the only platform that failed outright where
+            // iOS/macOS and Windows succeed and report what they got. The tier the key
+            // actually landed in is reported back as `backing`; callers that require
+            // hardware protection enforce that themselves.
             val args = invoke.parseArgs(GenerateSecureKeyArgs::class.java)
 
             if (!checkKeyNotExists(args.keyName, "generateSecureKey", invoke)) {
@@ -592,10 +627,26 @@ class SecureKeysPlugin(
                 exportPublicKeyBase64(entry)
                     ?: throw Exception("Failed to get public key after key generation")
 
+            // Report the tier the key actually landed in, read back from the key
+            // itself. `usedStrongBox` only records what was requested and whether the
+            // StrongBox attempt threw — it cannot tell TEE from software, so trusting
+            // it would label a software key "integrated".
+            val backing = backingOf(alias)
+            if (usedStrongBox && backing != BACKING_DISCRETE) {
+                Log.w(TAG, "generateSecureKey: StrongBox requested but key reports backing=$backing")
+            }
+            if (backing == BACKING_SOFTWARE) {
+                Log.w(
+                    TAG,
+                    "generateSecureKey: key '${args.keyName}' is NOT hardware-backed " +
+                        "(no TEE or StrongBox on this device); returning backing=software",
+                )
+            }
+
             val ret = JSObject()
             ret.put("publicKey", publicKeyBase64)
             ret.put("keyName", args.keyName)
-            ret.put("backing", if (usedStrongBox) "discrete" else "integrated")
+            ret.put("backing", backing)
             invoke.resolve(ret)
         } catch (e: Exception) {
             val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"

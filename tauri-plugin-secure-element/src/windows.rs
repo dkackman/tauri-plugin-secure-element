@@ -1111,3 +1111,29 @@ pub fn hwnd_from_raw(handle: raw_window_handle::RawWindowHandle) -> Option<isize
         _ => None,
     }
 }
+
+/// Forces the linker to resolve the NCrypt imports these functions depend on.
+///
+/// Same reasoning as `desktop::ffi_link_tests` on macOS: `cargo check` does not link,
+/// and nothing in a test binary otherwise references this module, so the linker never
+/// has to find `ncrypt`/`crypt32`/`tbs` at all. Taking the address of the functions
+/// that call into them makes `cargo test` a real link check.
+#[cfg(test)]
+mod link_tests {
+    #[test]
+    fn ncrypt_entry_points_resolve() {
+        let symbols: [*const (); 6] = [
+            super::detect_tpm as *const (),
+            super::open_provider as *const (),
+            super::create_key as *const (),
+            super::export_public_key as *const (),
+            super::sign_hash as *const (),
+            super::delete_key as *const (),
+        ];
+
+        // Never called — CI has no TPM. Linking them is the whole point of the test.
+        for symbol in symbols {
+            assert!(!symbol.is_null());
+        }
+    }
+}

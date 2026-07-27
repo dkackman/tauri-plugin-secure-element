@@ -30,9 +30,13 @@ export type AuthenticationMode = "none" | "pinOrBiometric" | "biometricOnly";
 export interface GenerateSecureKeyResult {
   publicKey: string;
   keyName: string;
-  /** The actual hardware backing tier used for this key. On Android this may be
-   * `"integrated"` (TEE) even on a device that supports `"discrete"` (StrongBox),
-   * if StrongBox creation failed. Check this field to enforce a minimum tier. */
+  /** The actual backing tier this key ended up in, as reported by the platform
+   * after creation — not the tier that was requested. On Android this may be
+   * `"integrated"` (TEE) even on a device that supports `"discrete"` (StrongBox)
+   * if StrongBox creation failed, and it may be `"software"` on an emulator or a
+   * device with no TEE. Key generation does not fail on an unbacked device, so
+   * this field is the only thing that tells you what you actually got: check it
+   * with {@link isHardwareBacked} to enforce a minimum tier. */
   backing: SecureElementBacking;
 }
 
@@ -99,10 +103,36 @@ export async function deleteKey(
 
 /**
  * Secure element hardware backing tiers.
- * Ordered weakest → strongest: none < firmware < integrated < discrete
+ * Ordered weakest → strongest: none < software < firmware < integrated < discrete
+ *
+ * `"software"` means the key is real and fully functional, but protected only by
+ * the OS rather than by hardware — the case on the Android emulator and on devices
+ * with no TEE. It is reported rather than refused so that behaviour is consistent
+ * across platforms (the iOS Simulator likewise serves keys from a software Secure
+ * Enclave). Callers that require hardware protection must check for it; see
+ * {@link isHardwareBacked}.
  */
 export type SecureElementBacking =
-  "none" | "firmware" | "integrated" | "discrete";
+  "none" | "software" | "firmware" | "integrated" | "discrete";
+
+/**
+ * Whether a backing tier is protected by hardware rather than by the OS alone.
+ *
+ * Use this to gate security-sensitive flows instead of comparing tier strings by
+ * hand:
+ *
+ * ```ts
+ * const key = await generateSecureKey(name, "pinOrBiometric");
+ * if (!isHardwareBacked(key.backing)) {
+ *   throw new Error("This operation requires a hardware-backed key.");
+ * }
+ * ```
+ */
+export function isHardwareBacked(backing: SecureElementBacking): boolean {
+  return (
+    backing === "firmware" || backing === "integrated" || backing === "discrete"
+  );
+}
 
 /**
  * Secure element capabilities for the current device.

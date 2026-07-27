@@ -57,7 +57,11 @@ dependencies {
 }
 
 ktlint {
-    version.set("1.1.1")
+    // Must match the ktlint the CLI runs, which is the one bundled with the pinned
+    // @naturalcycles/ktlint in ../package.json (currently ktlint 1.8.0). When the two
+    // drift, `pnpm lint:kotlin` and `./gradlew ktlintCheck` disagree about the same
+    // files — ktlint 1.1 rejected trailing commas that 1.8 accepts.
+    version.set("1.8.0")
     android.set(true)
     ignoreFailures.set(false)
 }

@@ -29,9 +29,60 @@ Already fixed (see git history):
   `rootDir`, so TypeScript inferred it — and that inference shifted under a newer
   compiler, moving declarations from `dist-js/index.d.ts` to
   `dist-js/guest-js/index.d.ts` while `package.json` `"types"` still pointed at the
-  former. **`0.1.0-beta.5` is live on npm with types that do not resolve at all**
+  former. **`0.1.0-beta.8` is live on npm with types that do not resolve at all**
   (beta.3 and beta.4 were fine). `rootDir` is now pinned explicitly. This alone
   justifies a prompt beta.6.
+- **The cross-platform signature vectors are now verified in CI.**
+  `test-app/src/cross-platform-test-vectors.json` was recorded from hardware but nothing
+  checked it. `tests/cross_platform_vectors.rs` now verifies every vector against its
+  public key with a P-256 verifier (`p256`, dev-dependency only), which locks down DER
+  encoding — including `der.rs`'s raw R||S conversion on Windows — X9.62 public-key
+  export, and the hash-then-sign convention on all four platforms. It also asserts
+  platform coverage and includes two negative cases (tampered message, foreign key) so
+  it cannot pass vacuously. macOS vectors are recorded now that the FFI has been
+  exercised on a signed build. `cargo test` already runs on Linux, macOS and Windows, so
+  this gates every release. `/tests` is excluded from the published crate because the
+  test `include_str!`s a path under `test-app/`.
+- **The remaining CI gaps are closed.**
+  - `SecureEnclaveCore.swift` and the macOS-only `secure_element_ffi.swift` are
+    format-checked and linted now. swiftformat runs against `ios/ swift/` — it skips the
+    symlink, so `swift/` is where the shared file actually gets checked — and
+    `.swiftlint.yml` adds `swift` to `included` while excluding the symlink so nothing is
+    linted twice. Fixing the backlog of diffs also surfaced one real violation the gap
+    had been hiding.
+  - The swiftformat "no Swift version was specified" warning is gone, but via
+    `--swiftversion 5.7` in a new `.swiftformat` rather than the `.swift-version` file
+    the item asked for: swiftly reads `.swift-version` as a _toolchain selector_ and
+    refuses to run when no toolchain of exactly that version is installed, which breaks
+    every `swift` command in the tree. 5.7 rather than the newest because at 5.9 the
+    `redundantReturn` rule rewrites `switch` statements into implicit-return switch
+    _expressions_, raising the minimum toolchain to Xcode 15 for anyone building the iOS
+    package.
+  - Kotlin unit tests run in CI — 10 tests that had only ever run on a developer's
+    machine. `:tauri-android` resolves only if `android/.tauri/tauri-api` exists, and
+    nothing in this repository's build creates it: it is a copy of the tauri crate's
+    `mobile/android` project that the Tauri CLI drops there while building an app for
+    Android, and it is gitignored, so a fresh checkout cannot run `./gradlew` at all.
+    `scripts/materialize-tauri-android.sh` does that copy from the crate source cargo
+    already has, and CI runs it before Gradle.
+  - The whole kotlin job was run locally under `act` against a Linux Docker host, which
+    caught two things a reading would not have: the ktlint step needs a JDK (the npm
+    package is a shell wrapper around a jar, and it was ordered before the JDK setup,
+    working on GitHub's runners only by accident of a preinstalled Java), and the
+    `:tauri-android` problem above, which had been masked locally by a copy left behind
+    from an earlier `tauri android` build.
+  - ktlint is pinned in all three places. `@naturalcycles/ktlint` is pinned exactly, the
+    scripts call it through `pnpm exec` so a Homebrew or `~/.ktlint` binary can no longer
+    shadow it, and the Gradle plugin moved from `1.1.1` to the `1.8.0` that ships with it.
+  - Link errors are caught without adding a build job. The gap was verified first, by
+    renaming an `extern "C"` declaration to a symbol Swift does not export — check,
+    clippy and test all passed. `desktop.rs` and `windows.rs` now
+    each carry a test that takes the address of every FFI entry point, forcing the linker
+    to resolve them, and the same experiment now fails to link. This catches more than a
+    build job would, since `cargo build` on a lib crate does not link an executable
+    either.
+  - `cargo package` runs in the Linux job, the only thing that exercises `build.rs`'s
+    packaging branch and proves the crate that would be published builds.
 - The expensive keygen probes are now memoized at the platform layer, which also
   resolves the "iOS burns an ephemeral Secure Enclave key on every `generateSecureKey`"
   finding: `Plugin.swift` still calls `checkSupport()`, but the probe inside it now runs
@@ -143,40 +194,6 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 - [ ] Consider returning the provider/auth-mode in `KeyInfo` so callers can tell a
       silent TPM key from a Hello-protected one. Right now `listKeys` cannot distinguish
       them, which matters for any security decision made from the list.
-
-### 6. Verify the cross-platform test vectors in CI
-
-`test-app/src/cross-platform-test-vectors.json` holds real iOS/Android/Windows
-signatures with public keys and messages, and nothing automated checks them. `der.rs`
-tests assert DER _structure_ but no test anywhere verifies an actual signature.
-
-- [ ] Add a `cargo test` that loads the vectors and verifies each signature against its
-      public key with a P-256 verifier (`p256`/`ecdsa` crate, dev-dependency only).
-      This single test locks down DER encoding, X9.62 public-key export, and the
-      hash-then-sign convention across all four platforms.
-- [ ] Add a vector for macOS once the FFI is exercised on a signed build.
-- [ ] Add a negative case (tampered message must fail) so the test can't pass vacuously.
-
-### 7. Close the remaining CI gaps
-
-- [ ] `SecureEnclaveCore.swift` — the largest and most security-critical Swift file — is
-      **not linted or format-checked at all**. `swiftformat --lint ios/` reports "2 files
-      skipped" because it is a symlink into `swift/`. Point the lint at `swift/` too, or
-      resolve symlinks. Note `swift/` currently has ~4 pre-existing `guard`/`else`
-      formatting diffs that will need fixing once it is covered.
-- [ ] Add a `.swift-version` file — swiftformat warns that some rules are disabled
-      without it.
-- [ ] Kotlin unit tests (`android/src/test/java/PluginUnitTest.kt`) never run in CI; the
-      kotlin job only runs ktlint. Wire up `gradlew test` if the `:tauri-android`
-      project dependency can be resolved in CI.
-- [ ] The local `~/.ktlint/ktlint` binary rejects valid Kotlin trailing commas
-      ("Not a valid Kotlin file") on pristine `main` — version skew with the `1.1.1`
-      pinned in `build.gradle.kts`. Pin one version across gradle, the pnpm script, and
-      the docs so local and CI agree.
-- [ ] Consider a build job (not just `cargo check`) on macOS/Windows so link errors —
-      e.g. missing Swift FFI symbols — are caught. `cargo check` does not link.
-- [ ] `cargo test` now runs on all three platforms, but nothing runs `cargo package
---dry-run`; the `build.rs` packaging path is untested.
 
 ---
 

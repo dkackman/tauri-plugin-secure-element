@@ -36,8 +36,9 @@ private func escapeJsonString(_ string: String) -> String {
         withJSONObject: string,
         options: .fragmentsAllowed
     ),
-    let escaped = String(data: data, encoding: .utf8),
-    escaped.count >= 2 else {
+        let escaped = String(data: data, encoding: .utf8),
+        escaped.count >= 2
+    else {
         // Fallback: filter out control characters we can't escape
         return string.unicodeScalars
             .filter { $0.value >= 0x20 || $0 == "\t" || $0 == "\n" || $0 == "\r" }
@@ -66,8 +67,8 @@ private func toCString(_ string: String) -> UnsafeMutablePointer<CChar> {
         return strdup("{\"error\":\"malloc failed\"}")!
     }
 
-    for i in 0 ..< count {
-        ptr[i] = utf8Bytes[i]
+    for index in 0 ..< count {
+        ptr[index] = utf8Bytes[index]
     }
 
     return ptr
@@ -75,7 +76,7 @@ private func toCString(_ string: String) -> UnsafeMutablePointer<CChar> {
 
 /// Convert C string to optional Swift string
 private func fromCString(_ ptr: UnsafePointer<CChar>?) -> String? {
-    guard let ptr = ptr else { return nil }
+    guard let ptr else { return nil }
     let str = String(cString: ptr)
     return str.isEmpty ? nil : str
 }

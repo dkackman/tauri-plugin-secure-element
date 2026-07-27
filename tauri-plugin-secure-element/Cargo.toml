@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-secure-element"
-version = "0.1.0-beta.5"
+version = "0.1.0-beta.8"
 authors = [ "Don Kackman<dkackman@gmail.com>" ]
 description = "Tauri plugin for secure element use on macOS/iOS (Secure Enclave), Windows (TPM), and Android (Strongbox and TEE)."
 edition = "2021"
@@ -40,11 +40,15 @@ exclude = [
     "**/.prettierignore",
     "**/.prettierrc.json",
     "**/.swiftlint.yml",
+    "**/.swiftformat",
     "**/rollup.config.js",
     "**/tsconfig.json",
     "**/package.json",
     "**/guest-js",
     "**/ios/Tests",
+    # tests/cross_platform_vectors.rs include_str!s a file under test-app/, which only
+    # exists in the repository — keep the integration tests out of the published crate.
+    "/tests",
     "**/ios/.gitignore",
     "**/android/local.properties",
 ]
@@ -79,3 +83,8 @@ raw-window-handle = "0.6"
 
 [build-dependencies]
 tauri-plugin = { version = "2.6.3", features = ["build"] }
+
+[dev-dependencies]
+# Verifies the recorded cross-platform signature vectors (tests/cross_platform_vectors.rs).
+# Held at 0.13 deliberately: 0.14 requires rustc 1.85, above this crate's 1.77.2 MSRV.
+p256 = "0.13.2"
