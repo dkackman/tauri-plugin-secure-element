@@ -189,18 +189,37 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 
 ### 5. Cross-provider name collisions on Windows
 
-- [ ] `key_exists` returns `false` whenever `open_ngc_provider()` fails, so a TPM key can
-      be created under a name an NGC key already owns. `open_key_auto` then always
+- [x] `key_exists` returned `false` whenever `open_ngc_provider()` failed, so a TPM key
+      could be created under a name an NGC key already owned. `open_key_auto` always
       resolves NGC first, so sign/delete hit a different key than the one just created,
-      and `list_keys` returns two entries with the same `keyName`. Make `key_exists`
-      propagate "could not determine" instead of treating it as "does not exist".
-- [ ] `key_exists` also uses the non-silent `open_key_internal` (same as item 4).
+      and `list_keys` returned two entries with the same `keyName`. `key_exists` now
+      returns `crate::Result<bool>` and propagates every failure it cannot interpret —
+      SID lookup, either provider open, and any unrecognized `NCryptOpenKey` error — so
+      `create_key` refuses rather than guessing that a name is free. It also probes
+      silently now. Verified on hardware: `generateSecureKey` still succeeds for both
+      `none` and `pinOrBiometric` — the case that matters, since creating a plain TPM key
+      now depends on `open_ngc_provider()` succeeding — and a duplicate name still reports
+      `AlreadyExists`.
+- [x] `try_open_key` treats `NTE_PERM` as "key not found". The comment justifies it — the
+      NGC provider returns access-denied for keys that don't exist — but it conflates the
+      other direction too: an NGC key that exists and is genuinely inaccessible reads as
+      absent. Left as-is on the `try_open_key_auto` path, where the conflation is safe
+      (the caller falls through to the other provider and a wrong answer costs a
+      misleading "not found", not a wrong key). Fixed where it is _not_ safe: the new
+      `key_present_in_provider` disambiguates `NTE_PERM` by enumerating the provider,
+      which is authoritative and needs no access to the key. Enumeration there goes
+      through a new `enumerate_key_names` that propagates errors, unlike the display
+      listing paths which stop at the first failure and return a short list.
 - [ ] Delete-by-public-key matches a key, takes `keys[0].key_name`, then re-resolves _by
       name_ (`desktop.rs`) instead of deleting the key it matched. Carry the provider and
-      full key name through so the matched key is the deleted key.
-- [ ] Consider returning the provider/auth-mode in `KeyInfo` so callers can tell a
-      silent TPM key from a Hello-protected one. Right now `listKeys` cannot distinguish
-      them, which matters for any security decision made from the list.
+      full key name through so the matched key is the deleted key. Depends on the
+      `KeyInfo` change below — the provider is known where the match happens and is
+      currently discarded.
+- [ ] Return the provider/auth-mode in `KeyInfo` so callers can tell a silent TPM key
+      from a Hello-protected one. Right now `listKeys` cannot distinguish them, which
+      matters for any security decision made from the list. Both Windows list paths
+      already know the provider where they build each `KeyInfo` and drop it. No longer
+      just a nice-to-have: the delete-by-public-key fix above needs this field.
 
 ---
 

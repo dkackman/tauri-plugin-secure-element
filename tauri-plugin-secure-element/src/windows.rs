@@ -33,8 +33,14 @@ const NTE_NOT_FOUND: HRESULT = HRESULT(0x80090011u32 as i32);
 const NTE_NO_KEY: HRESULT = HRESULT(0x8009000Du32 as i32);
 
 /// NCrypt error: access denied (NTE_PERM) - NGC provider returns this for
-/// keys that don't exist when probing without authentication
+/// keys that don't exist when probing without authentication. It is also what
+/// an existing but inaccessible key returns, so the two cases are only
+/// distinguishable by enumeration (see `key_present_in_provider`).
 const NTE_PERM: HRESULT = HRESULT(0x80090010u32 as i32);
+
+/// NCrypt status: the enumeration has no further keys (NTE_NO_MORE_ITEMS).
+/// This is how `NCryptEnumKeys` reports a normal end of enumeration.
+const NTE_NO_MORE_ITEMS: HRESULT = HRESULT(0x8009002Au32 as i32);
 
 /// Key name prefix base for TPM keys without Windows Hello protection
 /// Full format: tauri_se_tpm_{app_id}_{key_name}
@@ -448,24 +454,122 @@ fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<Opt
     }
 }
 
-fn key_exists(app_id: &str, key_name: &str) -> bool {
-    if let Ok(sid) = get_current_user_sid() {
-        let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
-        if let Ok(ngc_provider) = open_ngc_provider() {
-            if open_key_internal(&ngc_provider, &ngc_full_name).is_ok() {
-                return true;
+/// Enumerates the full names of every key a provider holds.
+///
+/// The listing paths stop at the first enumeration error and return what they
+/// have, which is fine for a display list. This one propagates instead, because
+/// its caller is answering an existence question: a truncated enumeration there
+/// silently becomes "no such key".
+fn enumerate_key_names(provider: &ProviderHandle) -> crate::Result<Vec<String>> {
+    let mut names = Vec::new();
+
+    unsafe {
+        let mut enum_state_guard = EnumStateGuard::new();
+        let scope = PCWSTR::null();
+
+        loop {
+            let mut key_name_ptr: *mut NCryptKeyName = std::ptr::null_mut();
+
+            match NCryptEnumKeys(
+                provider.0,
+                scope,
+                &mut key_name_ptr,
+                enum_state_guard.as_mut_ptr(),
+                NCRYPT_SILENT_FLAG,
+            ) {
+                Ok(()) => {}
+                Err(e) if e.code() == NTE_NO_MORE_ITEMS => break,
+                Err(e) => {
+                    return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                        &format!("Failed to enumerate keys: {}", e),
+                        "Failed to enumerate keys",
+                    ))))
+                }
             }
+
+            if key_name_ptr.is_null() {
+                break;
+            }
+
+            // Wrap in RAII guard to ensure cleanup even on panic
+            let key_name_guard = KeyNameBufferGuard::new(key_name_ptr);
+            let key_name_wide = key_name_guard.as_ref().pszName;
+
+            if !key_name_wide.is_null() {
+                if let Ok(name) = key_name_wide.to_string() {
+                    names.push(name);
+                }
+            }
+            // key_name_guard is dropped here, freeing the buffer
         }
     }
 
-    let tpm_full_name = tpm_key_name(app_id, key_name);
-    if let Ok(tpm_provider) = open_provider() {
-        if open_key_internal(&tpm_provider, &tpm_full_name).is_ok() {
-            return true;
+    Ok(names)
+}
+
+/// Silently determines whether a provider holds a key by this full name,
+/// without leaving a handle open.
+///
+/// `try_open_key` folds `NTE_PERM` into "not found" because the NGC provider
+/// returns access-denied for keys that were never created. That conflation is
+/// safe for a caller about to fall through to the other provider, but not for
+/// one deciding whether a name is free: an NGC key that exists and is merely
+/// inaccessible would read as absent and its name would be handed to a second
+/// key in the other provider. Enumeration settles that one ambiguous case, and
+/// it needs no access to the key itself.
+fn key_present_in_provider(provider: &ProviderHandle, full_name: &str) -> crate::Result<bool> {
+    unsafe {
+        let mut key_handle = NCRYPT_KEY_HANDLE::default();
+        let key_name_h = HSTRING::from(full_name);
+
+        match NCryptOpenKey(
+            provider.0,
+            &mut key_handle,
+            PCWSTR(key_name_h.as_ptr()),
+            CERT_KEY_SPEC(0),
+            NCRYPT_SILENT_FLAG,
+        ) {
+            Ok(()) => {
+                // Nothing is done with the key, so hand it straight to the
+                // guard rather than leaking it.
+                drop(KeyHandle(key_handle));
+                Ok(true)
+            }
+            Err(e)
+                if e.code() == NTE_BAD_KEYSET
+                    || e.code() == NTE_NOT_FOUND
+                    || e.code() == NTE_NO_KEY =>
+            {
+                Ok(false)
+            }
+            Err(e) if e.code() == NTE_PERM => Ok(enumerate_key_names(provider)?
+                .iter()
+                .any(|name| name == full_name)),
+            Err(e) => Err(crate::Error::Io(std::io::Error::other(sanitize_error(
+                &format!("Failed to check for key '{}': {}", full_name, e),
+                "Failed to check for key",
+            )))),
         }
     }
+}
 
-    false
+/// Determines whether `key_name` is already taken in either provider.
+///
+/// Returns `Err` when that could not be determined. `create_key` is the only
+/// caller, and answering "no" to a question it could not actually answer is how
+/// a TPM key ends up sharing a name with an NGC key: `open_key_auto` resolves
+/// NGC first, so every later sign and delete would reach the wrong one of the
+/// two, and `list_keys` would return both under the same `keyName`. Refusing to
+/// create the key is the only safe answer to "I don't know".
+fn key_exists(app_id: &str, key_name: &str) -> crate::Result<bool> {
+    let sid = get_current_user_sid()?;
+    let ngc_provider = open_ngc_provider()?;
+    if key_present_in_provider(&ngc_provider, &ngc_key_name(&sid, app_id, key_name))? {
+        return Ok(true);
+    }
+
+    let tpm_provider = open_provider()?;
+    key_present_in_provider(&tpm_provider, &tpm_key_name(app_id, key_name))
 }
 
 /// Creates a new P-256 ECDSA key with the appropriate provider based on auth mode
@@ -474,8 +578,9 @@ pub fn create_key(
     key_name: &str,
     auth_mode: &crate::models::AuthenticationMode,
 ) -> crate::Result<KeyHandle> {
-    // Check if a key with this name already exists in either provider
-    if key_exists(app_id, key_name) {
+    // Check if a key with this name already exists in either provider. A
+    // failure to determine that propagates rather than reading as "free".
+    if key_exists(app_id, key_name)? {
         return Err(crate::Error::Io(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             format!("A key with name '{}' already exists", key_name),
