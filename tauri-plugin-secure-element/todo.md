@@ -244,17 +244,17 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       discarded.
 
       So the field would be OS-attested on two platforms and self-persisted on the third,
-          with no way for a caller to tell which one they are holding — the same trap as the
-          old `canEnforceBiometricOnly` split (one field name, two different questions), which
-          was fixed by aligning semantics rather than shipping the ambiguity. For a field
-          whose whole purpose is informing a security decision, sometimes-attested is worse
-          than absent. Apple keys created before any such change would also have no recorded
-          mode, so it could never be more than optional anyway.
+              with no way for a caller to tell which one they are holding — the same trap as the
+              old `canEnforceBiometricOnly` split (one field name, two different questions), which
+              was fixed by aligning semantics rather than shipping the ambiguity. For a field
+              whose whole purpose is informing a security decision, sometimes-attested is worse
+              than absent. Apple keys created before any such change would also have no recorded
+              mode, so it could never be more than optional anyway.
 
-          Nothing needs it: the delete-by-public-key fix carries the provider internally in
-          `FoundKey` and never exposes it, and the caller already knows the mode because they
-          passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
-          do reliably on all four platforms.
+              Nothing needs it: the delete-by-public-key fix carries the provider internally in
+              `FoundKey` and never exposes it, and the caller already knows the mode because they
+              passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
+              do reliably on all four platforms.
 
 ---
 
@@ -303,9 +303,12 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       gets over the mobile IPC bridge — `SignWithKeyArgs.data` in `Plugin.swift` moved from
       `[UInt8]` to `Data`, which decodes base64 by default. Android's Jackson `ByteArray`
       deserializer already accepts both encodings, so no Kotlin change was needed.)
-- [ ] Windows error sanitization is inconsistent: the "already exists" and Windows-Hello
+- [x] Windows error sanitization is inconsistent: the "already exists" and Windows-Hello
       -not-configured messages use plain `format!`, bypassing `sanitize_error`, so
-      release builds still emit the key name.
+      release builds still emit the key name. (Both now route through `sanitize_error`;
+      the Windows-Hello-not-configured message didn't previously name the key at all, so
+      the detailed variant now includes it for parity with the rest of the file's debug
+      messages, while the release-build generic variant is unchanged.)
 - [ ] Android toolchain upgrade — blocks all androidx dependency bumps. Attempted and
       reverted; the constraints are: - **`androidx.biometric` has no stable upgrade.** 1.1.0 (2020) is still the newest
       stable release; 1.2.0, 1.3.0 and 1.4.0 have only ever shipped as alphas. So

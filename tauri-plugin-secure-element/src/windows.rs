@@ -602,7 +602,10 @@ pub fn create_key(
     if key_exists(app_id, key_name)? {
         return Err(crate::Error::Io(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            format!("A key with name '{}' already exists", key_name),
+            sanitize_error(
+                &format!("A key with name '{}' already exists", key_name),
+                "A key with this name already exists",
+            ),
         )));
     }
 
@@ -618,7 +621,13 @@ pub fn create_key(
             if !windows_hello::is_windows_hello_configured() {
                 return Err(crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::Unsupported,
-                    "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating keys with authentication.",
+                    sanitize_error(
+                        &format!(
+                            "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating key '{}'.",
+                            key_name
+                        ),
+                        "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating keys with authentication.",
+                    ),
                 )));
             }
             create_ngc_key(app_id, key_name)
