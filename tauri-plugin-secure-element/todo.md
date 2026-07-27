@@ -32,6 +32,17 @@ Already fixed (see git history):
   former. **`0.1.0-beta.8` is live on npm with types that do not resolve at all**
   (beta.3 and beta.4 were fine). `rootDir` is now pinned explicitly. This alone
   justifies a prompt beta.6.
+- **The cross-platform signature vectors are now verified in CI.**
+  `test-app/src/cross-platform-test-vectors.json` was recorded from hardware but nothing
+  checked it. `tests/cross_platform_vectors.rs` now verifies every vector against its
+  public key with a P-256 verifier (`p256`, dev-dependency only), which locks down DER
+  encoding — including `der.rs`'s raw R||S conversion on Windows — X9.62 public-key
+  export, and the hash-then-sign convention on all four platforms. It also asserts
+  platform coverage and includes two negative cases (tampered message, foreign key) so
+  it cannot pass vacuously. macOS vectors are recorded now that the FFI has been
+  exercised on a signed build. `cargo test` already runs on Linux, macOS and Windows, so
+  this gates every release. `/tests` is excluded from the published crate because the
+  test `include_str!`s a path under `test-app/`.
 - The expensive keygen probes are now memoized at the platform layer, which also
   resolves the "iOS burns an ephemeral Secure Enclave key on every `generateSecureKey`"
   finding: `Plugin.swift` still calls `checkSupport()`, but the probe inside it now runs
@@ -144,20 +155,7 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       silent TPM key from a Hello-protected one. Right now `listKeys` cannot distinguish
       them, which matters for any security decision made from the list.
 
-### 6. Verify the cross-platform test vectors in CI
-
-`test-app/src/cross-platform-test-vectors.json` holds real iOS/Android/Windows
-signatures with public keys and messages, and nothing automated checks them. `der.rs`
-tests assert DER _structure_ but no test anywhere verifies an actual signature.
-
-- [ ] Add a `cargo test` that loads the vectors and verifies each signature against its
-      public key with a P-256 verifier (`p256`/`ecdsa` crate, dev-dependency only).
-      This single test locks down DER encoding, X9.62 public-key export, and the
-      hash-then-sign convention across all four platforms.
-- [ ] Add a vector for macOS once the FFI is exercised on a signed build.
-- [ ] Add a negative case (tampered message must fail) so the test can't pass vacuously.
-
-### 7. Close the remaining CI gaps
+### 6. Close the remaining CI gaps
 
 - [ ] `SecureEnclaveCore.swift` — the largest and most security-critical Swift file — is
       **not linted or format-checked at all**. `swiftformat --lint ios/` reports "2 files
