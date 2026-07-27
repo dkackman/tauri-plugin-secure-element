@@ -279,7 +279,7 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 
 ### Everything else
 
-- [ ] `der.rs` uses `debug_assert!` for the DER short-form length invariant. Unreachable
+- [x] `der.rs` uses `debug_assert!` for the DER short-form length invariant. Unreachable
       for valid 64-byte input, but returning `Err` costs nothing and removes a
       release-only silent-corruption path.
 - [ ] `getAccessControlFlags` (`SecureEnclaveCore.swift`) silently downgrades unknown
@@ -310,7 +310,7 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       before touching this. - Sequence when it is time: Tauri template Kotlin version → plugin `settings.gradle`
       (Kotlin + AGP) → `compileOptions`/`jvmTarget` (Java 8 is likely too old for
       AGP 8.1+) → ktlint gradle plugin → then the androidx versions.
-- [ ] `android/build.gradle.kts` declares `consumerProguardFiles("consumer-rules.pro")`
+- [x] `android/build.gradle.kts` declares `consumerProguardFiles("consumer-rules.pro")`
       but that file does not exist; every build logs
       "Supplied consumer proguard configuration does not exist". Create it or drop the
       declaration.
