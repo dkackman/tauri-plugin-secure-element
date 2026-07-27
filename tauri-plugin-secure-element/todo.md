@@ -330,9 +330,13 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       Worth resolving as part of the toolchain upgrade above.
 - [x] `build.rs` comment says the permissions files are included "via the `include`
       field"; `Cargo.toml` uses `exclude`.
-- [ ] README's `GenerateSecureKeyResult` omits the `backing` field the API returns.
-- [ ] README "Platform Limitations → Windows" says TPM 2.0 is supported on Windows 10
+- [x] README's `GenerateSecureKeyResult` omits the `backing` field the API returns.
+      Already fixed — the README documents `backing` and its fallback semantics; no
+      change needed here.
+- [x] README "Platform Limitations → Windows" says TPM 2.0 is supported on Windows 10
       "since version 1507", but the code requires build 14393 (1607) and errors below it.
+      Confirmed against `src/windows.rs`'s `require_windows_10_1607` gate and fixed the
+      README to state the actual 1607/14393 requirement.
 - [ ] Add `CHANGELOG.md` and a stated MSRV / deprecation policy before 1.0.
 - [x] `CLAUDE.md` says `tauri` 2.10.1; `Cargo.toml` pins 2.11.5.
 - [ ] `secure_element_ffi.swift:120` — `var info` is never mutated; should be `let`.

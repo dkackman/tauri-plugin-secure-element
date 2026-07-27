@@ -390,7 +390,8 @@ async function verifySignature(
 ### Windows
 
 - Windows 11 (build 22000 or higher) requires TPM 2.0
-- TPM 2.0 is supported on Windows 10 (since version 1507)
+- This plugin requires Windows 10 version 1607 (Anniversary Update, build 14393) or
+  higher, and errors below that
 
 ### macOS
 
