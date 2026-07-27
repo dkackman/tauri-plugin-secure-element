@@ -215,7 +215,9 @@ interface SecureElementCapabilities {
   emulated: boolean;
   /** The strongest hardware backing tier available on this device */
   strongest: SecureElementBacking;
-  /** Whether biometric-only authentication can be enforced at the key level (Android API 30+ only) */
+  /** Whether biometric-only authentication can be enforced at the key level right now
+   *  (reflects live enrollment on all supporting platforms; Android additionally
+   *  requires API 30+) */
   canEnforceBiometricOnly: boolean;
 }
 ```
@@ -274,6 +276,12 @@ interface GenerateSecureKeyResult {
 ```
 
 **Note:** The `biometricOnly` mode requires Android 11 (API 30) or higher. On older Android versions, this mode will be rejected with an error. Use `checkSecureElementSupport().canEnforceBiometricOnly` to check support before creating biometric-only keys.
+
+**Note (iOS/macOS):** `biometricOnly` keys use `.biometryCurrentSet` and are **permanently
+invalidated when the enrolled biometric set changes** (adding/removing a fingerprint,
+re-enrolling Face ID). There is no recovery — the key and its signing capability are gone.
+Avoid `biometricOnly` for keys that need to survive routine re-enrollment; see
+[Authentication Modes](#authentication-modes) below.
 
 ### `listKeys(keyName?: string, publicKey?: string)`
 
@@ -360,7 +368,12 @@ All keys use the **secp256r1 (P-256)** elliptic curve.
 | ---------------- | --------------------------------- | ------------------------------------ | ------------------- |
 | `none`           | ✅ No auth required               | ✅ No auth required                  | ✅ No auth required |
 | `pinOrBiometric` | ✅ Face ID, Touch ID, or passcode | ✅ Biometric or PIN/pattern/password | ✅ Windows Hello    |
-| `biometricOnly`  | ❌ Not supported                  | ✅ API 30+ only, biometric only      | ❌ Not supported    |
+| `biometricOnly`  | ✅ Face ID / Touch ID only        | ✅ API 30+ only, biometric only      | ❌ Not supported    |
+
+**Note:** On iOS/macOS, `biometricOnly` keys use `.biometryCurrentSet`, which is
+**permanently invalidated if the enrolled biometric set changes** — adding a fingerprint,
+removing one, or re-enrolling Face ID destroys the key irrecoverably. Do not use
+`biometricOnly` for keys that must survive routine biometric re-enrollment.
 
 ## License
 

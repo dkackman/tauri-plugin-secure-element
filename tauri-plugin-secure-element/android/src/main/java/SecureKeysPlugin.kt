@@ -482,8 +482,11 @@ class SecureKeysPlugin(
             val firmware = false
             // Check if running in emulator
             val emulated = isEmulator()
-            // API 30+ (Android 11+) supports biometric-only enforcement at key level
-            val canEnforceBiometricOnly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+            // API 30+ (Android 11+) supports biometric-only enforcement at key level, and
+            // biometrics must actually be enrolled — matches iOS/macOS, which reports live
+            // enrollment rather than just OS-level capability.
+            val canEnforceBiometricOnly =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && checkBiometricAvailability() == null
 
             // Determine strongest backing (discrete > integrated > firmware > software)
             //

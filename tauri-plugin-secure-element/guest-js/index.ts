@@ -148,7 +148,12 @@ export interface SecureElementCapabilities {
   emulated: boolean;
   /** The strongest tier available on this device */
   strongest: SecureElementBacking;
-  /** Whether biometric-only authentication can be enforced at the key level */
+  /**
+   * Whether biometric-only authentication can be enforced at the key level right now.
+   * Reflects live enrollment on every platform that supports the mode (iOS/macOS via
+   * LAContext, Android via BiometricManager as of the API 30+ check) — re-check before
+   * each `generateSecureKey(.., "biometricOnly")` call rather than caching the result.
+   */
   canEnforceBiometricOnly: boolean;
 }
 

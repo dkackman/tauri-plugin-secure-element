@@ -155,16 +155,23 @@ The README auth-mode table says `biometricOnly` is ❌ not supported on iOS/macO
 `checkSupport()` reports `canEnforceBiometricOnly: true` when biometrics are enrolled.
 Docs and code disagree on a security-relevant setting.
 
-- [ ] Decide which is true and make them agree (the code looks correct — fix the table).
-- [ ] Document that `.biometryCurrentSet` **permanently invalidates the key when the
+- [x] Decide which is true and make them agree (the code looks correct — fix the table).
+- [x] Document that `.biometryCurrentSet` **permanently invalidates the key when the
       enrolled biometric set changes** — adding a fingerprint or re-enrolling Face ID
       destroys the key and its signing capability forever. This is currently documented
       nowhere and will surprise anyone using `biometricOnly` for anything durable.
-- [ ] Decide whether `biometricOnly` should use `.biometryAny` instead, which survives
-      enrollment changes, and document the tradeoff either way.
-- [ ] Align the semantics of `canEnforceBiometricOnly` across platforms: Apple returns
+- [x] Decide whether `biometricOnly` should use `.biometryAny` instead, which survives
+      enrollment changes, and document the tradeoff either way. Decision: keep
+      `.biometryCurrentSet` — it matches the strict intent of "biometric only" and
+      Android already behaves the same way by default
+      (`setInvalidatedByBiometricEnrollment` defaults to `true`), so switching iOS/macOS
+      would make it the odd one out rather than more consistent. Tradeoff documented in
+      the README.
+- [x] Align the semantics of `canEnforceBiometricOnly` across platforms: Apple returns
       _current enrollment_, Android returns _API level ≥ 30_ regardless of enrollment.
-      Same field name, two different questions.
+      Same field name, two different questions. Android's `checkSecureElementSupport`
+      now also requires `checkBiometricAvailability() == null` (live `BiometricManager`
+      enrollment check), matching Apple's live-enrollment semantics.
 
 ---
 
