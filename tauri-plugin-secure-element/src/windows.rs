@@ -354,7 +354,16 @@ pub fn try_open_key_auto(
             // (corrupted key, service fault, etc.) is propagated immediately —
             // silently retrying in TPM could return a wrong key or hide the real
             // cause behind a misleading "key not found in TPM" error.
-            if let Some(key) = try_open_key(&ngc_provider, &ngc_full_name)? {
+            if let Some(probe) = try_open_key(&ngc_provider, &ngc_full_name)? {
+                // The probe handle was acquired with NCRYPT_SILENT_FLAG, which is
+                // sticky: NCrypt marks the whole key context as "must not show UI",
+                // so any later operation on it that needs a gesture fails with
+                // NTE_SILENT_CONTEXT (0x80090022). Signing an NGC key always needs
+                // the Windows Hello prompt, so close the probe and reopen the key
+                // without the flag. Opening never prompts on its own — the gesture
+                // happens at NCryptSignHash — so provider detection stays silent.
+                drop(probe);
+                let key = open_key_internal(&ngc_provider, &ngc_full_name)?;
                 return Ok(Some((key, KeyProviderType::Ngc)));
             }
         }
@@ -635,6 +644,11 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             })?;
         }
 
+        // NCryptFinalizeKey binds the key to the user's Windows Hello credential,
+        // which unlocks the NGC container and therefore raises a one-time Hello
+        // prompt. This is inherent to the Passport KSP and cannot be suppressed —
+        // NCRYPT_SILENT_FLAG here fails with NTE_SILENT_CONTEXT rather than
+        // creating the key quietly.
         if let Err(e) = NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) {
             return Err(crate::Error::Io(std::io::Error::other(sanitize_error(
                 &format!("NCryptFinalizeKey failed: {}", e),
