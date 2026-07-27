@@ -1,5 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/**
+ * Information about a key.
+ *
+ * This deliberately carries no authentication mode or provider, and should not
+ * be given one. Windows and Android can attest it from the OS at listing time,
+ * but Apple cannot recover it at all — the mode survives only inside a
+ * `SecAccessControl`, which exposes no accessor for its flags — so the field
+ * would be OS-attested on some platforms and self-reported on others, with no
+ * way for a caller to tell which one they hold. See the `KeyInfo` doc comment
+ * in `src/models.rs` for the full rationale.
+ *
+ * If you need a key's auth mode, record it yourself when you call
+ * `generateSecureKey`; that is reliable on every platform.
+ */
 export interface KeyInfo {
   keyName: string;
   publicKey: string;

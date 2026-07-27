@@ -231,11 +231,36 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       - Residual: a key that enumerates but cannot be opened or exported is still skipped
         rather than propagated, so it too reads as "already gone" on a delete-by-public-key.
         Left tolerant on purpose — one unreadable key should not break `listKeys` entirely.
-- [ ] Return the provider/auth-mode in `KeyInfo` so callers can tell a silent TPM key
-      from a Hello-protected one. Right now `listKeys` cannot distinguish them, which
-      matters for any security decision made from the list. Both Windows list paths
-      already know the provider where they build each `KeyInfo` and drop it. No longer
-      just a nice-to-have: the delete-by-public-key fix above needs this field.
+- [x] Return the provider/auth-mode in `KeyInfo` so callers can tell a silent TPM key
+      from a Hello-protected one. **Decision: won't do — dropped deliberately, do not
+      re-propose without new platform capability.** It cannot be given the same meaning
+      on all four platforms:
+      - Windows: OS-attested and free. NGC vs Platform Crypto Provider is already
+        computed at enumeration and lives in `FoundKey`.
+      - Android: OS-attested, one `KeyFactory.getKeySpec(privateKey, KeyInfo::class.java)`
+        per key per listing — a metadata read of the Keymaster characteristics, so no
+        prompt. `isUserAuthenticationRequired()` is API 23+; the `biometricOnly` vs
+        `pinOrBiometric` discriminator `getUserAuthenticationType()` is API 30+, but
+        `biometricOnly` is already rejected below 30, so it is unambiguous by construction.
+      - Apple: **not recoverable at all.** All three modes are created with the same
+        `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; the only difference is the
+        `SecAccessControlCreateFlags`, and `SecAccessControl` has no public flags
+        accessor (`SecAccessControlCreateWithFlags` and `SecAccessControlGetTypeID` are
+        the whole API). The mode is write-only: converted to flags at creation and
+        discarded.
+
+      So the field would be OS-attested on two platforms and self-persisted on the third,
+      with no way for a caller to tell which one they are holding — the same trap as the
+      old `canEnforceBiometricOnly` split (one field name, two different questions), which
+      was fixed by aligning semantics rather than shipping the ambiguity. For a field
+      whose whole purpose is informing a security decision, sometimes-attested is worse
+      than absent. Apple keys created before any such change would also have no recorded
+      mode, so it could never be more than optional anyway.
+
+      Nothing needs it: the delete-by-public-key fix carries the provider internally in
+      `FoundKey` and never exposes it, and the caller already knows the mode because they
+      passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
+      do reliably on all four platforms.
 
 ---
 

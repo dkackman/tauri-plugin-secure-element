@@ -61,6 +61,36 @@ pub struct ListKeysRequest {
 }
 
 /// Information about a key
+///
+/// This deliberately carries no authentication mode or provider, and should not
+/// be given one. That field cannot be made to mean the same thing on every
+/// platform:
+///
+/// - Windows: OS-attested and free. NGC (Windows Hello) vs Platform Crypto
+///   Provider is already known at enumeration time.
+/// - Android: OS-attested, at the cost of one
+///   `KeyFactory.getKeySpec(privateKey, KeyInfo::class.java)` per key per
+///   listing. That reads the Keymaster characteristics rather than using the
+///   key, so it does not prompt.
+/// - Apple: not recoverable at all. All three modes are created with the same
+///   `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, so the mode lives only in
+///   the `SecAccessControlCreateFlags` — and `SecAccessControl` exposes no
+///   accessor for them (`SecAccessControlCreateWithFlags` and
+///   `SecAccessControlGetTypeID` are the entire API). The mode is write-only:
+///   converted to flags at creation and discarded.
+///
+/// A field that is OS-attested on two platforms and a memo the plugin wrote to
+/// itself on the third, with no way for a caller to tell which one they are
+/// holding, is worse than no field at all for anything security-relevant —
+/// absent at least fails obviously. It is the same trap as the old
+/// `canEnforceBiometricOnly`, which answered live-enrollment on Apple and an
+/// API-level check on Android under one name until the semantics were aligned.
+///
+/// Callers needing the mode already know it — they passed it to
+/// `generateSecureKey` — and can persist it themselves on all four platforms,
+/// which is more than this plugin can do. The Windows layer keeps the provider
+/// internally in `FoundKey`, where delete-by-public-key needs it, without
+/// exposing it here.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyInfo {
