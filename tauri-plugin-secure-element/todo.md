@@ -210,11 +210,27 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       which is authoritative and needs no access to the key. Enumeration there goes
       through a new `enumerate_key_names` that propagates errors, unlike the display
       listing paths which stop at the first failure and return a short list.
-- [ ] Delete-by-public-key matches a key, takes `keys[0].key_name`, then re-resolves _by
-      name_ (`desktop.rs`) instead of deleting the key it matched. Carry the provider and
-      full key name through so the matched key is the deleted key. Depends on the
-      `KeyInfo` change below — the provider is known where the match happens and is
-      currently discarded.
+- [x] Delete-by-public-key matched a key, took `keys[0].key_name`, then re-resolved _by
+      name_ (`desktop.rs`) instead of deleting the key it matched. A new `FoundKey`
+      carries the provider and the provider-qualified name alongside the name and public
+      key; `find_keys` returns those and `open_found_key` reopens the matched key in the
+      provider it was found in, so delete-by-public-key no longer goes back through
+      name resolution. This did not need the public `KeyInfo` change below — `list_keys`
+      is now a thin projection of `find_keys`, so the provider stays internal to the
+      Windows layer until that item is taken up.
+      - Collapsed `list_keys_from_provider` and `list_ngc_keys`, which were near-identical
+        copies of the same unsafe enumeration loop, into one `find_keys_in_provider` over
+        `enumerate_key_names`. The two differed only in how a caller-facing name is
+        recovered from an enumerated one, which is now a closure parameter.
+      - **Behavior change beyond the bullet:** `find_keys` propagates provider-open and
+        enumeration failures instead of skipping that provider, so `listKeys` now errors
+        where it used to return a partial list. Deliberate — delete-by-public-key treats
+        an empty result as "already gone, success", so a swallowed enumeration failure
+        there reports a key destroyed that still exists. It also makes the pre-existing
+        "propagate provider errors" comment in `desktop.rs` true, which it was not.
+      - Residual: a key that enumerates but cannot be opened or exported is still skipped
+        rather than propagated, so it too reads as "already gone" on a delete-by-public-key.
+        Left tolerant on purpose — one unreadable key should not break `listKeys` entirely.
 - [ ] Return the provider/auth-mode in `KeyInfo` so callers can tell a silent TPM key
       from a Hello-protected one. Right now `listKeys` cannot distinguish them, which
       matters for any security decision made from the list. Both Windows list paths

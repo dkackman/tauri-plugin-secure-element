@@ -334,11 +334,30 @@ pub fn is_tpm_available(provider: &ProviderHandle) -> bool {
     !provider.0.is_invalid() && is_tpm2_available()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KeyProviderType {
     /// NGC (Windows Hello) protected key
     Ngc,
     /// TPM key without Windows Hello
     Tpm,
+}
+
+/// A key located by enumeration, carrying everything needed to act on that
+/// exact key.
+///
+/// Key names are unique within a provider but not across the two, so a caller
+/// that matched a key here and then went back to resolve it by name could land
+/// on a different key — name resolution always tries NGC first. Keeping the
+/// provider and the full name together closes that gap.
+pub struct FoundKey {
+    /// The caller-facing key name, with the provider's prefix stripped
+    pub key_name: String,
+    /// The public key in base64 encoding
+    pub public_key: String,
+    /// Which provider this key was found in
+    pub provider: KeyProviderType,
+    /// The provider-qualified name this key is stored under
+    pub full_name: String,
 }
 
 /// Opens an existing key by name, automatically detecting the correct provider.
@@ -1041,149 +1060,102 @@ fn extract_ngc_key_name<'a>(full_name: &'a str, app_id: &str) -> Option<&'a str>
         .map(|pos| &full_name[pos + marker.len()..])
 }
 
-fn list_keys_from_provider(
+/// Collects the keys in one provider that belong to this app and pass the filters.
+///
+/// The two providers differ only in how a caller-facing name is recovered from
+/// an enumerated one, which is what `extract_user_name` supplies.
+///
+/// A key that cannot be opened or exported is skipped rather than failing the
+/// whole listing — one unreadable key should not hide every other key. A failure
+/// to enumerate at all does propagate, since that would otherwise read as
+/// "this provider holds nothing".
+fn find_keys_in_provider(
     provider: &ProviderHandle,
-    prefix: &str,
+    provider_type: KeyProviderType,
+    extract_user_name: impl Fn(&str) -> Option<String>,
     filter_key_name: Option<&str>,
     filter_public_key: Option<&str>,
-) -> crate::Result<Vec<crate::models::KeyInfo>> {
+) -> crate::Result<Vec<FoundKey>> {
     use base64::Engine;
     let mut keys = Vec::new();
 
-    unsafe {
-        let mut enum_state_guard = EnumStateGuard::new();
-        let scope = PCWSTR::null();
-
-        loop {
-            let mut key_name_ptr: *mut NCryptKeyName = std::ptr::null_mut();
-
-            let result = NCryptEnumKeys(
-                provider.0,
-                scope,
-                &mut key_name_ptr,
-                enum_state_guard.as_mut_ptr(),
-                NCRYPT_SILENT_FLAG,
-            );
-
-            if result.is_err() {
-                break;
-            }
-
-            if key_name_ptr.is_null() {
-                break;
-            }
-
-            // Wrap in RAII guard to ensure cleanup even on panic
-            let key_name_guard = KeyNameBufferGuard::new(key_name_ptr);
-            let key_name_struct = key_name_guard.as_ref();
-            let key_name_wide = key_name_struct.pszName;
-
-            if !key_name_wide.is_null() {
-                let full_name = key_name_wide.to_string().unwrap_or_default();
-
-                // Only process keys with our prefix
-                if let Some(user_name) = full_name.strip_prefix(prefix) {
-                    let name_matches = filter_key_name.map(|f| user_name == f).unwrap_or(true);
-
-                    if name_matches {
-                        // Try to open the key and get public key
-                        if let Ok(key_handle) = open_key_internal(provider, &full_name) {
-                            if let Ok(public_key_bytes) = export_public_key(&key_handle) {
-                                let public_key_b64 = base64::engine::general_purpose::STANDARD
-                                    .encode(&public_key_bytes);
-
-                                let pk_matches = filter_public_key
-                                    .map(|f| public_key_b64 == f)
-                                    .unwrap_or(true);
-
-                                if pk_matches {
-                                    keys.push(crate::models::KeyInfo {
-                                        key_name: user_name.to_string(),
-                                        public_key: public_key_b64,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // key_name_guard is dropped here, freeing the buffer
+    for full_name in enumerate_key_names(provider)? {
+        let Some(user_name) = extract_user_name(&full_name) else {
+            continue;
+        };
+        if filter_key_name.is_some_and(|f| f != user_name) {
+            continue;
         }
+
+        let Ok(key_handle) = open_key_internal(provider, &full_name) else {
+            continue;
+        };
+        let Ok(public_key_bytes) = export_public_key(&key_handle) else {
+            continue;
+        };
+
+        let public_key = base64::engine::general_purpose::STANDARD.encode(&public_key_bytes);
+        if filter_public_key.is_some_and(|f| f != public_key) {
+            continue;
+        }
+
+        keys.push(FoundKey {
+            key_name: user_name,
+            public_key,
+            provider: provider_type,
+            full_name,
+        });
     }
 
     Ok(keys)
 }
 
-fn list_ngc_keys(
-    provider: &ProviderHandle,
+/// Finds every key belonging to this app across both providers, keeping track of
+/// which provider each one came from.
+///
+/// Prefer this over `list_keys` whenever the match is going to be acted on, so
+/// the key that gets opened is the key that matched.
+pub fn find_keys(
     app_id: &str,
     filter_key_name: Option<&str>,
     filter_public_key: Option<&str>,
-) -> crate::Result<Vec<crate::models::KeyInfo>> {
-    use base64::Engine;
-    let mut keys = Vec::new();
+) -> crate::Result<Vec<FoundKey>> {
+    let mut all_keys = Vec::new();
 
-    unsafe {
-        let mut enum_state_guard = EnumStateGuard::new();
-        let scope = PCWSTR::null();
+    let tpm_prefix = tpm_key_prefix(app_id);
+    let tpm_provider = open_provider()?;
+    all_keys.extend(find_keys_in_provider(
+        &tpm_provider,
+        KeyProviderType::Tpm,
+        |full_name| {
+            full_name
+                .strip_prefix(tpm_prefix.as_str())
+                .map(str::to_string)
+        },
+        filter_key_name,
+        filter_public_key,
+    )?);
 
-        loop {
-            let mut key_name_ptr: *mut NCryptKeyName = std::ptr::null_mut();
+    let ngc_provider = open_ngc_provider()?;
+    all_keys.extend(find_keys_in_provider(
+        &ngc_provider,
+        KeyProviderType::Ngc,
+        |full_name| extract_ngc_key_name(full_name, app_id).map(str::to_string),
+        filter_key_name,
+        filter_public_key,
+    )?);
 
-            let result = NCryptEnumKeys(
-                provider.0,
-                scope,
-                &mut key_name_ptr,
-                enum_state_guard.as_mut_ptr(),
-                NCRYPT_SILENT_FLAG,
-            );
+    Ok(all_keys)
+}
 
-            if result.is_err() {
-                break;
-            }
-
-            if key_name_ptr.is_null() {
-                break;
-            }
-
-            // Wrap in RAII guard to ensure cleanup even on panic
-            let key_name_guard = KeyNameBufferGuard::new(key_name_ptr);
-            let key_name_struct = key_name_guard.as_ref();
-            let key_name_wide = key_name_struct.pszName;
-
-            if !key_name_wide.is_null() {
-                let full_name = key_name_wide.to_string().unwrap_or_default();
-
-                // Check for our NGC key marker: /tauri_se/{app_id}/
-                if let Some(user_name) = extract_ngc_key_name(&full_name, app_id) {
-                    let name_matches = filter_key_name.map(|f| user_name == f).unwrap_or(true);
-
-                    if name_matches {
-                        if let Ok(key_handle) = open_key_internal(provider, &full_name) {
-                            if let Ok(public_key_bytes) = export_public_key(&key_handle) {
-                                let public_key_b64 = base64::engine::general_purpose::STANDARD
-                                    .encode(&public_key_bytes);
-
-                                let pk_matches = filter_public_key
-                                    .map(|f| public_key_b64 == f)
-                                    .unwrap_or(true);
-
-                                if pk_matches {
-                                    keys.push(crate::models::KeyInfo {
-                                        key_name: user_name.to_string(),
-                                        public_key: public_key_b64,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // key_name_guard is dropped here, freeing the buffer
-        }
-    }
-
-    Ok(keys)
+/// Opens the exact key that `find_keys` matched, in the provider it was found
+/// in, rather than re-detecting a provider from the name.
+pub fn open_found_key(key: &FoundKey) -> crate::Result<KeyHandle> {
+    let provider = match key.provider {
+        KeyProviderType::Ngc => open_ngc_provider()?,
+        KeyProviderType::Tpm => open_provider()?,
+    };
+    open_key_internal(&provider, &key.full_name)
 }
 
 pub fn list_keys(
@@ -1191,29 +1163,13 @@ pub fn list_keys(
     filter_key_name: Option<&str>,
     filter_public_key: Option<&str>,
 ) -> crate::Result<Vec<crate::models::KeyInfo>> {
-    let mut all_keys = Vec::new();
-
-    let tpm_prefix = tpm_key_prefix(app_id);
-    if let Ok(tpm_provider) = open_provider() {
-        if let Ok(tpm_keys) = list_keys_from_provider(
-            &tpm_provider,
-            &tpm_prefix,
-            filter_key_name,
-            filter_public_key,
-        ) {
-            all_keys.extend(tpm_keys);
-        }
-    }
-
-    if let Ok(ngc_provider) = open_ngc_provider() {
-        if let Ok(ngc_keys) =
-            list_ngc_keys(&ngc_provider, app_id, filter_key_name, filter_public_key)
-        {
-            all_keys.extend(ngc_keys);
-        }
-    }
-
-    Ok(all_keys)
+    Ok(find_keys(app_id, filter_key_name, filter_public_key)?
+        .into_iter()
+        .map(|key| crate::models::KeyInfo {
+            key_name: key.key_name,
+            public_key: key.public_key,
+        })
+        .collect())
 }
 
 pub fn can_enforce_biometric_only() -> bool {

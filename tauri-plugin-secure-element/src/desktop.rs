@@ -431,16 +431,27 @@ impl<R: Runtime> SecureElement<R> {
             // If key_name is provided, delete by name
             // If public_key is provided, find the key with that public key first
             // If neither, return error
-            let key_name = if let Some(name) = &payload.key_name {
-                name.clone()
-            } else if let Some(public_key) = &payload.public_key {
-                // Find key by public key - propagate provider errors, but treat
-                // an empty result as idempotent success (key already gone).
-                let keys = windows::list_keys(&app_id, None, Some(public_key))?;
-                if keys.is_empty() {
-                    return Ok(DeleteKeyResponse { success: true });
+            //
+            // Deletion is idempotent: a key that genuinely does not exist is success.
+            // But only a genuine "not found" may be reported that way — any other
+            // failure (access denied, provider fault, corrupted key) must propagate,
+            // or the caller is told the key was destroyed when it may still exist.
+            let key = if let Some(name) = &payload.key_name {
+                match windows::try_open_key_auto(&app_id, name)? {
+                    Some((key, _provider_type)) => key,
+                    None => return Ok(DeleteKeyResponse { success: true }),
                 }
-                keys[0].key_name.clone()
+            } else if let Some(public_key) = &payload.public_key {
+                // Open the key that actually matched, in the provider it was
+                // found in. Going back through name resolution here would risk
+                // deleting a different key: names are unique within a provider
+                // but not across the two, and name resolution always tries NGC
+                // first.
+                let found = windows::find_keys(&app_id, None, Some(public_key))?;
+                match found.first() {
+                    Some(found_key) => windows::open_found_key(found_key)?,
+                    None => return Ok(DeleteKeyResponse { success: true }),
+                }
             } else {
                 return Err(crate::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -448,14 +459,6 @@ impl<R: Runtime> SecureElement<R> {
                 )));
             };
 
-            // Deletion is idempotent: a key that genuinely does not exist is success.
-            // But only a genuine "not found" may be reported that way — any other
-            // failure (access denied, provider fault, corrupted key) must propagate,
-            // or the caller is told the key was destroyed when it may still exist.
-            let (key, _provider_type) = match windows::try_open_key_auto(&app_id, &key_name)? {
-                Some(result) => result,
-                None => return Ok(DeleteKeyResponse { success: true }),
-            };
             let success = windows::delete_key(key)?;
 
             Ok(DeleteKeyResponse { success })
