@@ -334,7 +334,7 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 - [ ] README "Platform Limitations → Windows" says TPM 2.0 is supported on Windows 10
       "since version 1507", but the code requires build 14393 (1607) and errors below it.
 - [ ] Add `CHANGELOG.md` and a stated MSRV / deprecation policy before 1.0.
-- [ ] `CLAUDE.md` says `tauri` 2.10.1; `Cargo.toml` pins 2.11.5.
+- [x] `CLAUDE.md` says `tauri` 2.10.1; `Cargo.toml` pins 2.11.5.
 - [ ] `secure_element_ffi.swift:120` — `var info` is never mutated; should be `let`.
 - [ ] The Windows Hello prompt string `"Authenticate to sign data"` (`windows.rs`) is
       hardcoded English and not localizable. Consider accepting it from the caller, which
