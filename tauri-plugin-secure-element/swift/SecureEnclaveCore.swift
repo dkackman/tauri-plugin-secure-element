@@ -160,8 +160,14 @@ public enum SecureEnclaveError: Error, LocalizedError {
 public enum SecureEnclaveCore {
     // MARK: - Helper Functions
 
-    /// Converts authentication mode string to SecAccessControlCreateFlags
-    public static func getAccessControlFlags(authMode: String?) -> SecAccessControlCreateFlags {
+    /// Converts authentication mode string to SecAccessControlCreateFlags.
+    ///
+    /// The Rust enum validates `authMode` before it reaches here, but the
+    /// `@_cdecl` FFI entry points are public C symbols any caller can invoke
+    /// directly with an arbitrary string, bypassing that validation. Fail
+    /// closed on anything unrecognized rather than silently downgrading it
+    /// to `.userPresence`.
+    public static func getAccessControlFlags(authMode: String?) -> Result<SecAccessControlCreateFlags, SecureEnclaveError> {
         let mode = authMode ?? "pinOrBiometric"
 
         // .privateKeyUsage is REQUIRED for Secure Enclave keys
@@ -174,12 +180,14 @@ public enum SecureEnclaveCore {
         case "biometricOnly":
             // Require biometric authentication only
             flags.insert(.biometryCurrentSet)
-        case "pinOrBiometric", _:
+        case "pinOrBiometric":
             // Allow PIN or biometric (default)
             flags.insert(.userPresence)
+        default:
+            return .failure(.invalidAuthMode)
         }
 
-        return flags
+        return .success(flags)
     }
 
     // MARK: - Key Namespacing
@@ -309,7 +317,13 @@ public enum SecureEnclaveCore {
         }
 
         // Create access control
-        let flags = getAccessControlFlags(authMode: authMode)
+        let flags: SecAccessControlCreateFlags
+        switch getAccessControlFlags(authMode: authMode) {
+        case let .success(value):
+            flags = value
+        case let .failure(error):
+            return .failure(error)
+        }
         var accessError: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,

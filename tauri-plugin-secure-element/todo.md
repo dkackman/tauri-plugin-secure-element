@@ -282,7 +282,7 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 - [x] `der.rs` uses `debug_assert!` for the DER short-form length invariant. Unreachable
       for valid 64-byte input, but returning `Err` costs nothing and removes a
       release-only silent-corruption path.
-- [ ] `getAccessControlFlags` (`SecureEnclaveCore.swift`) silently downgrades unknown
+- [x] `getAccessControlFlags` (`SecureEnclaveCore.swift`) silently downgrades unknown
       auth modes to `.userPresence` via `case "pinOrBiometric", _`. The Rust enum gates
       this today, but the `@_cdecl` FFI entry points are public. Fail closed instead.
 - [ ] `probeTeeSupport` now returns `false` when the generated key can't be inspected
