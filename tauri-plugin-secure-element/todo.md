@@ -279,7 +279,7 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 - [x] `getAccessControlFlags` (`SecureEnclaveCore.swift`) silently downgrades unknown
       auth modes to `.userPresence` via `case "pinOrBiometric", _`. The Rust enum gates
       this today, but the `@_cdecl` FFI entry points are public. Fail closed instead.
-- [ ] `probeTeeSupport`/`backingOf` report `BACKING_SOFTWARE` whenever a generated key
+- [x] `probeTeeSupport`/`backingOf` report `BACKING_SOFTWARE` whenever a generated key
       can't be inspected (`entry?.privateKey == null`, or `KeyFactory.getKeySpec` throws)
       rather than assuming TEE. The fail-closed design is sound and documented in code;
       what's unverified is whether any real OEM `KeyFactory`/`KeyInfo` implementation
@@ -328,7 +328,7 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       declaration.
 - [ ] The Android build warns it is "incompatible with Gradle 9.0" (deprecated features).
       Worth resolving as part of the toolchain upgrade above.
-- [ ] `build.rs` comment says the permissions files are included "via the `include`
+- [x] `build.rs` comment says the permissions files are included "via the `include`
       field"; `Cargo.toml` uses `exclude`.
 - [ ] README's `GenerateSecureKeyResult` omits the `backing` field the API returns.
 - [ ] README "Platform Limitations → Windows" says TPM 2.0 is supported on Windows 10
