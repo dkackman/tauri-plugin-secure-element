@@ -19,7 +19,9 @@ android {
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "net.kackman.secureelement.example"
-        minSdk = 24
+        // Must be >= the tauri-plugin-secure-element plugin's own minSdk (30): a
+        // consuming app declaring a lower floor fails the manifest merge.
+        minSdk = 30
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")

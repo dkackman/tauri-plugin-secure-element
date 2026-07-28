@@ -56,6 +56,19 @@ Add the plugin permissions to `src-tauri/capabilities/default.json`:
 }
 ```
 
+### Android Minimum SDK
+
+This plugin requires `minSdk = 30` (Android 11). Tauri's Android template defaults to a
+lower `minSdk`, so raise it in `src-tauri/gen/android/app/build.gradle.kts`:
+
+```kotlin
+defaultConfig {
+    minSdk = 30
+}
+```
+
+A consuming app with a lower `minSdk` fails at manifest-merge time with `uses-sdk:minSdkVersion <n> cannot be smaller than version 30 declared in library [:tauri-plugin-secure-element]`.
+
 ### Android Biometrics
 
 In order to use biometric protected keys, add this to `src-tauri/gen/android/app/build.gradle.kts`:
