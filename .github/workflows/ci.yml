@@ -222,7 +222,7 @@ jobs:
         run: ./scripts/materialize-tauri-android.sh
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       # The unit tests in android/src/test have existed since before this job did and
       # had never run anywhere but a developer's machine.
