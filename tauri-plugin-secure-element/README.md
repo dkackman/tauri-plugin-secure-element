@@ -473,6 +473,78 @@ secure signing" button rather than app startup — so the prompt arrives when th
 expects it. This costs nothing on iOS/macOS/Android and avoids an unexplained Hello
 dialog on Windows.
 
+## Security model
+
+This plugin's security guarantees differ sharply by platform. Read this section before
+relying on it for anything where those differences matter.
+
+### Key isolation is not the same on every platform
+
+- **iOS / macOS**: keys are scoped to the app's keychain access group. Another app on the
+  same device cannot see or use them.
+- **Android**: keys are scoped to the app's own `AndroidKeyStore` namespace. Another app
+  on the same device cannot see or use them.
+- **Windows**: keys are scoped **per-user, not per-app**. `app_id` is only a name prefix
+  (`tauri_se_tpm_{app_id}_{key_name}` for `authMode: "none"`, an analogous scheme for NGC
+  keys), not an OS-enforced boundary. Any other process running as the same Windows user
+  can open a key by name — there is no equivalent of iOS/macOS keychain access groups or
+  Android's per-app keystore on Windows.
+  - `sanitize_app_id` replaces `.` with `_`, so app identifiers `a.b` and `a_b` collide in
+    this namespace and would read/write the same keys.
+  - **`authMode: "none"` keys can be used silently.** A `none` key requires no user
+    presence to sign with, so any same-user process that knows (or guesses) the key name
+    can request signatures with no prompt and no way for the user to notice. Prefer
+    `pinOrBiometric` unless you have a specific reason to accept this.
+
+### Deletion never requires authentication, on any platform
+
+`deleteKey` does not check `authMode` before deleting — `SecItemDelete` (iOS/macOS),
+`NCryptDeleteKey` (Windows), and `KeyStore.deleteEntry` (Android) all proceed
+unconditionally, even for keys created with `pinOrBiometric` or `biometricOnly`. Anything
+that can invoke the plugin — including injected or compromised webview JavaScript holding
+the `secure-element:default` capability — can destroy every key the app has created.
+
+This is an **availability** risk, not a confidentiality one: a caller who can reach
+`deleteKey` can deny future use of a key, but cannot extract its private material or sign
+with it without also holding sign permission. Grant `allow-delete-key` only to code paths
+that actually need to delete keys.
+
+### Scope the capability instead of using `secure-element:default`
+
+`secure-element:default` grants all six commands (`ping`, `generateSecureKey`, `listKeys`,
+`signWithKey`, `deleteKey`, `checkSecureElementSupport`). Most apps don't need all of
+them from every window. A sign-only capability, for example:
+
+```json
+{
+  "identifier": "sign-only",
+  "windows": ["main"],
+  "permissions": ["secure-element:allow-sign-with-key"]
+}
+```
+
+grants signing without also granting the ability to enumerate, create, or delete keys.
+See `permissions/default.toml` in this crate for the full list of individual
+`allow-*` permission identifiers.
+
+### What this plugin does not protect against
+
+- **Signing over attacker-chosen data.** For a `none`-auth key, anything that can invoke
+  `signWithKey` can obtain a valid signature over any bytes it chooses. `pinOrBiometric`
+  and `biometricOnly` keys limit this to one signature per user gesture (biometric prompt
+  or Windows Hello), but the user is not shown *what* they are signing — only that a
+  signature was requested. Treat a successful signature as proof of "the user
+  authenticated at this moment," not as proof the user reviewed the signed content.
+- **Attestation.** No platform exposes key attestation (e.g. Android KeyStore attestation
+  certificates, TPM attestation) through this plugin today, so a remote relying party
+  cannot cryptographically verify that a given public key was actually generated in
+  hardware rather than software. `checkSecureElementSupport()` and the `backing` field
+  report what the local device believes about itself; they are not attestable evidence.
+- **Compromised OS or physical device access.** As with any secure-element integration,
+  this plugin assumes the OS's own security boundary (Secure Enclave, TEE/StrongBox, TPM)
+  is intact. It provides no protection against a jailbroken/rooted device, a compromised
+  OS kernel, or physical extraction attacks that defeat the underlying hardware.
+
 ## License
 
 Apache-2.0

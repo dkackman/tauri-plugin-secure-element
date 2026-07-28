@@ -153,33 +153,34 @@ library-bump fix available anyway. This closes the item instead of implementing 
       `androidTest` instrumented suite (needs a device/emulator in CI). Until then this
       path is exercised manually via the test app.
 
-### 2. Write the threat model / security model docs
+### 2. ~~Write the threat model / security model docs~~ — done
 
-The per-platform boundaries differ sharply and callers cannot infer them. Add a
-`## Security model` section to the README (and a `SECURITY.md` with a reporting address).
-Must state, at minimum:
+The per-platform boundaries differ sharply and callers cannot infer them. Added a
+`## Security model` section to the README and a root `SECURITY.md` with a reporting
+address (<dkackman@gmail.com>).
 
-- [ ] **Windows `authMode: "none"`** creates a Platform Crypto Provider key that _any_
+- [x] **Windows `authMode: "none"`** creates a Platform Crypto Provider key that _any_
       process running as the same user can sign with silently, given the key name — and
       the name is `tauri_se_tpm_{app_id}_{key_name}`, derivable from the public app
-      identifier. `guest-js/index.ts` documents this honestly; the README does not
-      mention it at all.
-- [ ] **Windows keys are scoped per-user, not per-app.** `app_id` is only a name prefix,
+      identifier. `guest-js/index.ts` documented this already; the README now does too.
+- [x] **Windows keys are scoped per-user, not per-app.** `app_id` is only a name prefix,
       so a different app run by the same user can open them. Contrast with iOS/macOS
       (keychain access groups) and Android (per-app keystore), where the OS enforces the
       app boundary.
-- [ ] **`sanitize_app_id` collisions**: `.` → `_` means identifiers `a.b` and `a_b` land
+- [x] **`sanitize_app_id` collisions**: `.` → `_` means identifiers `a.b` and `a_b` land
       in the same Windows namespace.
-- [ ] **Deletion never requires authentication on any platform** (`SecItemDelete`,
+- [x] **Deletion never requires authentication on any platform** (`SecItemDelete`,
       `NCryptDeleteKey`, `keyStore.deleteEntry` all proceed for auth-mandatory keys). Any
       code that can reach the plugin — including injected webview JS holding
-      `secure-element:default` — can destroy every key. Document it as an availability
-      property, and recommend a narrower capability for apps that never delete.
-- [ ] **The default capability grants all six commands.** Show a minimal capability
-      example (e.g. sign-only) alongside `secure-element:default`.
-- [ ] What the plugin does _not_ protect against: a compromised renderer can request
+      `secure-element:default` — can destroy every key. Documented as an availability
+      property, with a recommendation to grant `allow-delete-key` narrowly.
+- [x] **The default capability grants all six commands.** README now shows a minimal
+      sign-only capability example alongside `secure-element:default`.
+- [x] What the plugin does _not_ protect against: a compromised renderer can request
       signatures over attacker-chosen bytes for any non-auth key; auth-required keys
-      limit this to one signature per user gesture, over data the user cannot see.
+      limit this to one signature per user gesture, over data the user cannot see. Also
+      documented: no platform exposes key attestation, and the plugin assumes OS/hardware
+      security is intact (no protection against a jailbroken/rooted device).
 
 ### 3. Reconcile `biometricOnly` docs with behavior
 
