@@ -13,11 +13,15 @@ android {
     }
 
     defaultConfig {
-        // API 23 (Marshmallow) is the real floor: KeyGenParameterSpec, KeyInfo and
-        // UserNotAuthenticatedException are all API 23+, and the key generation path
-        // uses them unconditionally. Declaring 21 here meant API 21-22 devices got a
-        // NoClassDefFoundError instead of a clean "unsupported" rejection.
-        minSdk = 23
+        // API 30 (Android 11) is the floor. Below API 30, androidx.biometric 1.1.0
+        // throws IllegalArgumentException("Crypto-based authentication is not
+        // supported for Device Credential prior to API 30") for the
+        // BIOMETRIC_STRONG or DEVICE_CREDENTIAL prompt this plugin always builds, so
+        // every pinOrBiometric signature failed on API 23-29 in practice. There is no
+        // stable androidx.biometric release newer than 1.1.0 to fix that with (1.2-1.4
+        // only ever shipped as alphas), so raising the floor was the fix rather than a
+        // library bump.
+        minSdk = 30
         consumerProguardFiles("consumer-rules.pro")
     }
 

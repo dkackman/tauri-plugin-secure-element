@@ -92,33 +92,40 @@ Already fixed (see git history):
 
 ## Must fix before dropping `-beta`
 
-### 1. Verify `pinOrBiometric` signing on Android API 23-29
+### 1. ~~Verify `pinOrBiometric` signing on Android API 23-29~~ — moot, `minSdk` raised to 30
 
 `buildPromptInfo` always allows `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`
 (`android/src/main/java/SecureKeysPlugin.kt`), and that prompt is passed to
-`biometricPrompt.authenticate(promptInfo, cryptoObject)`. androidx.biometric is
-believed to throw `IllegalArgumentException("Crypto-based authentication is not
-supported for Device Credential prior to API 30")` in that combination.
+`biometricPrompt.authenticate(promptInfo, cryptoObject)`. androidx.biometric throws
+`IllegalArgumentException("Crypto-based authentication is not supported for Device
+Credential prior to API 30")` in that combination — confirmed against the
+1.1.0 source rather than reproduced on hardware, since there's no longer a supported
+device to reproduce it on.
 
-If confirmed, **every `pinOrBiometric` signature fails on API 23-29** — which is most
-of the range the README advertises.
+Rather than reproduce-and-work-around this on API 23-29, `android/build.gradle.kts`
+now sets `minSdk = 30` (was 23): those are 8+-year-old devices the maintainer has no
+way to adequately test against, and androidx.biometric has no stable release newer
+than 1.1.0 to fix this with (1.2-1.4 only ever shipped as alphas), so there was no
+library-bump fix available anyway. This closes the item instead of implementing it:
 
-- [ ] Reproduce on an API 29 emulator/device, or confirm against the androidx.biometric
-      1.1.0 source.
-- [ ] If confirmed: on pre-30, build prompt info with `BIOMETRIC_STRONG` only and offer
-      device-credential fallback through a separate non-crypto path (or reject
-      `pinOrBiometric` on pre-30 the way `biometricOnly` is already rejected, and say so
-      in the README).
-- [ ] Fix the double-reject: the throw escapes into `signWithKey`'s outer `catch` _after_
-      `pendingSignInvoke` already holds the invoke, so the same invoke can be rejected
-      twice. Wrap the `authenticate` call so failure goes through
-      `pendingSignInvoke.getAndSet(null)`.
+- The pre-30 `setUserAuthenticationValidityDurationSeconds(0)` fallback branch in
+  `buildKeyGenParameterSpec` is deleted — `AUTH_DEVICE_CREDENTIAL` is unconditional now,
+  since API 30 is this library's floor. The "which semantics apply" audit that fallback
+  needed is moot along with it.
+- README's Android platform-limitations table gained a "Minimum Android version: API
+  30+" row and a note explaining why.
+- `biometricOnly`'s existing API 30+ gate is now redundant with the plugin-wide floor,
+  but left in place — it is what makes the backing-provenance decision in `KeyInfo`
+  unambiguous by construction (see the `[x]` item above on `KeyInfo`/`getUserAuthenticationType()`), so removing it is a separate, unrelated change.
+
+- [ ] The double-reject risk is still real and NOT API-level-specific, so it remains
+      open: if `biometricPrompt.authenticate()` throws synchronously for _any_ reason
+      (not just the now-unreachable pre-30 case), the throw escapes `signWithKey`'s
+      outer `catch` _after_ `pendingSignInvoke` already holds the invoke, so the same
+      invoke can be rejected twice. Wrap the `authenticate` call (`SecureKeysPlugin.kt`
+      line ~863) so failure goes through `pendingSignInvoke.getAndSet(null)` like every
+      other exit path in `signWithBiometricPrompt` already does.
 - [ ] Add a regression test for the "prompt construction fails" path.
-- [ ] Separately, audit the pre-R fallback `setUserAuthenticationValidityDurationSeconds(0)`.
-      AOSP's `KeymasterUtils` does treat `0` as per-use authentication, but the documented
-      per-use value for that deprecated API is `-1`, and `0` has historically been read as
-      "auth token must be ≤ 0 seconds old," which can render a key permanently unusable.
-      Confirm on API 23-29 hardware which semantics apply.
 
 ### 2. Write the threat model / security model docs
 
@@ -244,17 +251,17 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       discarded.
 
       So the field would be OS-attested on two platforms and self-persisted on the third,
-              with no way for a caller to tell which one they are holding — the same trap as the
-              old `canEnforceBiometricOnly` split (one field name, two different questions), which
-              was fixed by aligning semantics rather than shipping the ambiguity. For a field
-              whose whole purpose is informing a security decision, sometimes-attested is worse
-              than absent. Apple keys created before any such change would also have no recorded
-              mode, so it could never be more than optional anyway.
+                      with no way for a caller to tell which one they are holding — the same trap as the
+                      old `canEnforceBiometricOnly` split (one field name, two different questions), which
+                      was fixed by aligning semantics rather than shipping the ambiguity. For a field
+                      whose whole purpose is informing a security decision, sometimes-attested is worse
+                      than absent. Apple keys created before any such change would also have no recorded
+                      mode, so it could never be more than optional anyway.
 
-              Nothing needs it: the delete-by-public-key fix carries the provider internally in
-              `FoundKey` and never exposes it, and the caller already knows the mode because they
-              passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
-              do reliably on all four platforms.
+                      Nothing needs it: the delete-by-public-key fix carries the provider internally in
+                      `FoundKey` and never exposes it, and the caller already knows the mode because they
+                      passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
+                      do reliably on all four platforms.
 
 ---
 
@@ -311,8 +318,9 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       messages, while the release-build generic variant is unchanged.)
 - [ ] Android toolchain upgrade — blocks all androidx dependency bumps. Attempted and
       reverted; the constraints are: - **`androidx.biometric` has no stable upgrade.** 1.1.0 (2020) is still the newest
-      stable release; 1.2.0, 1.3.0 and 1.4.0 have only ever shipped as alphas. So
-      item 1 cannot be fixed by bumping the library — it needs a code change. - `core-ktx:1.19.0`, `appcompat:1.7.1`, `fragment-ktx:1.8.9` and `material:1.14.0`
+      stable release; 1.2.0, 1.3.0 and 1.4.0 have only ever shipped as alphas. (This no
+      longer blocks item 1 — that item closed by raising `minSdk` to 30 rather than by a
+      library bump or code change — but the library itself is still stuck on 1.1.0.) - `core-ktx:1.19.0`, `appcompat:1.7.1`, `fragment-ktx:1.8.9` and `material:1.14.0`
       all ship **Kotlin 2.1.0 metadata**, but `settings.gradle` pins Kotlin **1.8.20**
       (and AGP **8.0.2**), which reads at most 1.9.0. Bumping them fails the build with
       "Module was compiled with an incompatible version of Kotlin". - Raising the plugin's Kotlin version is not purely local: this is a **library**,

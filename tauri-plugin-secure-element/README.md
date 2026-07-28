@@ -399,11 +399,14 @@ async function verifySignature(
 
 ### Android
 
-| Feature                   | Requirement | Notes                                                              |
-| ------------------------- | ----------- | ------------------------------------------------------------------ |
-| Hardware-backed keys      | API 23+     | TEE or StrongBox required                                          |
-| StrongBox                 | API 28+     | Falls back to TEE if creation fails; check `backing` in the result |
-| `biometricOnly` auth mode | API 30+     | Rejected on older versions                                         |
+| Feature                   | Requirement | Notes                                                                          |
+| ------------------------- | ----------- | ------------------------------------------------------------------------------ |
+| Minimum Android version   | API 30+     | This plugin's `minSdk`; older devices cannot install an app that depends on it |
+| Hardware-backed keys      | API 23+     | TEE or StrongBox required (moot below this plugin's own API 30 floor)          |
+| StrongBox                 | API 28+     | Falls back to TEE if creation fails; check `backing` in the result             |
+| `biometricOnly` auth mode | API 30+     | Rejected on older versions                                                     |
+
+**Why API 30:** `androidx.biometric` 1.1.0 — the newest stable release; 1.2-1.4 have only ever shipped as alphas — throws for a prompt that allows both biometric and device-credential authentication (this plugin's `pinOrBiometric` mode) on API < 30. Requiring API 30 avoids that failure entirely rather than working around it.
 
 When a StrongBox-capable device falls back to TEE, `generateSecureKey` still succeeds and `backing` will be `"integrated"` instead of `"discrete"`. Check `result.backing` if your application requires a specific minimum tier.
 

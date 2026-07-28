@@ -245,17 +245,14 @@ class SecureKeysPlugin(
                     }
 
                     else -> {
-                        // "pinOrBiometric" or default - allow both biometric and device credential
+                        // "pinOrBiometric" or default - allow both biometric and device
+                        // credential. AUTH_DEVICE_CREDENTIAL is API 30+ only, which is
+                        // this library's minSdk, so no pre-30 fallback is needed.
                         setUserAuthenticationRequired(true)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            setUserAuthenticationParameters(
-                                0,
-                                KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-                            )
-                        } else {
-                            @Suppress("DEPRECATION")
-                            setUserAuthenticationValidityDurationSeconds(0)
-                        }
+                        setUserAuthenticationParameters(
+                            0,
+                            KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+                        )
                     }
                 }
                 if (useSecureElement) {
@@ -353,8 +350,8 @@ class SecureKeysPlugin(
      * over-reporting would let a caller believe a key is protected when it isn't.
      */
     private fun backingOf(alias: String): String {
-        // KeyInfo is available from API 23, which is this library's minSdk, so the
-        // backing is always inspectable in principle.
+        // KeyInfo is available from API 23, well below this library's minSdk of 30, so
+        // the backing is always inspectable in principle.
         val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
         // NB: must NOT be narrowed to `ECPrivateKey`. AndroidKeyStore EC keys are
         // `AndroidKeyStoreECPrivateKey`, which implements `ECKey` but NOT
