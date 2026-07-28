@@ -222,72 +222,31 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 
 ### 5. Cross-provider name collisions on Windows
 
-- [x] `key_exists` returned `false` whenever `open_ngc_provider()` failed, so a TPM key
-      could be created under a name an NGC key already owned. `open_key_auto` always
-      resolves NGC first, so sign/delete hit a different key than the one just created,
-      and `list_keys` returned two entries with the same `keyName`. `key_exists` now
-      returns `crate::Result<bool>` and propagates every failure it cannot interpret —
-      SID lookup, either provider open, and any unrecognized `NCryptOpenKey` error — so
-      `create_key` refuses rather than guessing that a name is free. It also probes
-      silently now. Verified on hardware: `generateSecureKey` still succeeds for both
-      `none` and `pinOrBiometric` — the case that matters, since creating a plain TPM key
-      now depends on `open_ngc_provider()` succeeding — and a duplicate name still reports
-      `AlreadyExists`.
-- [x] `try_open_key` treats `NTE_PERM` as "key not found". The comment justifies it — the
-      NGC provider returns access-denied for keys that don't exist — but it conflates the
-      other direction too: an NGC key that exists and is genuinely inaccessible reads as
-      absent. Left as-is on the `try_open_key_auto` path, where the conflation is safe
-      (the caller falls through to the other provider and a wrong answer costs a
-      misleading "not found", not a wrong key). Fixed where it is _not_ safe: the new
-      `key_present_in_provider` disambiguates `NTE_PERM` by enumerating the provider,
-      which is authoritative and needs no access to the key. Enumeration there goes
-      through a new `enumerate_key_names` that propagates errors, unlike the display
-      listing paths which stop at the first failure and return a short list.
-- [x] Delete-by-public-key matched a key, took `keys[0].key_name`, then re-resolved _by
-      name_ (`desktop.rs`) instead of deleting the key it matched. A new `FoundKey`
-      carries the provider and the provider-qualified name alongside the name and public
-      key; `find_keys` returns those and `open_found_key` reopens the matched key in the
-      provider it was found in, so delete-by-public-key no longer goes back through
-      name resolution. This did not need the public `KeyInfo` change below — `list_keys`
-      is now a thin projection of `find_keys`, so the provider stays internal to the
-      Windows layer until that item is taken up. - Collapsed `list_keys_from_provider` and `list_ngc_keys`, which were near-identical
-      copies of the same unsafe enumeration loop, into one `find_keys_in_provider` over
-      `enumerate_key_names`. The two differed only in how a caller-facing name is
-      recovered from an enumerated one, which is now a closure parameter. - **Behavior change beyond the bullet:** `find_keys` propagates provider-open and
-      enumeration failures instead of skipping that provider, so `listKeys` now errors
-      where it used to return a partial list. Deliberate — delete-by-public-key treats
-      an empty result as "already gone, success", so a swallowed enumeration failure
-      there reports a key destroyed that still exists. It also makes the pre-existing
-      "propagate provider errors" comment in `desktop.rs` true, which it was not. - Residual: a key that enumerates but cannot be opened or exported is still skipped
-      rather than propagated, so it too reads as "already gone" on a delete-by-public-key.
-      Left tolerant on purpose — one unreadable key should not break `listKeys` entirely.
-- [x] Return the provider/auth-mode in `KeyInfo` so callers can tell a silent TPM key
-      from a Hello-protected one. **Decision: won't do — dropped deliberately, do not
-      re-propose without new platform capability.** It cannot be given the same meaning
-      on all four platforms: - Windows: OS-attested and free. NGC vs Platform Crypto Provider is already
-      computed at enumeration and lives in `FoundKey`. - Android: OS-attested, one `KeyFactory.getKeySpec(privateKey, KeyInfo::class.java)`
-      per key per listing — a metadata read of the Keymaster characteristics, so no
-      prompt. `isUserAuthenticationRequired()` is API 23+; the `biometricOnly` vs
-      `pinOrBiometric` discriminator `getUserAuthenticationType()` is API 30+, but
-      `biometricOnly` is already rejected below 30, so it is unambiguous by construction. - Apple: **not recoverable at all.** All three modes are created with the same
-      `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`; the only difference is the
-      `SecAccessControlCreateFlags`, and `SecAccessControl` has no public flags
-      accessor (`SecAccessControlCreateWithFlags` and `SecAccessControlGetTypeID` are
-      the whole API). The mode is write-only: converted to flags at creation and
-      discarded.
-
-      So the field would be OS-attested on two platforms and self-persisted on the third,
-                                              with no way for a caller to tell which one they are holding — the same trap as the
-                                              old `canEnforceBiometricOnly` split (one field name, two different questions), which
-                                              was fixed by aligning semantics rather than shipping the ambiguity. For a field
-                                              whose whole purpose is informing a security decision, sometimes-attested is worse
-                                              than absent. Apple keys created before any such change would also have no recorded
-                                              mode, so it could never be more than optional anyway.
-
-                                              Nothing needs it: the delete-by-public-key fix carries the provider internally in
-                                              `FoundKey` and never exposes it, and the caller already knows the mode because they
-                                              passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
-                                              do reliably on all four platforms.
+- [x] `key_exists` returned `false` whenever `open_ngc_provider()` failed, letting a TPM
+      key be created under a name an NGC key already owned. It now returns
+      `crate::Result<bool>` and propagates every failure it can't interpret, so
+      `create_key` refuses rather than guessing a name is free. Verified on hardware for
+      both `none` and `pinOrBiometric`; a duplicate name still reports `AlreadyExists`.
+- [x] `try_open_key` treated `NTE_PERM` as "key not found", conflating a missing key with
+      an existing-but-inaccessible one. Left as-is on the `try_open_key_auto` fallback
+      path, where that's harmless. Fixed on the path where it isn't: `key_present_in_provider`
+      disambiguates `NTE_PERM` via authoritative provider enumeration instead.
+- [x] Delete-by-public-key matched a key, then re-resolved it by name instead of deleting
+      the match, a race if a same-named key existed in the other provider. `FoundKey` now
+      carries the provider alongside the name, and `open_found_key` reopens the exact match.
+      Collapsed the near-duplicate `list_keys_from_provider`/`list_ngc_keys` enumeration
+      loops into one `find_keys_in_provider`. Behavior change: enumeration failures now
+      propagate instead of being skipped, so `listKeys` can error where it used to return a
+      partial list, deliberate, since delete-by-public-key reads an empty result as
+      "already gone, success" and a swallowed failure would misreport a surviving key as
+      deleted. A key that enumerates but can't be opened or exported is still skipped
+      rather than propagated (kept tolerant on purpose).
+- [x] **Won't do:** exposing provider/auth-mode in `KeyInfo`. No consistent meaning across
+      platforms, OS-attested on Windows/Android, but write-only on Apple (the
+      `SecAccessControlCreateFlags` used at key creation have no public read accessor), so
+      the field would be sometimes-attested with no way to tell which. Nothing downstream
+      needs it: `FoundKey` already tracks the provider internally, and callers already know
+      the auth mode they requested at creation.
 
 ---
 
