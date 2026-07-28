@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
-# Materialises ios/.tauri/tauri-api, the "Tauri" package ios/Package.swift depends on
-# via `.package(name: "Tauri", path: "../.tauri/tauri-api")`.
+# Materialises .tauri/tauri-api (at the plugin crate root, a sibling of ios/), the
+# "Tauri" package ios/Package.swift depends on via
+# `.package(name: "Tauri", path: "../.tauri/tauri-api")` — that path is relative to
+# ios/Package.swift itself, so it resolves one directory above ios/, not inside it.
 #
 # It is a copy of the tauri crate's own mobile/ios-api Swift package. Normally the
 # Tauri CLI drops it there while building an app for iOS — nothing in this
@@ -33,7 +35,7 @@ if [ ! -d "$ios_src" ]; then
   exit 1
 fi
 
-dest="ios/.tauri/tauri-api"
+dest=".tauri/tauri-api"
 mkdir -p "$(dirname "$dest")"
 rm -rf "$dest"
 cp -R "$ios_src" "$dest"
