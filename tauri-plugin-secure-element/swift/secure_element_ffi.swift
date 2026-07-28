@@ -118,7 +118,7 @@ public func secureElementListKeys(
     let result = SecureEnclaveCore.listKeys(keyName: keyNameStr, publicKey: publicKeyStr)
     let json = resultToJson(result) { response in
         let keys: [[String: Any]] = response.keys.map { keyInfo in
-            var info: [String: Any] = [
+            let info: [String: Any] = [
                 "keyName": keyInfo.keyName,
                 "publicKey": keyInfo.publicKey,
             ]

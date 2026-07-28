@@ -5,6 +5,24 @@ use crate::validation::{validate_key_name, validate_public_key_filter, validate_
 use crate::Result;
 use crate::SecureElementExt;
 
+/// Runs a blocking secure-element call off the async runtime's worker thread.
+///
+/// `SecureElement`'s methods do synchronous FFI/OS calls — on macOS via `extern "C"`
+/// into Swift, on Windows via NCrypt — some of which block on a Touch ID or Windows
+/// Hello prompt waiting for the user. Calling them directly from an `async fn` command
+/// runs them on a worker thread shared with every other pending command, so one
+/// in-flight prompt stalls unrelated calls (e.g. a `listKeys` from another window)
+/// until the user responds.
+async fn run_blocking<F, T>(f: F) -> Result<T>
+where
+    F: FnOnce() -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| crate::Error::Io(std::io::Error::other(e.to_string())))?
+}
+
 #[command]
 pub(crate) async fn ping<R: Runtime>(
     app: AppHandle<R>,
@@ -19,7 +37,7 @@ pub(crate) async fn generate_secure_key<R: Runtime>(
     payload: GenerateSecureKeyRequest,
 ) -> Result<GenerateSecureKeyResponse> {
     validate_key_name(&payload.key_name)?;
-    app.secure_element().generate_secure_key(payload)
+    run_blocking(move || app.secure_element().generate_secure_key(payload)).await
 }
 
 #[command]
@@ -38,7 +56,7 @@ pub(crate) async fn list_keys<R: Runtime>(
     if let Some(ref public_key) = payload.public_key {
         payload.public_key = Some(validate_public_key_filter(public_key)?);
     }
-    app.secure_element().list_keys(payload)
+    run_blocking(move || app.secure_element().list_keys(payload)).await
 }
 
 #[command]
@@ -48,7 +66,7 @@ pub(crate) async fn sign_with_key<R: Runtime>(
 ) -> Result<SignWithKeyResponse> {
     validate_key_name(&payload.key_name)?;
     validate_sign_data_size(&payload.data)?;
-    app.secure_element().sign_with_key(payload)
+    run_blocking(move || app.secure_element().sign_with_key(payload)).await
 }
 
 #[command]
@@ -82,7 +100,7 @@ pub(crate) async fn delete_key<R: Runtime>(
         payload.public_key = Some(validate_public_key_filter(public_key)?);
     }
 
-    app.secure_element().delete_key(payload)
+    run_blocking(move || app.secure_element().delete_key(payload)).await
 }
 
 /// Queries the platform on every call — deliberately uncached.
@@ -104,5 +122,5 @@ pub(crate) async fn delete_key<R: Runtime>(
 pub(crate) async fn check_secure_element_support<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<CheckSecureElementSupportResponse> {
-    app.secure_element().check_secure_element_support()
+    run_blocking(move || app.secure_element().check_secure_element_support()).await
 }

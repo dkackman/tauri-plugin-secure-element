@@ -339,13 +339,18 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       README to state the actual 1607/14393 requirement.
 - [ ] Add `CHANGELOG.md` and a stated MSRV / deprecation policy before 1.0.
 - [x] `CLAUDE.md` says `tauri` 2.10.1; `Cargo.toml` pins 2.11.5.
-- [ ] `secure_element_ffi.swift:120` — `var info` is never mutated; should be `let`.
+- [x] `secure_element_ffi.swift:120` — `var info` is never mutated; should be `let`.
 - [ ] The Windows Hello prompt string `"Authenticate to sign data"` (`windows.rs`) is
       hardcoded English and not localizable. Consider accepting it from the caller, which
       also lets apps explain _what_ is being signed.
-- [ ] macOS FFI calls run synchronously on the async runtime's worker thread — including
+- [x] macOS FFI calls run synchronously on the async runtime's worker thread — including
       `sign`, which blocks on a Touch ID prompt. Wrap them in `spawn_blocking` so one
       pending signature can't stall other plugin commands.
+      Fixed at the `commands.rs` layer rather than in `desktop.rs`, since the exact same
+      bug exists on Windows (`sign_hash_with_window` blocks on a Windows Hello prompt) —
+      a new `run_blocking` helper wraps every `SecureElement` call in
+      `tauri::async_runtime::spawn_blocking`, fixing both platforms with one change.
+      `ping` is left unwrapped since it does no I/O.
 
 ---
 
