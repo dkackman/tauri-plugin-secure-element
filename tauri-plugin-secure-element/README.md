@@ -426,7 +426,10 @@ When a StrongBox-capable device falls back to TEE, `generateSecureKey` still suc
 ### iOS
 
 - Secure Enclave is available on all devices with A7 chip or later (iPhone 5s+)
-- Simulator does not support Secure Enclave - test on physical devices
+- The Simulator emulates the Secure Enclave in software (`checkSecureElementSupport().emulated` is `true`) rather than rejecting it outright — but `pinOrBiometric` and `biometricOnly` key generation still require the Simulator's device passcode/biometrics to be configured, exactly as on a real device with no passcode set:
+  - `pinOrBiometric`: Settings app → Face ID & Passcode / Touch ID & Passcode → Turn Passcode On
+  - `biometricOnly`: the above, plus Features menu → Face ID/Touch ID → Enrolled, then enroll in the Settings app
+  - Without this, `generateSecureKey` is rejected up front with a clear message rather than a raw OS error
 
 ### Authentication Modes
 

@@ -81,6 +81,7 @@ public enum SecureEnclaveError: Error, LocalizedError {
     case keyNotAccessible
     case invalidData(String)
     case biometricNotAvailable(String)
+    case deviceNotSecure(String)
 
     public var errorDescription: String? {
         switch self {
@@ -149,6 +150,12 @@ public enum SecureEnclaveError: Error, LocalizedError {
                 return "Biometric authentication is not available: \(detail)"
             #else
                 return "Biometric authentication is not available"
+            #endif
+        case let .deviceNotSecure(detail):
+            #if DEBUG
+                return "Device is not secure: \(detail)"
+            #else
+                return "Device is not secure"
             #endif
         }
     }
@@ -293,6 +300,33 @@ public enum SecureEnclaveCore {
         return "Biometric authentication is not available on this device."
     }
 
+    /// Checks whether the device has a passcode set.
+    /// Returns nil if a passcode is set, or an error message describing why not.
+    ///
+    /// `pinOrBiometric` keys are created with `.userPresence`, which the Keychain
+    /// only enforces on *persisted* items — `checkSecureElementSupport()`'s
+    /// availability probe uses a non-permanent test key (see `isSecureEnclaveAvailable`)
+    /// and so does not exercise this requirement. Without this check, a device or
+    /// Simulator with no passcode configured reports itself as supported but then
+    /// fails key generation with a bare `errSecAuthFailed` (-25293).
+    public static func checkDeviceSecure() -> String? {
+        let context = LAContext()
+        var error: NSError?
+
+        // .deviceOwnerAuthentication (not ...WithBiometrics) succeeds if either a
+        // passcode or biometrics can satisfy it, so this only fails when neither
+        // credential exists.
+        if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
+            return nil
+        }
+
+        if let laError = error, laError.code == LAError.passcodeNotSet.rawValue {
+            return "No passcode is set. Please set a passcode in Settings to use pinOrBiometric authentication."
+        }
+
+        return "Device authentication is not available: \(error?.localizedDescription ?? "unknown reason")."
+    }
+
     // MARK: - Core Operations
 
     /// Generate a new secure key in the Secure Enclave
@@ -302,6 +336,10 @@ public enum SecureEnclaveCore {
         if mode == "biometricOnly" {
             if let biometricError = checkBiometricAvailability() {
                 return .failure(.biometricNotAvailable(biometricError))
+            }
+        } else if mode == "pinOrBiometric" {
+            if let deviceSecureError = checkDeviceSecure() {
+                return .failure(.deviceNotSecure(deviceSecureError))
             }
         }
 

@@ -87,6 +87,21 @@ Already fixed (see git history):
   resolves the "iOS burns an ephemeral Secure Enclave key on every `generateSecureKey`"
   finding: `Plugin.swift` still calls `checkSupport()`, but the probe inside it now runs
   at most once per process.
+- **`generateSecureKey` failed with `errSecAuthFailed` (-25293) for `pinOrBiometric`
+  keys on the iOS Simulator (and on any real device with no passcode set), while
+  `checkSecureElementSupport()` reported the device as fully capable.** Root cause:
+  the capability probe (`isSecureEnclaveAvailable`) creates its test key with
+  `kSecAttrIsPermanent: false`, and the Keychain only enforces the `.userPresence`
+  access-control flag on items it actually persists — so the probe never exercised the
+  passcode requirement that real, permanent `pinOrBiometric` keys are subject to.
+  `SecureEnclaveCore.checkDeviceSecure()` now precedes `pinOrBiometric` key generation
+  with an explicit `LAContext.canEvaluatePolicy(.deviceOwnerAuthentication)` check,
+  mirroring Android's `checkDeviceSecure()`/`KeyguardManager.isDeviceSecure` gate, and
+  rejects with a clear "no passcode set" message instead of surfacing the raw OSStatus.
+  README's iOS platform-limitations section documents the Simulator passcode/biometric
+  setup this requires; the previous "Simulator does not support Secure Enclave" line
+  was stale left over from before `checkSupport()` was taught to probe (rather than
+  hardcode-reject) the Simulator.
 
 ---
 
@@ -251,17 +266,17 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       discarded.
 
       So the field would be OS-attested on two platforms and self-persisted on the third,
-                      with no way for a caller to tell which one they are holding — the same trap as the
-                      old `canEnforceBiometricOnly` split (one field name, two different questions), which
-                      was fixed by aligning semantics rather than shipping the ambiguity. For a field
-                      whose whole purpose is informing a security decision, sometimes-attested is worse
-                      than absent. Apple keys created before any such change would also have no recorded
-                      mode, so it could never be more than optional anyway.
+                          with no way for a caller to tell which one they are holding — the same trap as the
+                          old `canEnforceBiometricOnly` split (one field name, two different questions), which
+                          was fixed by aligning semantics rather than shipping the ambiguity. For a field
+                          whose whole purpose is informing a security decision, sometimes-attested is worse
+                          than absent. Apple keys created before any such change would also have no recorded
+                          mode, so it could never be more than optional anyway.
 
-                      Nothing needs it: the delete-by-public-key fix carries the provider internally in
-                      `FoundKey` and never exposes it, and the caller already knows the mode because they
-                      passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
-                      do reliably on all four platforms.
+                          Nothing needs it: the delete-by-public-key fix carries the provider internally in
+                          `FoundKey` and never exposes it, and the caller already knows the mode because they
+                          passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
+                          do reliably on all four platforms.
 
 ---
 
