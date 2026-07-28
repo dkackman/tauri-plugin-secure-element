@@ -133,14 +133,25 @@ library-bump fix available anyway. This closes the item instead of implementing 
   but left in place — it is what makes the backing-provenance decision in `KeyInfo`
   unambiguous by construction (see the `[x]` item above on `KeyInfo`/`getUserAuthenticationType()`), so removing it is a separate, unrelated change.
 
-- [ ] The double-reject risk is still real and NOT API-level-specific, so it remains
-      open: if `biometricPrompt.authenticate()` throws synchronously for _any_ reason
-      (not just the now-unreachable pre-30 case), the throw escapes `signWithKey`'s
-      outer `catch` _after_ `pendingSignInvoke` already holds the invoke, so the same
-      invoke can be rejected twice. Wrap the `authenticate` call (`SecureKeysPlugin.kt`
-      line ~863) so failure goes through `pendingSignInvoke.getAndSet(null)` like every
-      other exit path in `signWithBiometricPrompt` already does.
-- [ ] Add a regression test for the "prompt construction fails" path.
+- [x] The double-reject risk is real and NOT API-level-specific: if
+      `biometricPrompt.authenticate()` throws synchronously for _any_ reason, the throw
+      used to escape `signWithKey`'s outer `catch` _after_ `pendingSignInvoke` already
+      held the invoke, so the same invoke could be rejected twice. The `authenticate`
+      call (`SecureKeysPlugin.kt`, in `signWithBiometricPrompt`) is now wrapped so
+      failure goes through `pendingSignInvoke.getAndSet(null)`, like every other exit
+      path in that function already does.
+- [ ] Add a regression test for the "prompt construction fails" path — **blocked**, not
+      done. `signWithBiometricPrompt` requires a real `FragmentActivity` and
+      `androidx.biometric.BiometricPrompt`, neither constructible on the host JVM;
+      `SecureKeysPlugin` itself can't be instantiated off-device either, since its
+      constructor requires a real `Activity` and its superclass is a Tauri `Plugin`.
+      This module's unit tests (`PluginUnitTest.kt`) only cover pure functions for
+      exactly this reason, and there is no Robolectric dependency or `androidTest`
+      source set in this module to fall back to (the vendored `.tauri/tauri-api` has one;
+      this plugin's own `android/src/` does not). Covering this for real needs one of:
+      add Robolectric (new test dependency, shadows `BiometricPrompt`), or add an
+      `androidTest` instrumented suite (needs a device/emulator in CI). Until then this
+      path is exercised manually via the test app.
 
 ### 2. Write the threat model / security model docs
 
@@ -266,17 +277,17 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
       discarded.
 
       So the field would be OS-attested on two platforms and self-persisted on the third,
-                          with no way for a caller to tell which one they are holding — the same trap as the
-                          old `canEnforceBiometricOnly` split (one field name, two different questions), which
-                          was fixed by aligning semantics rather than shipping the ambiguity. For a field
-                          whose whole purpose is informing a security decision, sometimes-attested is worse
-                          than absent. Apple keys created before any such change would also have no recorded
-                          mode, so it could never be more than optional anyway.
+                              with no way for a caller to tell which one they are holding — the same trap as the
+                              old `canEnforceBiometricOnly` split (one field name, two different questions), which
+                              was fixed by aligning semantics rather than shipping the ambiguity. For a field
+                              whose whole purpose is informing a security decision, sometimes-attested is worse
+                              than absent. Apple keys created before any such change would also have no recorded
+                              mode, so it could never be more than optional anyway.
 
-                          Nothing needs it: the delete-by-public-key fix carries the provider internally in
-                          `FoundKey` and never exposes it, and the caller already knows the mode because they
-                          passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
-                          do reliably on all four platforms.
+                              Nothing needs it: the delete-by-public-key fix carries the provider internally in
+                              `FoundKey` and never exposes it, and the caller already knows the mode because they
+                              passed it to `generateSecureKey`. Persisting it is the app's job, which the app can
+                              do reliably on all four platforms.
 
 ---
 

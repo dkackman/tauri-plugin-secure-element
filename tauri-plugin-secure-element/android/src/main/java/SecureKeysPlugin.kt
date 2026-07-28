@@ -859,8 +859,20 @@ class SecureKeysPlugin(
         // Build prompt info
         val promptInfo = buildPromptInfo("Sign with key: $keyName")
 
-        // Show authentication UI with CryptoObject
-        biometricPrompt.authenticate(promptInfo, cryptoObject)
+        // Show authentication UI with CryptoObject. authenticate() can throw
+        // synchronously (e.g. IllegalArgumentException for an unsupported
+        // authenticator combination) instead of going through the callback, so route
+        // that failure through pendingSignInvoke like every other exit path here -
+        // otherwise it escapes to signWithKey's outer catch and double-rejects the
+        // invoke pendingSignInvoke already holds.
+        try {
+            biometricPrompt.authenticate(promptInfo, cryptoObject)
+        } catch (e: Exception) {
+            val detailedMessage = "Failed to show authentication prompt: ${e.message}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+            Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
+            pendingSignInvoke.getAndSet(null)?.reject(errorMessage)
+        }
     }
 
     @Command
