@@ -69,12 +69,11 @@ pub(crate) async fn sign_with_key<R: Runtime>(
     run_blocking(move || app.secure_element().sign_with_key(payload)).await
 }
 
-#[command]
-pub(crate) async fn delete_key<R: Runtime>(
-    app: AppHandle<R>,
-    mut payload: DeleteKeyRequest,
-) -> Result<DeleteKeyResponse> {
-    // At least one of key_name or public_key must be provided
+/// Confirms exactly one of `key_name`/`public_key` was given.
+///
+/// Pulled out of `delete_key` so this branching is unit-testable without an
+/// `AppHandle` — `delete_key` itself needs a running Tauri app to construct one.
+fn validate_delete_key_selector(payload: &DeleteKeyRequest) -> Result<()> {
     if payload.key_name.is_none() && payload.public_key.is_none() {
         return Err(crate::Error::Validation(
             "Either key_name or public_key must be provided".to_string(),
@@ -86,6 +85,16 @@ pub(crate) async fn delete_key<R: Runtime>(
             "Only one of key_name or public_key must be provided".to_string(),
         ));
     }
+
+    Ok(())
+}
+
+#[command]
+pub(crate) async fn delete_key<R: Runtime>(
+    app: AppHandle<R>,
+    mut payload: DeleteKeyRequest,
+) -> Result<DeleteKeyResponse> {
+    validate_delete_key_selector(&payload)?;
 
     // Validate optional key name if provided
     if let Some(ref key_name) = payload.key_name {
@@ -123,4 +132,36 @@ pub(crate) async fn check_secure_element_support<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<CheckSecureElementSupportResponse> {
     run_blocking(move || app.secure_element().check_secure_element_support()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(key_name: Option<&str>, public_key: Option<&str>) -> DeleteKeyRequest {
+        DeleteKeyRequest {
+            key_name: key_name.map(str::to_string),
+            public_key: public_key.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn validate_delete_key_selector_accepts_key_name_only() {
+        assert!(validate_delete_key_selector(&payload(Some("my-key"), None)).is_ok());
+    }
+
+    #[test]
+    fn validate_delete_key_selector_accepts_public_key_only() {
+        assert!(validate_delete_key_selector(&payload(None, Some("base64"))).is_ok());
+    }
+
+    #[test]
+    fn validate_delete_key_selector_rejects_neither() {
+        assert!(validate_delete_key_selector(&payload(None, None)).is_err());
+    }
+
+    #[test]
+    fn validate_delete_key_selector_rejects_both() {
+        assert!(validate_delete_key_selector(&payload(Some("my-key"), Some("base64"))).is_err());
+    }
 }

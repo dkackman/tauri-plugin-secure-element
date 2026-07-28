@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "vectors:merge": "node scripts/merge-test-vectors.mjs",
     "format": "prettier --write . && cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "prettier --check . && cargo fmt --check --manifest-path src-tauri/Cargo.toml",
     "format:js": "prettier --write .",

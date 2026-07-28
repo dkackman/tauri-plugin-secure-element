@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { platform } from "@tauri-apps/plugin-os";
-  import { Copy } from "@lucide/svelte";
+  import { Copy, Download } from "@lucide/svelte";
   import {
     deleteKey,
     generateSecureKey,
@@ -12,6 +12,7 @@
   import {
     base64ToUint8Array,
     copyToClipboard,
+    downloadJson,
     uint8ArrayToBase64,
   } from "./utils.js";
 
@@ -40,6 +41,7 @@
 
   let isGeneratingVectors = $state(false);
   let generatedVectorsJson = $state("");
+  let generatedVectorsPlatform = $state("");
   let vectorGenerateError = $state("");
   let isVerifyingVectors = $state(false);
   let vectorVerifyResults = $state<VectorVerifyResult[]>([]);
@@ -87,6 +89,7 @@
 
       await deleteKey(keyName);
       generatedVectorsJson = JSON.stringify(vectors, null, 2);
+      generatedVectorsPlatform = currentPlatform;
     } catch (err) {
       vectorGenerateError = err instanceof Error ? err.message : String(err);
       try {
@@ -157,9 +160,10 @@
 <div class="mb-4">
   <h2 class="h6">Generate Vectors</h2>
   <p class="text-muted small mb-2">
-    Creates signed test vectors for the current platform. Copy the output into <code
-      >cross-platform-test-vectors.json</code
-    >.
+    Creates signed test vectors for the current platform. Download the output
+    and merge it with <code>pnpm vectors:merge &lt;file&gt;</code> from
+    <code>test-app/</code>, which replaces this platform's entries in
+    <code>cross-platform-test-vectors.json</code> and validates the result.
   </p>
   <SpinnerButton
     loading={isGeneratingVectors}
@@ -177,6 +181,18 @@
   {#if generatedVectorsJson}
     <div class="mt-2">
       <div class="d-flex gap-2 mb-1">
+        <button
+          type="button"
+          onclick={() =>
+            downloadJson(
+              generatedVectorsJson,
+              `${generatedVectorsPlatform || "vectors"}-test-vectors.json`
+            )}
+          class="btn btn-outline-secondary btn-sm"
+        >
+          <Download size={14} class="me-1" />
+          Download JSON
+        </button>
         <button
           type="button"
           onclick={() => copyToClipboard(generatedVectorsJson)}

@@ -1221,3 +1221,76 @@ mod link_tests {
         }
     }
 }
+
+/// Key-name formatting/parsing helpers below are pure string manipulation — no NCrypt
+/// or TPM involved — so unlike the rest of this file they run for real, not just as a
+/// link check.
+#[cfg(test)]
+mod key_naming_tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_app_id_replaces_problem_characters() {
+        assert_eq!(
+            sanitize_app_id("com.example.app/v1:test?\"<>|\\"),
+            "com_example_app_v1_test______"
+        );
+        assert_eq!(sanitize_app_id("com_example_app"), "com_example_app");
+        assert_eq!(sanitize_app_id(""), "");
+    }
+
+    #[test]
+    fn tpm_key_prefix_includes_sanitized_app_id() {
+        assert_eq!(
+            tpm_key_prefix("com.example.app"),
+            "tauri_se_tpm_com_example_app_"
+        );
+    }
+
+    #[test]
+    fn tpm_key_name_appends_key_name_to_prefix() {
+        assert_eq!(
+            tpm_key_name("com.example.app", "my-key"),
+            "tauri_se_tpm_com_example_app_my-key"
+        );
+    }
+
+    #[test]
+    fn ngc_key_marker_wraps_sanitized_app_id() {
+        assert_eq!(
+            ngc_key_marker("com.example.app"),
+            "/tauri_se/com_example_app/"
+        );
+    }
+
+    #[test]
+    fn ngc_key_name_builds_full_name() {
+        assert_eq!(
+            ngc_key_name("S-1-5-21-123", "com.example.app", "my-key"),
+            "S-1-5-21-123//tauri_se/com_example_app/my-key"
+        );
+    }
+
+    #[test]
+    fn extract_ngc_key_name_round_trips_through_ngc_key_name() {
+        let full = ngc_key_name("S-1-5-21-123", "com.example.app", "my-key");
+        assert_eq!(
+            extract_ngc_key_name(&full, "com.example.app"),
+            Some("my-key")
+        );
+    }
+
+    #[test]
+    fn extract_ngc_key_name_returns_none_for_a_different_app() {
+        let full = ngc_key_name("S-1-5-21-123", "com.example.app", "my-key");
+        assert_eq!(extract_ngc_key_name(&full, "com.other.app"), None);
+    }
+
+    #[test]
+    fn extract_ngc_key_name_returns_none_when_marker_absent() {
+        assert_eq!(
+            extract_ngc_key_name("not-an-ngc-name", "com.example.app"),
+            None
+        );
+    }
+}

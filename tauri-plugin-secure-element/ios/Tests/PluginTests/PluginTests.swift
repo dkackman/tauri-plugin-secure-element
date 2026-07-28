@@ -1,12 +1,6 @@
 import Foundation
-@testable import SecureKeysPlugin
+@testable import tauri_plugin_secure_element
 import XCTest
-
-final class ExamplePluginTests: XCTestCase {
-    func testExample() {
-        let plugin = SecureKeysPlugin()
-    }
-}
 
 /// Tests for the key-namespacing helpers that scope every operation to keys this
 /// plugin created. These are pure functions and run without a Secure Enclave.

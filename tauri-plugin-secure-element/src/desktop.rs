@@ -143,6 +143,120 @@ mod ffi_helpers {
             None => (std::ptr::null(), None),
         }
     }
+
+    /// These marshal raw FFI results into Rust values — no Secure Enclave call
+    /// involved, so they run for real rather than as a link check.
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use serde::Deserialize;
+
+        /// Allocates a malloc'd, null-terminated C string the way Swift's FFI layer
+        /// does, so `ffi_string_to_owned`'s `libc::free` on drop is exercised
+        /// realistically instead of freeing Rust-allocator memory.
+        fn malloc_cstring(s: &str) -> *mut std::ffi::c_char {
+            let bytes = s.as_bytes();
+            unsafe {
+                let ptr = libc::malloc(bytes.len() + 1) as *mut std::ffi::c_char;
+                assert!(!ptr.is_null());
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
+                *ptr.add(bytes.len()) = 0;
+                ptr
+            }
+        }
+
+        #[test]
+        fn malloc_guard_is_none_for_null_pointer() {
+            assert!(MallocGuard::new(std::ptr::null_mut()).is_none());
+        }
+
+        #[test]
+        fn malloc_guard_wraps_non_null_pointer() {
+            let ptr = malloc_cstring("hello");
+            let guard = MallocGuard::new(ptr).unwrap();
+            assert_eq!(guard.as_ptr(), ptr);
+            // Dropping frees the pointer via libc::free; nothing to assert beyond
+            // "it doesn't crash" (the point of the guard).
+        }
+
+        #[test]
+        fn ffi_string_to_owned_converts_and_frees() {
+            let ptr = malloc_cstring("hello world");
+            let result = unsafe { ffi_string_to_owned(ptr) };
+            assert_eq!(result.unwrap(), "hello world");
+        }
+
+        #[test]
+        fn ffi_string_to_owned_rejects_null() {
+            let result = unsafe { ffi_string_to_owned(std::ptr::null_mut()) };
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn ffi_string_to_owned_rejects_empty_string() {
+            let ptr = malloc_cstring("");
+            let result = unsafe { ffi_string_to_owned(ptr) };
+            assert!(result.is_err());
+        }
+
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct Sample {
+            value: String,
+        }
+
+        #[test]
+        fn parse_ffi_response_deserializes_valid_json() {
+            let parsed: Sample = parse_ffi_response(r#"{"value":"hi"}"#).unwrap();
+            assert_eq!(
+                parsed,
+                Sample {
+                    value: "hi".to_string()
+                }
+            );
+        }
+
+        #[test]
+        fn parse_ffi_response_surfaces_error_field() {
+            let result: crate::Result<Sample> = parse_ffi_response(r#"{"error":"boom"}"#);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_ffi_response_rejects_malformed_json() {
+            let result: crate::Result<Sample> = parse_ffi_response("not json");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn parse_ffi_response_rejects_oversized_payload() {
+            let huge = format!(r#"{{"value":"{}"}}"#, "a".repeat(MAX_FFI_RESPONSE_SIZE));
+            let result: crate::Result<Sample> = parse_ffi_response(&huge);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn optional_to_cstring_returns_null_for_none() {
+            let (ptr, cstr) = optional_to_cstring(None);
+            assert!(ptr.is_null());
+            assert!(cstr.is_none());
+        }
+
+        #[test]
+        fn optional_to_cstring_returns_pointer_for_some() {
+            let s = "hello".to_string();
+            let (ptr, cstr) = optional_to_cstring(Some(&s));
+            assert!(!ptr.is_null());
+            assert_eq!(cstr.unwrap().to_str().unwrap(), "hello");
+        }
+
+        #[test]
+        fn optional_to_cstring_returns_null_for_interior_nul_byte() {
+            let s = "bad\0value".to_string();
+            let (ptr, cstr) = optional_to_cstring(Some(&s));
+            assert!(ptr.is_null());
+            assert!(cstr.is_none());
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

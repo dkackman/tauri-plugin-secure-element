@@ -104,7 +104,7 @@ jobs:
         run: pnpm verify:package
 
   swift:
-    name: Swift Lint
+    name: Swift Lint & Tests
     runs-on: macos-latest
     defaults:
       run:
@@ -126,6 +126,38 @@ jobs:
       # excludes the symlink so nothing is linted twice.
       - name: Run SwiftLint
         run: swiftlint lint
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # ios/Package.swift depends on "Tauri" at ../.tauri/tauri-api, a copy of the
+      # tauri crate's own mobile/ios-api Swift package that the Tauri CLI normally
+      # drops there while building an app for iOS. It is gitignored, so a fresh
+      # checkout cannot resolve the package at all without this.
+      - name: Materialise the Tauri iOS API package
+        run: ./scripts/materialize-tauri-ios.sh
+
+      # ios/Tests/PluginTests covers the pure key-namespacing helpers in
+      # SecureEnclaveCore (applicationTag/decodeKeyName) — no Secure Enclave needed,
+      # so the iOS Simulator (no real hardware) is sufficient. Package.swift declares
+      # UIKit-dependent sources, which `swift test` cannot build against the macOS
+      # host SDK, so this goes through xcodebuild against a simulator destination
+      # instead of `swift test`. The device name is picked at run time rather than
+      # hardcoded, since the exact simulator lineup available depends on the Xcode
+      # version macos-latest ships and changes over time.
+      - name: Run Swift tests
+        run: |
+          device=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          runtimes = json.load(sys.stdin)['devices']
+          names = [d['name'] for devices in runtimes.values() for d in devices if d['name'].startswith('iPhone')]
+          print(names[0])
+          ")
+          echo "Testing against: $device"
+          xcodebuild test \
+            -scheme tauri-plugin-secure-element \
+            -destination "platform=iOS Simulator,name=$device"
+        working-directory: tauri-plugin-secure-element/ios
 
   kotlin:
     name: Kotlin Lint & Tests
