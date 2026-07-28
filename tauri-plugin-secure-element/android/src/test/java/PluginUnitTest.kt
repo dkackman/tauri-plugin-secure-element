@@ -131,4 +131,163 @@ class PluginUnitTest {
         assertNull(SecureKeysPlugin.keyNameFromAlias("AndroidKeyStore_default"))
         assertNull(SecureKeysPlugin.keyNameFromAlias(""))
     }
+
+    // ── error sanitization ───────────────────────────────────────────────────
+    // Mirrors src/error_sanitize.rs on the Rust side, but parameterized on
+    // isDebug rather than gated on BuildConfig.DEBUG at compile time, so both
+    // branches run in a single JVM test process instead of needing a release build.
+
+    @Test
+    fun `sanitizeErrorMessage returns detailed message when debug`() {
+        assertEquals(
+            "detailed",
+            SecureKeysPlugin.sanitizeErrorMessage(true, "detailed", "generic"),
+        )
+    }
+
+    @Test
+    fun `sanitizeErrorMessage returns generic message when not debug`() {
+        assertEquals(
+            "generic",
+            SecureKeysPlugin.sanitizeErrorMessage(false, "detailed", "generic"),
+        )
+    }
+
+    @Test
+    fun `sanitizeErrorWithKeyNameMessage includes key name when debug`() {
+        assertEquals(
+            "Key not found: my-key",
+            SecureKeysPlugin.sanitizeErrorWithKeyNameMessage(true, "my-key", "Key not found"),
+        )
+    }
+
+    @Test
+    fun `sanitizeErrorWithKeyNameMessage omits key name when not debug`() {
+        assertEquals(
+            "Key not found",
+            SecureKeysPlugin.sanitizeErrorWithKeyNameMessage(false, "my-key", "Key not found"),
+        )
+    }
+
+    // ── emulator classification ──────────────────────────────────────────────
+
+    @Test
+    fun `classifyEmulator is false for real-device build fields`() {
+        assertFalse(
+            SecureKeysPlugin.classifyEmulator(
+                fingerprint = "google/panther/panther:14/UP1A.231005.007/1234:user/release-keys",
+                model = "Pixel 7",
+                manufacturer = "Google",
+                brand = "google",
+                device = "panther",
+                product = "panther",
+                hardware = "panther",
+            ),
+        )
+    }
+
+    @Test
+    fun `classifyEmulator detects generic fingerprint`() {
+        assertTrue(
+            SecureKeysPlugin.classifyEmulator(
+                fingerprint = "generic/sdk_gphone64_arm64/emu64a:14/UE1A.230829.036/1234:userdebug/dev-keys",
+                model = "sdk_gphone64_arm64",
+                manufacturer = "Google",
+                brand = "google",
+                device = "emu64a",
+                product = "sdk_gphone64_arm64",
+                hardware = "ranchu",
+            ),
+        )
+    }
+
+    @Test
+    fun `classifyEmulator detects goldfish hardware`() {
+        assertTrue(
+            SecureKeysPlugin.classifyEmulator(
+                fingerprint = "generic/sdk/generic:9/PSR1.180720.117/1234:eng/test-keys",
+                model = "AOSP on IA Emulator",
+                manufacturer = "unknown",
+                brand = "generic",
+                device = "generic",
+                product = "sdk_x86",
+                hardware = "goldfish",
+            ),
+        )
+    }
+
+    @Test
+    fun `classifyEmulator detects Genymotion manufacturer`() {
+        assertTrue(
+            SecureKeysPlugin.classifyEmulator(
+                fingerprint = "Genymotion/vbox86p/vbox86p:9/PPR1.180610.011/1234:userdebug/test-keys",
+                model = "Custom Phone",
+                manufacturer = "Genymotion",
+                brand = "generic",
+                device = "vbox86p",
+                product = "vbox86p",
+                hardware = "vbox86",
+            ),
+        )
+    }
+
+    // ── strongest backing tier ───────────────────────────────────────────────
+    // Mirrors the equivalent precedence classification in windows.rs and
+    // SecureEnclaveCore.swift: discrete > integrated > firmware > software.
+
+    @Test
+    fun `strongestBacking prefers discrete over everything`() {
+        assertEquals("discrete", SecureKeysPlugin.strongestBacking(true, true, true))
+    }
+
+    @Test
+    fun `strongestBacking prefers integrated over firmware`() {
+        assertEquals("integrated", SecureKeysPlugin.strongestBacking(false, true, true))
+    }
+
+    @Test
+    fun `strongestBacking falls back to firmware`() {
+        assertEquals("firmware", SecureKeysPlugin.strongestBacking(false, false, true))
+    }
+
+    @Test
+    fun `strongestBacking falls back to software when nothing else is available`() {
+        assertEquals("software", SecureKeysPlugin.strongestBacking(false, false, false))
+    }
+
+    // ── user-not-authenticated classification ────────────────────────────────
+    // android.security.KeyStoreException only exposes a no-arg public constructor
+    // (its message-carrying constructor is framework-internal), so the
+    // message-matching branches of isUserNotAuthenticatedException aren't
+    // reachable from a plain-JUnit test; these cover the branches that are.
+
+    @Test
+    fun `isUserNotAuthenticatedException is true for the exception directly`() {
+        assertTrue(
+            SecureKeysPlugin.isUserNotAuthenticatedException(
+                android.security.keystore.UserNotAuthenticatedException("locked"),
+            ),
+        )
+    }
+
+    @Test
+    fun `isUserNotAuthenticatedException is true when it is the cause`() {
+        val wrapped =
+            RuntimeException(
+                "wrapped",
+                android.security.keystore.UserNotAuthenticatedException("locked"),
+            )
+        assertTrue(SecureKeysPlugin.isUserNotAuthenticatedException(wrapped))
+    }
+
+    @Test
+    fun `isUserNotAuthenticatedException is false for an unrelated exception`() {
+        assertFalse(SecureKeysPlugin.isUserNotAuthenticatedException(IllegalStateException("boom")))
+    }
+
+    @Test
+    fun `isUserNotAuthenticatedException is false for an unrelated cause`() {
+        val wrapped = RuntimeException("wrapped", IllegalStateException("boom"))
+        assertFalse(SecureKeysPlugin.isUserNotAuthenticatedException(wrapped))
+    }
 }

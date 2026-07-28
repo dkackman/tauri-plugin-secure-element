@@ -183,6 +183,24 @@ pub struct TpmInfo {
     pub implementation_revision: Option<u32>,
 }
 
+/// Classifies a TPM interface type reported by `Tbsi_GetDeviceInfo` into a `TpmType`.
+///
+/// - `TPM_IFTYPE_HW` (3): Discrete hardware TPM chip
+/// - `TPM_IFTYPE_SPB` (5): SPI/I2C-attached discrete TPM
+/// - `TPM_IFTYPE_1` (1): LPC-attached TPM (typically TPM 1.2 discrete)
+/// - `TPM_IFTYPE_TRUSTZONE` (2): ARM TrustZone - on-die integrated security
+/// - `TPM_IFTYPE_UNKNOWN` (0): Often firmware TPM (Intel PTT, AMD fTPM)
+/// - `TPM_IFTYPE_EMULATOR` (4): Software emulator - not hardware backed
+fn classify_tpm_type(interface_type: u32) -> TpmType {
+    match interface_type {
+        TPM_IFTYPE_HW | TPM_IFTYPE_SPB | TPM_IFTYPE_1 => TpmType::Discrete,
+        TPM_IFTYPE_TRUSTZONE => TpmType::Integrated,
+        TPM_IFTYPE_UNKNOWN => TpmType::Firmware, // fTPM typically reports as unknown
+        TPM_IFTYPE_EMULATOR => TpmType::None,    // Emulator is not hardware-backed
+        _ => TpmType::Firmware,                  // Default for unrecognized types
+    }
+}
+
 /// Detects TPM presence and version using the TPM Base Services API.
 /// Returns detailed information about the TPM if present.
 pub fn detect_tpm() -> TpmInfo {
@@ -201,26 +219,11 @@ pub fn detect_tpm() -> TpmInfo {
         if result == 0 {
             let interface_type = device_info.tpmInterfaceType;
 
-            // Classify TPM type based on interface:
-            // - TPM_IFTYPE_HW (3): Discrete hardware TPM chip
-            // - TPM_IFTYPE_SPB (5): SPI/I2C-attached discrete TPM
-            // - TPM_IFTYPE_1 (1): LPC-attached TPM (typically TPM 1.2 discrete)
-            // - TPM_IFTYPE_TRUSTZONE (2): ARM TrustZone - on-die integrated security
-            // - TPM_IFTYPE_UNKNOWN (0): Often firmware TPM (Intel PTT, AMD fTPM)
-            // - TPM_IFTYPE_EMULATOR (4): Software emulator - not hardware backed
-            let tpm_type = match interface_type {
-                TPM_IFTYPE_HW | TPM_IFTYPE_SPB | TPM_IFTYPE_1 => TpmType::Discrete,
-                TPM_IFTYPE_TRUSTZONE => TpmType::Integrated,
-                TPM_IFTYPE_UNKNOWN => TpmType::Firmware, // fTPM typically reports as unknown
-                TPM_IFTYPE_EMULATOR => TpmType::None,    // Emulator is not hardware-backed
-                _ => TpmType::Firmware,                  // Default for unrecognized types
-            };
-
             TpmInfo {
                 present: true,
                 version: Some(device_info.tpmVersion),
                 interface_type: Some(interface_type),
-                tpm_type,
+                tpm_type: classify_tpm_type(interface_type),
                 implementation_revision: Some(device_info.tpmImpRevision),
             }
         } else {
@@ -1292,5 +1295,40 @@ mod key_naming_tests {
             extract_ngc_key_name("not-an-ngc-name", "com.example.app"),
             None
         );
+    }
+}
+
+/// `classify_tpm_type` maps a raw `Tbsi_GetDeviceInfo` interface type to a `TpmType` —
+/// pure data classification, no TPM call involved.
+#[cfg(test)]
+mod tpm_classification_tests {
+    use super::*;
+
+    #[test]
+    fn hardware_interfaces_classify_as_discrete() {
+        for iftype in [TPM_IFTYPE_HW, TPM_IFTYPE_SPB, TPM_IFTYPE_1] {
+            assert_eq!(classify_tpm_type(iftype), TpmType::Discrete);
+        }
+    }
+
+    #[test]
+    fn trustzone_classifies_as_integrated() {
+        assert_eq!(classify_tpm_type(TPM_IFTYPE_TRUSTZONE), TpmType::Integrated);
+    }
+
+    #[test]
+    fn unknown_classifies_as_firmware() {
+        // fTPM (Intel PTT, AMD PSP) typically reports as TPM_IFTYPE_UNKNOWN.
+        assert_eq!(classify_tpm_type(TPM_IFTYPE_UNKNOWN), TpmType::Firmware);
+    }
+
+    #[test]
+    fn emulator_classifies_as_none() {
+        assert_eq!(classify_tpm_type(TPM_IFTYPE_EMULATOR), TpmType::None);
+    }
+
+    #[test]
+    fn unrecognized_interface_defaults_to_firmware() {
+        assert_eq!(classify_tpm_type(999), TpmType::Firmware);
     }
 }

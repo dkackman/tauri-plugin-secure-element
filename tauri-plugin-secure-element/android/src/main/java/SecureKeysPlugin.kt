@@ -122,27 +122,129 @@ class SecureKeysPlugin(
                 }
             }
         }
+
+        /**
+         * Returns the detailed message when `isDebug`, the generic message otherwise.
+         *
+         * Internal visibility, and parameterized on `isDebug` rather than reading
+         * `BuildConfig.DEBUG` itself, so both branches are testable without a release
+         * build — `sanitizeError` below is the thin wrapper that supplies the real flag.
+         */
+        internal fun sanitizeErrorMessage(
+            isDebug: Boolean,
+            detailedMessage: String,
+            genericMessage: String,
+        ): String = if (isDebug) detailedMessage else genericMessage
+
+        /** Same debug/release split as [sanitizeErrorMessage], for the "operation: key_name" shape. */
+        internal fun sanitizeErrorWithKeyNameMessage(
+            isDebug: Boolean,
+            keyName: String,
+            operation: String,
+        ): String = if (isDebug) "$operation: $keyName" else operation
+
+        /**
+         * Pure build-fingerprint classification backing [isEmulator]. Internal visibility,
+         * and parameterized on the `Build.*` fields rather than reading them itself, so it
+         * can be tested without Robolectric (the plain-JUnit test setup here leaves
+         * `android.os.Build`'s fields null/unset).
+         */
+        internal fun classifyEmulator(
+            fingerprint: String,
+            model: String,
+            manufacturer: String,
+            brand: String,
+            device: String,
+            product: String,
+            hardware: String,
+        ): Boolean =
+            (
+                fingerprint.startsWith("generic") ||
+                    fingerprint.startsWith("unknown") ||
+                    model.contains("google_sdk") ||
+                    model.contains("Emulator") ||
+                    model.contains("Android SDK built for x86") ||
+                    manufacturer.contains("Genymotion") ||
+                    (brand.startsWith("generic") && device.startsWith("generic")) ||
+                    product == "google_sdk" ||
+                    product == "sdk_gphone_x86" ||
+                    product == "sdk_gphone_x86_64" ||
+                    product == "sdk_gphone64_arm64" ||
+                    hardware.contains("goldfish") ||
+                    hardware.contains("ranchu")
+            )
+
+        /**
+         * Determines the strongest available backing tier, mirroring the equivalent
+         * classification in the Rust (`windows.rs`) and Swift (`SecureEnclaveCore.swift`)
+         * implementations. Internal visibility so the tier-precedence ordering
+         * (discrete > integrated > firmware > software) is testable directly.
+         */
+        internal fun strongestBacking(
+            discrete: Boolean,
+            integrated: Boolean,
+            firmware: Boolean,
+        ): String =
+            when {
+                discrete -> BACKING_DISCRETE
+                integrated -> BACKING_INTEGRATED
+                firmware -> "firmware"
+                else -> BACKING_SOFTWARE
+            }
+
+        /**
+         * Checks if an exception indicates user authentication is required.
+         *
+         * Internal visibility (moved out of the instance so it's testable without an
+         * `Activity`) — this only inspects the exception, never plugin state.
+         */
+        internal fun isUserNotAuthenticatedException(e: Exception): Boolean {
+            // Check if the exception is UserNotAuthenticatedException
+            // This exception was added in API 23, same as KeyGenParameterSpec
+            if (e is android.security.keystore.UserNotAuthenticatedException ||
+                e.cause is android.security.keystore.UserNotAuthenticatedException
+            ) {
+                return true
+            }
+
+            // Also check for KeyStoreException with "Key user not authenticated" message
+            // Some Android versions/implementations throw KeyStoreException instead of UserNotAuthenticatedException
+            if (e is android.security.KeyStoreException) {
+                val message = e.message ?: ""
+                // Check for the specific error message indicating user not authenticated
+                // Error code -26 corresponds to KEY_USER_NOT_AUTHENTICATED
+                if (message.contains("Key user not authenticated", ignoreCase = true) ||
+                    message.contains("KEY_USER_NOT_AUTHENTICATED", ignoreCase = true) ||
+                    message.contains("internal Keystore code: -26", ignoreCase = true)
+                ) {
+                    return true
+                }
+            }
+
+            // Check cause as well
+            if (e.cause is android.security.KeyStoreException) {
+                val message = e.cause?.message ?: ""
+                if (message.contains("Key user not authenticated", ignoreCase = true) ||
+                    message.contains("KEY_USER_NOT_AUTHENTICATED", ignoreCase = true) ||
+                    message.contains("internal Keystore code: -26", ignoreCase = true)
+                ) {
+                    return true
+                }
+            }
+
+            return false
+        }
     }
 
     private fun sanitizeError(
         detailedMessage: String,
         genericMessage: String,
-    ): String =
-        if (BuildConfig.DEBUG) {
-            detailedMessage
-        } else {
-            genericMessage
-        }
+    ): String = sanitizeErrorMessage(BuildConfig.DEBUG, detailedMessage, genericMessage)
 
     private fun sanitizeErrorWithKeyName(
         keyName: String,
         operation: String,
-    ): String =
-        if (BuildConfig.DEBUG) {
-            "$operation: $keyName"
-        } else {
-            operation
-        }
+    ): String = sanitizeErrorWithKeyNameMessage(BuildConfig.DEBUG, keyName, operation)
 
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private val executor: Executor = ContextCompat.getMainExecutor(activity)
@@ -457,20 +559,14 @@ class SecureKeysPlugin(
      * misfire on real hardware that ships with unusual build properties.
      */
     private fun isEmulator(): Boolean =
-        (
-            Build.FINGERPRINT.startsWith("generic") ||
-                Build.FINGERPRINT.startsWith("unknown") ||
-                Build.MODEL.contains("google_sdk") ||
-                Build.MODEL.contains("Emulator") ||
-                Build.MODEL.contains("Android SDK built for x86") ||
-                Build.MANUFACTURER.contains("Genymotion") ||
-                (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic")) ||
-                Build.PRODUCT == "google_sdk" ||
-                Build.PRODUCT == "sdk_gphone_x86" ||
-                Build.PRODUCT == "sdk_gphone_x86_64" ||
-                Build.PRODUCT == "sdk_gphone64_arm64" ||
-                Build.HARDWARE.contains("goldfish") ||
-                Build.HARDWARE.contains("ranchu")
+        classifyEmulator(
+            fingerprint = Build.FINGERPRINT,
+            model = Build.MODEL,
+            manufacturer = Build.MANUFACTURER,
+            brand = Build.BRAND,
+            device = Build.DEVICE,
+            product = Build.PRODUCT,
+            hardware = Build.HARDWARE,
         )
 
     @Command
@@ -496,13 +592,7 @@ class SecureKeysPlugin(
             // so a key can always be created here — it just may not be hardware-backed.
             // Reporting "none" would imply key generation is unavailable, which is what
             // this plugin used to (wrongly) enforce.
-            val strongest =
-                when {
-                    discrete -> BACKING_DISCRETE
-                    integrated -> BACKING_INTEGRATED
-                    firmware -> "firmware"
-                    else -> BACKING_SOFTWARE
-                }
+            val strongest = strongestBacking(discrete, integrated, firmware)
 
             val ret = JSObject()
             ret.put("discrete", discrete)
@@ -705,46 +795,6 @@ class SecureKeysPlugin(
             Log.e(TAG, "listKeys: $detailedMessage", e)
             invoke.reject(errorMessage)
         }
-    }
-
-    /**
-     * Checks if an exception indicates user authentication is required
-     */
-    private fun isUserNotAuthenticatedException(e: Exception): Boolean {
-        // Check if the exception is UserNotAuthenticatedException
-        // This exception was added in API 23, same as KeyGenParameterSpec
-        if (e is android.security.keystore.UserNotAuthenticatedException ||
-            e.cause is android.security.keystore.UserNotAuthenticatedException
-        ) {
-            return true
-        }
-
-        // Also check for KeyStoreException with "Key user not authenticated" message
-        // Some Android versions/implementations throw KeyStoreException instead of UserNotAuthenticatedException
-        if (e is android.security.KeyStoreException) {
-            val message = e.message ?: ""
-            // Check for the specific error message indicating user not authenticated
-            // Error code -26 corresponds to KEY_USER_NOT_AUTHENTICATED
-            if (message.contains("Key user not authenticated", ignoreCase = true) ||
-                message.contains("KEY_USER_NOT_AUTHENTICATED", ignoreCase = true) ||
-                message.contains("internal Keystore code: -26", ignoreCase = true)
-            ) {
-                return true
-            }
-        }
-
-        // Check cause as well
-        if (e.cause is android.security.KeyStoreException) {
-            val message = e.cause?.message ?: ""
-            if (message.contains("Key user not authenticated", ignoreCase = true) ||
-                message.contains("KEY_USER_NOT_AUTHENTICATED", ignoreCase = true) ||
-                message.contains("internal Keystore code: -26", ignoreCase = true)
-            ) {
-                return true
-            }
-        }
-
-        return false
     }
 
     /**

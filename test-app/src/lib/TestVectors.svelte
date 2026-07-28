@@ -37,6 +37,10 @@
     "Test message for cross-platform verification",
     "\u3053\u3093\u306B\u3061\u306F\u4E16\u754C \uD83C\uDF0D",
     "a",
+    // Message bytes travel over IPC base64-encoded, not through a C-string
+    // boundary (unlike key names), so an interior null must not truncate the
+    // signed payload on any platform.
+    "ab\0cd",
   ];
 
   let isGeneratingVectors = $state(false);
