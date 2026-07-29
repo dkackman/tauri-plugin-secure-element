@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { Copy, Key, Plus, Trash2 } from "@lucide/svelte";
+  import { Copy, Key, Plus, ShieldCheck, Trash2 } from "@lucide/svelte";
   import {
     deleteKey,
     generateSecureKey,
+    isSecureElementError,
     type AuthenticationMode,
     type KeyInfo,
   } from "tauri-plugin-secure-element-api";
@@ -31,6 +32,14 @@
   let authMode = $state<AuthenticationMode>("pinOrBiometric");
   let pendingDeleteKey = $state("");
 
+  // Exercises `deleteKey`'s requireAuth option. Off by default, matching the
+  // plugin default — deletion is unauthenticated on every platform unless the
+  // caller asks for a prompt.
+  let requireAuthOnDelete = $state(false);
+  // Cancelling the prompt is an expected outcome, not a failure, so it gets its
+  // own notice rather than being routed to the error banner.
+  let deleteNotice = $state("");
+
   $effect(() => {
     if (authMode === "biometricOnly" && canEnforceBiometricOnly === false) {
       authMode = "pinOrBiometric";
@@ -57,38 +66,80 @@
   }
 
   async function deleteKeyByName(keyName: string) {
+    deleteNotice = "";
     try {
-      const success = await deleteKey(keyName);
+      const success = await deleteKey(keyName, undefined, {
+        requireAuth: requireAuthOnDelete,
+        reason: `Confirm deletion of key "${keyName}"`,
+      });
       if (success) {
         if (selectedKeyName === keyName) {
           selectedKeyName = "";
         }
+        if (requireAuthOnDelete) {
+          deleteNotice = `Authenticated and deleted "${keyName}"`;
+        }
         onRefreshKeys();
       }
     } catch (err) {
-      onDeleteError(err instanceof Error ? err.message : String(err));
+      // The point of the error codes: a dismissed prompt is a normal outcome
+      // and should not look like a failure.
+      if (isSecureElementError(err) && err.code === "userCancelled") {
+        deleteNotice = `Authentication cancelled — "${keyName}" was not deleted`;
+        return;
+      }
+      const detail = isSecureElementError(err)
+        ? `${err.message} (${err.code})`
+        : err instanceof Error
+          ? err.message
+          : String(err);
+      onDeleteError(detail);
     }
   }
 </script>
 
 <section class="card h-100">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <h2 class="h5 mb-0">
+  <!-- flex-wrap so the toggle and button drop to a second row on phone widths
+       instead of squeezing the title and button into two lines each -->
+  <div
+    class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2"
+  >
+    <h2 class="h5 mb-0 text-nowrap">
       <Key size={18} class="me-2" />
       Your Keys
     </h2>
-    <button
-      onclick={() => (showCreateForm = !showCreateForm)}
-      class="btn btn-sm {showCreateForm
-        ? 'btn-outline-secondary'
-        : 'btn-success'}"
-    >
-      {#if showCreateForm}
-        Cancel
-      {:else}
-        <Plus size={16} class="me-1" /> New Key
-      {/if}
-    </button>
+    <div class="d-flex align-items-center gap-3 ms-auto">
+      <div
+        class="form-check form-switch mb-0"
+        title="Pass requireAuth to deleteKey, so deletion prompts for biometric or device PIN. No platform requires this on its own."
+      >
+        <input
+          class="form-check-input"
+          type="checkbox"
+          role="switch"
+          id="require-auth-on-delete"
+          bind:checked={requireAuthOnDelete}
+        />
+        <label
+          class="form-check-label small text-nowrap"
+          for="require-auth-on-delete"
+        >
+          <ShieldCheck size={14} class="me-1" />Auth to delete
+        </label>
+      </div>
+      <button
+        onclick={() => (showCreateForm = !showCreateForm)}
+        class="btn btn-sm {showCreateForm
+          ? 'btn-outline-secondary'
+          : 'btn-success'}"
+      >
+        {#if showCreateForm}
+          Cancel
+        {:else}
+          <Plus size={16} class="me-1" /> New Key
+        {/if}
+      </button>
+    </div>
   </div>
 
   <div class="card-body">
@@ -132,6 +183,21 @@
       </div>
     {/if}
 
+    <!-- Outcome of an authenticated delete (including a cancelled prompt) -->
+    {#if deleteNotice}
+      <div
+        class="alert alert-info d-flex justify-content-between align-items-center py-2 px-3 small"
+      >
+        <span>{deleteNotice}</span>
+        <button
+          type="button"
+          class="btn-close btn-sm"
+          aria-label="Dismiss"
+          onclick={() => (deleteNotice = "")}
+        ></button>
+      </div>
+    {/if}
+
     <!-- Keys List -->
     {#if listKeysError}
       <div class="alert alert-danger py-2">{listKeysError}</div>
@@ -169,7 +235,9 @@
               </div>
               <div class="d-flex gap-1 ms-2 align-items-center">
                 {#if pendingDeleteKey === key.keyName}
-                  <span class="small text-danger me-1">Delete?</span>
+                  <span class="small text-danger me-1 text-nowrap">
+                    {requireAuthOnDelete ? "Delete (auth)?" : "Delete?"}
+                  </span>
                   <button
                     onclick={() => {
                       deleteKeyByName(key.keyName);
