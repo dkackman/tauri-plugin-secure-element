@@ -258,6 +258,16 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** Decodes a base64 string to bytes (a DER signature, so tens of bytes — no chunking needed). */
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 /**
  * Signs data with a key held in the secure element.
  *
@@ -287,7 +297,7 @@ export async function signWithKey(
   data: Uint8Array,
   reason?: string
 ): Promise<Uint8Array> {
-  return await invokeSecureElement<{ signature: number[] }>(
+  return await invokeSecureElement<{ signature: string }>(
     "plugin:secure-element|sign_with_key",
     {
       payload: {
@@ -296,7 +306,7 @@ export async function signWithKey(
         reason: reason ?? null,
       },
     }
-  ).then((r) => new Uint8Array(r.signature));
+  ).then((r) => base64ToBytes(r.signature));
 }
 
 /** Options for {@link deleteKey}. */

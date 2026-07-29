@@ -986,9 +986,10 @@ class SecureKeysPlugin(
 
                             val signatureBytes = performSign(authenticatedSignature, data)
 
-                            // Convert ByteArray to List<Int> (unsigned bytes 0-255) for proper JSON serialization
-                            val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
-                            pending.resolveObject(mapOf("signature" to signatureArray))
+                            // Base64, not a byte array: the Rust bridge deserializes this through
+                            // SignWithKeyResponse, whose `signature` field is base64 on the wire.
+                            val signatureBase64 = Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
+                            pending.resolveObject(mapOf("signature" to signatureBase64))
                         } catch (e: Exception) {
                             val detailedMessage = "Failed to sign after authentication: ${e.message}"
                             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
@@ -1070,8 +1071,10 @@ class SecureKeysPlugin(
                 val signatureBytes = performSign(signature, args.data)
 
                 // Success - key didn't require authentication
-                val signatureArray = signatureBytes.map { it.toInt() and 0xFF }
-                invoke.resolveObject(mapOf("signature" to signatureArray))
+                // Base64, not a byte array: the Rust bridge deserializes this through
+                // SignWithKeyResponse, whose `signature` field is base64 on the wire.
+                val signatureBase64 = Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
+                invoke.resolveObject(mapOf("signature" to signatureBase64))
             } catch (e: Exception) {
                 // Check if this is an authentication-required error
                 if (isUserNotAuthenticatedException(e)) {

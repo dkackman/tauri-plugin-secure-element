@@ -110,7 +110,9 @@ class SecureEnclavePlugin: Plugin {
 
         switch SecureEnclaveCore.signWithKey(keyName: args.keyName, data: args.data, reason: args.reason) {
         case let .success(response):
-            invoke.resolve(["signature": [UInt8](response.signature)])
+            // Base64, not a byte array: the Rust bridge deserializes this through
+            // SignWithKeyResponse, whose `signature` field is base64 on the wire.
+            invoke.resolve(["signature": response.signature.base64EncodedString()])
         case let .failure(error):
             logError("signWithKey", error: error.localizedDescription)
             invoke.reject(error.localizedDescription, code: error.code)

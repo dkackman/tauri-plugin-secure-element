@@ -164,8 +164,53 @@ pub struct SignWithKeyRequest {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SignWithKeyResponse {
-    /// The signature in bytes
+    /// The DER-encoded signature, base64-encoded on the wire (see `base64_bytes`) —
+    /// the same shape as `SignWithKeyRequest::data`, so both directions of the
+    /// signing IPC round-trip use one encoding.
+    #[serde(with = "base64_bytes")]
     pub signature: Vec<u8>,
+}
+
+#[cfg(test)]
+mod sign_with_key_response_tests {
+    use super::*;
+
+    // The wire format must be a base64 string, matching the request's `data` field.
+    // The mobile bridge deserializes the Swift/Kotlin plugin responses through this
+    // model, so those layers must produce exactly this shape.
+    #[test]
+    fn signature_serializes_as_base64_string_not_number_array() {
+        let resp = SignWithKeyResponse {
+            signature: vec![0, 1, 2, 253, 254, 255],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"signature":"AAEC/f7/"}"#);
+    }
+
+    #[test]
+    fn signature_round_trips_through_json() {
+        let signature = vec![48u8, 69, 2, 33, 0, 255, 128, 127];
+        let resp = SignWithKeyResponse {
+            signature: signature.clone(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: SignWithKeyResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.signature, signature);
+    }
+
+    // The old wire shape. A platform layer that regresses to a number array must
+    // fail loudly at the bridge rather than hand back garbage bytes.
+    #[test]
+    fn rejects_number_array() {
+        let json = r#"{"signature":[48,69,2,33]}"#;
+        assert!(serde_json::from_str::<SignWithKeyResponse>(json).is_err());
+    }
+
+    #[test]
+    fn rejects_non_base64_string() {
+        let json = r#"{"signature":"not valid base64!!"}"#;
+        assert!(serde_json::from_str::<SignWithKeyResponse>(json).is_err());
+    }
 }
 
 #[cfg(test)]
