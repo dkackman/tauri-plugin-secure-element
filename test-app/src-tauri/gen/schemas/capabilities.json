@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"enables the default permissions","local":true,"windows":["main"],"permissions":["core:default","secure-element:default","os:default"]}}
+{"default":{"identifier":"default","description":"enables the default permissions, plus key deletion for the test flows","local":true,"windows":["main"],"permissions":["core:default","secure-element:default","secure-element:allow-delete-key","os:default"]}}

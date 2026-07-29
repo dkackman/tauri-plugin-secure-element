@@ -3540,6 +3540,7 @@ dependencies = [
  "tauri-plugin",
  "thiserror 2.0.18",
  "windows 0.62.2",
+ "windows-future 0.3.2",
  "winver",
 ]
 

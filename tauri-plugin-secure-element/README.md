@@ -13,22 +13,33 @@ A Tauri plugin for secure element functionality on macOS & iOS (Secure Enclave) 
 
 ## Installation
 
+> **Beta.** Every release so far is a prerelease, and the API may still change between
+> betas. Pin an exact version and read the release notes before upgrading. See
+> [Breaking changes](#breaking-changes) below for what moved most recently.
+
 ### npm
 
 ```bash
-npm install tauri-plugin-secure-element-api
+npm install tauri-plugin-secure-element-api@beta
 # or
-pnpm add tauri-plugin-secure-element-api
+pnpm add tauri-plugin-secure-element-api@beta
 # or
-yarn add tauri-plugin-secure-element-api
+yarn add tauri-plugin-secure-element-api@beta
 ```
+
+The `beta` tag always points at the newest prerelease. While there is no stable release
+yet, `latest` is kept in sync with it, so a plain `npm install` resolves to the same
+version — but prefer `@beta` so your intent survives the 1.0 release.
 
 ### Cargo
 
 ```toml
 [dependencies]
-tauri-plugin-secure-element = "4"
+tauri-plugin-secure-element = "0.1.0-beta.8"
 ```
+
+Cargo does not treat prereleases as compatible with one another, so bump this line by
+hand for each beta.
 
 ## Setup
 
@@ -54,6 +65,20 @@ Add the plugin permissions to `src-tauri/capabilities/default.json`:
   "windows": ["main"],
   "permissions": ["core:default", "secure-element:default"]
 }
+```
+
+`secure-element:default` grants every command **except** `deleteKey`. Deletion is left
+out because no platform requires authentication for it, so a default that included it
+would silently hand every window the ability to destroy every key — see
+[Deletion](#deletion-is-not-authenticated-unless-you-ask-for-it). If your app deletes
+keys, add the permission to the window that needs it:
+
+```json
+"permissions": [
+  "core:default",
+  "secure-element:default",
+  "secure-element:allow-delete-key"
+]
 ```
 
 ### Android Minimum SDK
@@ -127,13 +152,71 @@ console.log("Key backed by:", backing); // e.g. "discrete", "integrated", "firmw
 // List all keys
 const keys = await listKeys();
 
-// Sign data with a key
+// Sign data with a key. The third argument is shown in the authentication
+// prompt, so the user knows what they are approving.
 const data = new Uint8Array([1, 2, 3, 4]);
-const signature = await signWithKey("my-key-name", data);
+const signature = await signWithKey("my-key-name", data, "Approve login");
 
 // Delete a key
 await deleteKey("my-key-name");
 ```
+
+## Error handling
+
+Every function in this package rejects with a `SecureElementError` carrying a stable
+`code`. **Branch on the code, never on the message** — messages are deliberately generic
+in release builds, so they cannot leak key names or OS status values, and their wording
+is not part of the API.
+
+```typescript
+import {
+  signWithKey,
+  deleteKey,
+  isSecureElementError,
+} from "tauri-plugin-secure-element-api";
+
+try {
+  const signature = await signWithKey("my-key", data, "Approve transfer");
+} catch (e) {
+  if (!isSecureElementError(e)) throw e;
+
+  switch (e.code) {
+    case "userCancelled":
+      return; // not an error — the user declined
+    case "keyInvalidated":
+      // The key is gone for good; re-enroll rather than retry.
+      await deleteKey("my-key");
+      return reenroll();
+    case "deviceNotSecure":
+      return promptUserToSetAPasscode();
+    default:
+      showError(e.message);
+  }
+}
+```
+
+| Code               | Meaning                                                                         | Retry?                  |
+| ------------------ | ------------------------------------------------------------------------------- | ----------------------- |
+| `userCancelled`    | The user dismissed the prompt, or the OS dismissed it for them                  | No — usually silent     |
+| `authFailed`       | Authentication ran and was rejected: wrong PIN, unrecognized biometric, lockout | Yes                     |
+| `keyInvalidated`   | The enrolled biometric set changed; the key can never be used again             | No — regenerate         |
+| `keyNotFound`      | No key matched the given name or public key                                     | No                      |
+| `keyAlreadyExists` | A key with that name already exists                                             | No                      |
+| `keyNotAccessible` | Key exists but is unusable right now, typically a locked device                 | Yes, once unlocked      |
+| `deviceNotSecure`  | No passcode/PIN set, or no biometric enrolled, and the mode needs one           | After the user fixes it |
+| `unsupported`      | Not available on this platform, OS version, or hardware                         | No                      |
+| `validation`       | Bad arguments — a bug in the calling code                                       | No                      |
+| `internal`         | Anything else                                                                   | Depends                 |
+
+Codes are additive. Treat an unrecognized value as `internal` rather than matching
+exhaustively; the bindings already collapse codes they do not know about.
+
+**`keyInvalidated` is Android-only.** Android throws a dedicated
+`KeyPermanentlyInvalidatedException`, so the plugin can report the condition precisely.
+Apple platforms surface an invalidated key as `errSecAuthFailed` — the same status as a
+wrong passcode — with no way to tell the two apart, so on iOS and macOS this arrives as
+`authFailed`. If you use `biometricOnly` on Apple platforms, treat repeated `authFailed`
+on a key that used to work as a likely invalidation.
 
 ## API Reference
 
@@ -146,9 +229,13 @@ Returns detailed information about secure element hardware capabilities on the d
 ```typescript
 /**
  * Hardware backing tiers, ordered weakest → strongest:
- * "none" < "firmware" < "integrated" < "discrete"
+ * "none" < "software" < "firmware" < "integrated" < "discrete"
+ *
+ * "software" means the key is real and usable but protected by the OS alone
+ * rather than by hardware — the Android emulator, and devices with no TEE.
  */
-type SecureElementBacking = "none" | "firmware" | "integrated" | "discrete";
+type SecureElementBacking =
+  "none" | "software" | "firmware" | "integrated" | "discrete";
 
 interface SecureElementCapabilities {
   /** A discrete physical security chip is available (e.g. discrete TPM 2.0, macOS T2, Android StrongBox) */
@@ -253,6 +340,10 @@ that supports the mode. iOS/macOS uses `.biometryCurrentSet`; Android leaves
 key and its signing capability are gone. Avoid `biometricOnly` for keys that need to
 survive routine re-enrollment; see [Authentication Modes](#authentication-modes) below.
 
+On Android this condition is reported as the `keyInvalidated` error code, so an app can
+detect it and re-enroll. Apple platforms cannot distinguish it from a failed
+authentication and report `authFailed` — see [Error handling](#error-handling).
+
 ### `listKeys(keyName?: string, publicKey?: string)`
 
 Lists keys stored in the secure element. Can filter by key name or public key.
@@ -266,7 +357,7 @@ interface KeyInfo {
 }
 ```
 
-### `signWithKey(keyName: string, data: Uint8Array)`
+### `signWithKey(keyName: string, data: Uint8Array, reason?: string)`
 
 Signs data using a key stored in the secure element.
 
@@ -274,16 +365,67 @@ Signs data using a key stored in the secure element.
 
 - `keyName`: Name of the key to use
 - `data`: Raw data to sign as `Uint8Array` (do not pre-hash)
+- `reason`: What the user is being asked to approve, shown in the authentication prompt
 
 **Returns:** `Promise<Uint8Array>` - DER-encoded ECDSA signature
 
 **Important:** The plugin automatically hashes your data with SHA-256 before signing. Pass raw data, not a pre-computed hash. See [Signature Format](#signature-format) for details.
 
-### `deleteKey(keyName?: string, publicKey?: string)`
+**On `reason`:** for a key created with `pinOrBiometric` or `biometricOnly`, this call
+raises an authentication prompt. The plugin cannot show the user the bytes being signed —
+they are opaque and meaningless to a human — so `reason` is the only thing that
+distinguishes one signature request from another at the moment of consent:
 
-Deletes a key from the secure element. At least one parameter must be provided.
+```typescript
+await signWithKey("my-key", tx, `Approve transfer of ${amount} to ${payee}`);
+```
+
+Omitted, each platform falls back to a generic message ("Authenticate to sign data" on
+Windows, the system default on Apple platforms, `Sign with key: <name>` on Android).
+Limited to 200 characters; rejected if blank or containing control characters.
+
+This is a hint, not a guarantee: the OS owns the prompt, and no platform binds the
+displayed string to the signed bytes cryptographically. Always derive it from the same
+data being signed — a mismatch means the user consented to something other than what they
+actually signed.
+
+### `deleteKey(keyName?: string, publicKey?: string, options?: DeleteKeyOptions)`
+
+Deletes a key from the secure element. Exactly one of `keyName` or `publicKey` must be
+provided. Deleting a key that does not exist succeeds — deletion is idempotent.
 
 **Returns:** `Promise<boolean>` - Success status
+
+```typescript
+interface DeleteKeyOptions {
+  /** Require device-owner authentication before the key is destroyed. */
+  requireAuth?: boolean;
+  /** Message shown in that prompt; ignored unless requireAuth is set. */
+  reason?: string;
+}
+```
+
+`requireAuth` adds an authentication check the plugin performs itself, because no platform
+enforces one on deletion — see
+[Deletion](#deletion-is-not-authenticated-unless-you-ask-for-it):
+
+```typescript
+await deleteKey("my-key", undefined, {
+  requireAuth: true,
+  reason: "Confirm removal of your signing key",
+});
+```
+
+The prompt appears **before** the key is looked up, so deleting a key that does not exist
+still prompts. That is deliberate: prompting only for keys that exist would turn the
+prompt into an existence oracle for a caller holding deletion rights but not listing
+rights. If the user declines, the call rejects with `userCancelled` and the key is left
+intact.
+
+Note that `requireAuth` is a _device-owner_ check (biometric or device passcode/PIN), not
+a per-key one. The key's own access-control flags cannot be read back on Apple platforms,
+so there is nothing to enforce against; what this establishes is that a human holding the
+device credential approved the deletion.
 
 ## Public Key Format
 
@@ -489,31 +631,55 @@ relying on it for anything where those differences matter.
   keys), not an OS-enforced boundary. Any other process running as the same Windows user
   can open a key by name — there is no equivalent of iOS/macOS keychain access groups or
   Android's per-app keystore on Windows.
-  - `sanitize_app_id` replaces `.` with `_`, so app identifiers `a.b` and `a_b` collide in
-    this namespace and would read/write the same keys.
+  - The app identifier is escaped into that name injectively (`_` doubles to `__`, and
+    reserved characters such as `.` become `_x2E`), so two apps whose identifiers differ
+    only in punctuation get separate namespaces. Earlier betas collapsed every reserved
+    character onto `_`, which made `a.b` and `a_b` share one namespace and read, overwrite
+    and delete each other's keys. This is a namespacing fix, not a security boundary: key
+    names remain derivable from the public app identifier, and on Windows that was never
+    a boundary in the first place.
   - **`authMode: "none"` keys can be used silently.** A `none` key requires no user
     presence to sign with, so any same-user process that knows (or guesses) the key name
     can request signatures with no prompt and no way for the user to notice. Prefer
     `pinOrBiometric` unless you have a specific reason to accept this.
 
-### Deletion never requires authentication, on any platform
+### Deletion is not authenticated unless you ask for it
 
-`deleteKey` does not check `authMode` before deleting — `SecItemDelete` (iOS/macOS),
-`NCryptDeleteKey` (Windows), and `KeyStore.deleteEntry` (Android) all proceed
+No platform requires authentication to destroy a key. `SecItemDelete` (iOS/macOS),
+`NCryptDeleteKey` (Windows) and `KeyStore.deleteEntry` (Android) all proceed
 unconditionally, even for keys created with `pinOrBiometric` or `biometricOnly`. Anything
-that can invoke the plugin — including injected or compromised webview JavaScript holding
-the `secure-element:default` capability — can destroy every key the app has created.
+that can invoke `deleteKey` — including injected or compromised webview JavaScript holding
+the capability — can otherwise destroy every key the app has created.
 
 This is an **availability** risk, not a confidentiality one: a caller who can reach
 `deleteKey` can deny future use of a key, but cannot extract its private material or sign
-with it without also holding sign permission. Grant `allow-delete-key` only to code paths
-that actually need to delete keys.
+with it without also holding sign permission.
+
+Three things reduce it, in order of how much they buy you:
+
+1. **`deleteKey` is not in the default capability.** `secure-element:default` deliberately
+   omits `allow-delete-key`, so reaching the command at all requires an explicit grant.
+2. **Grant that permission narrowly** — to the one window or capability that actually
+   deletes keys, not to every window.
+3. **Pass `requireAuth: true`** for deletions a user should confirm, which adds a
+   device-owner authentication prompt the plugin enforces itself:
+
+   ```typescript
+   await deleteKey("my-key", undefined, {
+     requireAuth: true,
+     reason: "Confirm removal of your signing key",
+   });
+   ```
+
+   This is the only one of the three that stops a caller who already holds the permission,
+   so it is what closes the compromised-renderer path rather than merely narrowing it.
 
 ### Scope the capability instead of using `secure-element:default`
 
-`secure-element:default` grants all six commands (`ping`, `generateSecureKey`, `listKeys`,
-`signWithKey`, `deleteKey`, `checkSecureElementSupport`). Most apps don't need all of
-them from every window. A sign-only capability, for example:
+`secure-element:default` grants five of the six commands — `ping`, `generateSecureKey`,
+`listKeys`, `signWithKey` and `checkSecureElementSupport` — and deliberately excludes
+`deleteKey` for the reasons above. Most apps don't need all five from every window
+either. A sign-only capability, for example:
 
 ```json
 {
@@ -532,9 +698,12 @@ See `permissions/default.toml` in this crate for the full list of individual
 - **Signing over attacker-chosen data.** For a `none`-auth key, anything that can invoke
   `signWithKey` can obtain a valid signature over any bytes it chooses. `pinOrBiometric`
   and `biometricOnly` keys limit this to one signature per user gesture (biometric prompt
-  or Windows Hello), but the user is not shown *what* they are signing — only that a
-  signature was requested. Treat a successful signature as proof of "the user
-  authenticated at this moment," not as proof the user reviewed the signed content.
+  or Windows Hello), but the user is still never shown the bytes themselves. The `reason`
+  argument improves this — it lets the prompt say what is being approved instead of
+  "Authenticate to sign data" — but it is app-supplied text that no platform binds to the
+  signed bytes, so a compromised renderer can pass a reason that does not match what it is
+  signing. Treat a successful signature as proof of "the user authenticated at this
+  moment," not as proof the user reviewed the signed content.
 - **Attestation.** No platform exposes key attestation (e.g. Android KeyStore attestation
   certificates, TPM attestation) through this plugin today, so a remote relying party
   cannot cryptographically verify that a given public key was actually generated in
@@ -544,6 +713,27 @@ See `permissions/default.toml` in this crate for the full list of individual
   this plugin assumes the OS's own security boundary (Secure Enclave, TEE/StrongBox, TPM)
   is intact. It provides no protection against a jailbroken/rooted device, a compromised
   OS kernel, or physical extraction attacks that defeat the underlying hardware.
+
+## Breaking changes
+
+Changes in the current beta that require action when upgrading.
+
+**Errors are objects, not strings.** Rejections used to be a bare string. They are now a
+`SecureElementError` with a `code` and a `message`. Code that read the rejection as a
+string — `catch (e) { show(e) }` — now shows `[object Object]`; use `e.message`, and
+switch on `e.code` for anything conditional. See [Error handling](#error-handling).
+
+**`secure-element:default` no longer grants `deleteKey`.** Apps that delete keys must add
+`secure-element:allow-delete-key` to the relevant capability, or `deleteKey` will be
+rejected by Tauri's permission layer.
+
+**Windows key names changed.** The app identifier is now escaped injectively into the key
+name (see [Key isolation](#key-isolation-is-not-the-same-on-every-platform)). Keys created
+by an earlier beta under an app identifier containing `.`, `/`, `:` or other reserved
+characters resolve under the old name and will not be found. They still exist in the
+provider; generate fresh keys after upgrading, and delete the old ones through an earlier
+build if you need to clean up. Only Windows is affected — iOS, macOS and Android name keys
+differently and are unchanged.
 
 ## License
 

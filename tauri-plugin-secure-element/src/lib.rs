@@ -23,7 +23,7 @@ mod error_sanitize;
 mod models;
 mod validation;
 
-pub use error::{Error, Result};
+pub use error::{Error, ErrorCode, Result};
 
 #[cfg(desktop)]
 use desktop::SecureElement;

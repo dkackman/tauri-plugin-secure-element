@@ -42,6 +42,54 @@ const NTE_PERM: HRESULT = HRESULT(0x80090010u32 as i32);
 /// This is how `NCryptEnumKeys` reports a normal end of enumeration.
 const NTE_NO_MORE_ITEMS: HRESULT = HRESULT(0x8009002Au32 as i32);
 
+/// NCrypt error: the user dismissed the credential prompt (NTE_USER_CANCELLED).
+const NTE_USER_CANCELLED: HRESULT = HRESULT(0x80090036u32 as i32);
+
+/// The credential subsystem's own "user cancelled" (SCARD_W_CANCELLED_BY_USER).
+/// Windows Hello is layered on the smartcard stack, so a dismissed prompt can
+/// surface with this code instead of `NTE_USER_CANCELLED` depending on which
+/// credential provider handled it.
+const SCARD_W_CANCELLED_BY_USER: HRESULT = HRESULT(0x8010006Eu32 as i32);
+
+/// `HRESULT_FROM_WIN32(ERROR_CANCELLED)` — the generic Win32 "the user closed
+/// the dialog", the third way a dismissed Hello prompt can be reported.
+const ERROR_CANCELLED_HRESULT: HRESULT = HRESULT(0x800704C7u32 as i32);
+
+/// NCrypt error: an operation that requires UI was attempted in a silent
+/// context (NTE_SILENT_CONTEXT).
+const NTE_SILENT_CONTEXT: HRESULT = HRESULT(0x80090022u32 as i32);
+
+/// Maps an NCrypt/Windows error onto the code reported to the caller.
+///
+/// Cancellation is the case that earns this function: dismissing a Windows
+/// Hello prompt is an ordinary, expected outcome, and reporting it as a signing
+/// fault forces every caller to show an error dialog for something the user
+/// deliberately did. Windows spells it three different ways depending on which
+/// credential provider serviced the prompt, so all three are checked.
+///
+/// Anything unrecognized becomes [`crate::ErrorCode::Internal`] — the same
+/// classification these errors had before codes existed.
+fn classify_ncrypt_error(e: &windows::core::Error) -> crate::ErrorCode {
+    match e.code() {
+        NTE_USER_CANCELLED | SCARD_W_CANCELLED_BY_USER | ERROR_CANCELLED_HRESULT => {
+            crate::ErrorCode::UserCancelled
+        }
+        NTE_BAD_KEYSET | NTE_NOT_FOUND | NTE_NO_KEY => crate::ErrorCode::KeyNotFound,
+        // NTE_PERM is "exists but you may not touch it" on the NGC provider —
+        // transient in the sense that authenticating can resolve it, unlike a
+        // key that is simply absent.
+        NTE_PERM => crate::ErrorCode::KeyNotAccessible,
+        NTE_SILENT_CONTEXT => crate::ErrorCode::AuthFailed,
+        _ => crate::ErrorCode::Internal,
+    }
+}
+
+/// Builds a classified error from a failed NCrypt call, applying the same
+/// debug/release message split as the rest of this module.
+fn ncrypt_error(e: &windows::core::Error, detailed: String, generic: &str) -> crate::Error {
+    crate::Error::platform(classify_ncrypt_error(e), sanitize_error(&detailed, generic))
+}
+
 /// Key name prefix base for TPM keys without Windows Hello protection
 /// Full format: tauri_se_tpm_{app_id}_{key_name}
 const KEY_PREFIX_TPM_BASE: &str = "tauri_se_tpm_";
@@ -49,16 +97,50 @@ const KEY_PREFIX_TPM_BASE: &str = "tauri_se_tpm_";
 /// Domain for NGC keys
 const NGC_DOMAIN: &str = "tauri_se";
 
-/// Sanitizes an app identifier for use in key names.
-/// Replaces dots, slashes, and other problematic characters with underscores.
+/// Characters that cannot appear literally in a key name.
+///
+/// `/` and `\` would break the `{SID}//tauri_se/{app_id}/{key_name}` structure
+/// that `extract_ngc_key_name` parses; the rest are rejected or reserved by the
+/// key storage providers.
+const APP_ID_RESERVED_CHARS: [char; 10] = ['.', '/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
+/// Encodes an app identifier for use in key names, injectively.
+///
+/// Windows scopes keys per-user, not per-app (see the Security model section of
+/// the README), so the app identifier is only a namespace prefix — but it still
+/// has to be a *faithful* one. The previous encoding mapped all of
+/// [`APP_ID_RESERVED_CHARS`] onto `_`, which is many-to-one: `com.example.app`
+/// and `com_example_app` produced the same namespace, so two different apps
+/// installed by the same user would read and write each other's keys, and
+/// `deleteKey` in one could destroy the other's.
+///
+/// The escape scheme here is a decodable one — `_` doubles to `__`, every other
+/// reserved character becomes `_x{HH}` — so distinct identifiers always produce
+/// distinct namespaces. `__` and `_x` cannot be confused because the escape is
+/// resolved left to right from a `_`. Names stay readable in `certutil -key`
+/// output, which a hash would have cost.
+///
+/// This is deliberately not an attempt at obscurity: key names remain derivable
+/// from the public app identifier, and on Windows that is not a security
+/// boundary in the first place.
+///
+/// **Compatibility:** this changes the key names an app resolves. Keys created
+/// by an earlier beta under an app identifier containing any reserved character
+/// are not found by this version — they still exist in the provider, but under
+/// the old name. Generate fresh keys after upgrading.
 fn sanitize_app_id(app_id: &str) -> String {
-    app_id
-        .chars()
-        .map(|c| match c {
-            '.' | '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect()
+    let mut encoded = String::with_capacity(app_id.len());
+    for c in app_id.chars() {
+        if c == '_' {
+            encoded.push_str("__");
+        } else if APP_ID_RESERVED_CHARS.contains(&c) {
+            // Every reserved character is ASCII, so one byte is the whole char.
+            encoded.push_str(&format!("_x{:02X}", c as u32));
+        } else {
+            encoded.push(c);
+        }
+    }
+    encoded
 }
 
 /// Builds the TPM key prefix including the app identifier
@@ -108,6 +190,11 @@ const NCRYPT_PIN_CACHE_IS_GESTURE_REQUIRED_PROPERTY: &str = "PinCacheIsGestureRe
 const NCRYPT_NGC_CACHE_TYPE_PROPERTY: &str = "NgcCacheType";
 const NCRYPT_NGC_CACHE_TYPE_PROPERTY_DEPRECATED: &str = "NgcCacheTypeProperty";
 const NCRYPT_NGC_CACHE_TYPE_AUTH_MANDATORY_FLAG: u32 = 0x0000_0001;
+
+/// Fallback message for the Windows Hello prompt when the caller supplies no
+/// reason. Hardcoded English, and not localizable — which is precisely why
+/// callers should pass their own reason, already localized by the app.
+const DEFAULT_SIGN_PROMPT: &str = "Authenticate to sign data";
 
 /// Window handle property for UI parenting
 const NCRYPT_WINDOW_HANDLE_PROPERTY: &str = "HWND Handle";
@@ -410,10 +497,10 @@ pub fn try_open_key_auto(
 /// Fails with `NotFound` if the key does not exist in either provider.
 pub fn open_key_auto(app_id: &str, key_name: &str) -> crate::Result<(KeyHandle, KeyProviderType)> {
     try_open_key_auto(app_id, key_name)?.ok_or_else(|| {
-        crate::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
+        crate::Error::platform(
+            crate::ErrorCode::KeyNotFound,
             sanitize_error(&format!("Key '{}' not found", key_name), "Key not found"),
-        ))
+        )
     })
 }
 
@@ -603,27 +690,27 @@ pub fn create_key(
     // Check if a key with this name already exists in either provider. A
     // failure to determine that propagates rather than reading as "free".
     if key_exists(app_id, key_name)? {
-        return Err(crate::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
+        return Err(crate::Error::platform(
+            crate::ErrorCode::KeyAlreadyExists,
             sanitize_error(
                 &format!("A key with name '{}' already exists", key_name),
                 "A key with this name already exists",
             ),
-        )));
+        ));
     }
 
     // Validate Windows Hello requirements before creating the key
     match auth_mode {
         crate::models::AuthenticationMode::BiometricOnly => {
-            Err(crate::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
+            Err(crate::Error::platform(
+                crate::ErrorCode::Unsupported,
                 "biometricOnly authentication mode is not supported on Windows. Use 'pinOrBiometric' instead.",
-            )))
+            ))
         }
         crate::models::AuthenticationMode::PinOrBiometric => {
             if !windows_hello::is_windows_hello_configured() {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Unsupported,
+                return Err(crate::Error::platform(
+                    crate::ErrorCode::DeviceNotSecure,
                     sanitize_error(
                         &format!(
                             "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating key '{}'.",
@@ -631,7 +718,7 @@ pub fn create_key(
                         ),
                         "Windows Hello is not configured or enrolled on this system. Please set up Windows Hello (PIN or biometric) in Windows Settings before creating keys with authentication.",
                     ),
-                )));
+                ));
             }
             create_ngc_key(app_id, key_name)
         }
@@ -801,10 +888,10 @@ fn create_tpm_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
 
     // Check if TPM is available
     if !is_tpm_available(&provider) {
-        return Err(crate::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
+        return Err(crate::Error::platform(
+            crate::ErrorCode::Unsupported,
             "TPM 2.0 not available on this system",
-        )));
+        ));
     }
 
     let full_name = tpm_key_name(app_id, key_name);
@@ -944,6 +1031,7 @@ pub fn sign_hash_with_window(
     key: &KeyHandle,
     hash: &[u8],
     hwnd: Option<isize>,
+    reason: Option<&str>,
 ) -> crate::Result<Vec<u8>> {
     unsafe {
         if let Some(handle) = hwnd {
@@ -968,8 +1056,13 @@ pub fn sign_hash_with_window(
             eprintln!("Warning: No HWND available for Windows Hello dialog parenting");
         }
 
+        // The message shown in the Windows Hello dialog. A caller-supplied
+        // reason is the only thing that tells the user *what* they are
+        // approving — the bytes being signed are opaque and never displayed —
+        // so it is preferred over the generic fallback whenever given.
         let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
-        let context_bytes: Vec<u8> = "Authenticate to sign data"
+        let context_message = reason.unwrap_or(DEFAULT_SIGN_PROMPT);
+        let context_bytes: Vec<u8> = context_message
             .encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
@@ -1016,10 +1109,11 @@ fn sign_hash_internal(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
 
         // Get required signature size
         NCryptSignHash(key.0, None, hash, None, &mut sig_size, NCRYPT_FLAGS(0)).map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to get signature size: {}", e),
+            ncrypt_error(
+                &e,
+                format!("Failed to get signature size: {}", e),
                 "Failed to sign",
-            )))
+            )
         })?;
 
         let mut signature = vec![0u8; sig_size as usize];
@@ -1031,12 +1125,7 @@ fn sign_hash_internal(key: &KeyHandle, hash: &[u8]) -> crate::Result<Vec<u8>> {
             &mut sig_size,
             NCRYPT_FLAGS(0),
         )
-        .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to sign: {}", e),
-                "Failed to sign",
-            )))
-        })?;
+        .map_err(|e| ncrypt_error(&e, format!("Failed to sign: {}", e), "Failed to sign"))?;
 
         signature.truncate(sig_size as usize);
 
@@ -1055,10 +1144,11 @@ pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
             Ok(_) => Ok(true),
             Err(e) => {
                 let _ = NCryptFreeObject(handle.into());
-                Err(crate::Error::Io(std::io::Error::other(sanitize_error(
-                    &format!("Failed to delete key: {}", e),
+                Err(ncrypt_error(
+                    &e,
+                    format!("Failed to delete key: {}", e),
                     "Failed to delete key",
-                ))))
+                ))
             }
         }
     }
@@ -1225,6 +1315,84 @@ mod link_tests {
     }
 }
 
+/// HRESULT classification is pure arithmetic on an error code — no NCrypt call
+/// involved — so these run for real on the Windows CI job.
+#[cfg(test)]
+mod error_classification_tests {
+    use super::*;
+
+    fn error(code: HRESULT) -> windows::core::Error {
+        windows::core::Error::from_hresult(code)
+    }
+
+    /// All three spellings matter: which one Windows returns depends on the
+    /// credential provider that serviced the prompt, and missing any of them
+    /// turns a routine "user pressed Cancel" back into an error dialog.
+    #[test]
+    fn every_cancellation_spelling_is_recognized() {
+        for code in [
+            NTE_USER_CANCELLED,
+            SCARD_W_CANCELLED_BY_USER,
+            ERROR_CANCELLED_HRESULT,
+        ] {
+            assert_eq!(
+                classify_ncrypt_error(&error(code)),
+                crate::ErrorCode::UserCancelled,
+                "{:?} should classify as cancellation",
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn missing_key_statuses_classify_as_not_found() {
+        for code in [NTE_BAD_KEYSET, NTE_NOT_FOUND, NTE_NO_KEY] {
+            assert_eq!(
+                classify_ncrypt_error(&error(code)),
+                crate::ErrorCode::KeyNotFound
+            );
+        }
+    }
+
+    /// `NTE_PERM` is deliberately *not* "not found": on the NGC provider it is
+    /// what an existing but currently inaccessible key returns, and collapsing
+    /// the two would tell a caller its key is gone when it is merely locked.
+    #[test]
+    fn access_denied_is_distinct_from_not_found() {
+        assert_eq!(
+            classify_ncrypt_error(&error(NTE_PERM)),
+            crate::ErrorCode::KeyNotAccessible
+        );
+    }
+
+    #[test]
+    fn silent_context_classifies_as_auth_failure() {
+        assert_eq!(
+            classify_ncrypt_error(&error(NTE_SILENT_CONTEXT)),
+            crate::ErrorCode::AuthFailed
+        );
+    }
+
+    #[test]
+    fn an_unmapped_status_falls_back_to_internal() {
+        assert_eq!(
+            classify_ncrypt_error(&error(HRESULT(0x8009_0999u32 as i32))),
+            crate::ErrorCode::Internal
+        );
+    }
+
+    #[test]
+    fn ncrypt_error_carries_both_the_code_and_a_message() {
+        let err = ncrypt_error(
+            &error(NTE_USER_CANCELLED),
+            "Failed to sign: cancelled".to_string(),
+            "Failed to sign",
+        );
+        assert_eq!(err.code(), crate::ErrorCode::UserCancelled);
+        assert!(!err.message().is_empty());
+    }
+}
+
 /// Key-name formatting/parsing helpers below are pure string manipulation — no NCrypt
 /// or TPM involved — so unlike the rest of this file they run for real, not just as a
 /// link check.
@@ -1233,20 +1401,66 @@ mod key_naming_tests {
     use super::*;
 
     #[test]
-    fn sanitize_app_id_replaces_problem_characters() {
+    fn sanitize_app_id_escapes_every_reserved_character() {
         assert_eq!(
             sanitize_app_id("com.example.app/v1:test?\"<>|\\"),
-            "com_example_app_v1_test______"
+            "com_x2Eexample_x2Eapp_x2Fv1_x3Atest_x3F_x22_x3C_x3E_x7C_x5C"
         );
-        assert_eq!(sanitize_app_id("com_example_app"), "com_example_app");
         assert_eq!(sanitize_app_id(""), "");
+    }
+
+    /// The bug this encoding exists to fix: `.` and `_` used to collapse
+    /// together, so two apps installed by the same user shared one key
+    /// namespace and could read, overwrite, or delete each other's keys.
+    #[test]
+    fn identifiers_differing_only_in_separators_do_not_collide() {
+        assert_ne!(
+            sanitize_app_id("com.example.app"),
+            sanitize_app_id("com_example_app")
+        );
+    }
+
+    /// Injectivity is the whole property; spot-check it over identifiers
+    /// specifically chosen to stress the escape prefixes (`__` vs `_x`).
+    #[test]
+    fn distinct_identifiers_produce_distinct_namespaces() {
+        let identifiers = [
+            "com.example.app",
+            "com_example_app",
+            "com.example_app",
+            "com_example.app",
+            "com__example",
+            "com_x2Eexample",
+            "a.b",
+            "a_b",
+            "a__b",
+            "",
+            "_",
+            ".",
+        ];
+        let mut seen = std::collections::HashMap::new();
+        for id in identifiers {
+            let encoded = sanitize_app_id(id);
+            if let Some(previous) = seen.insert(encoded.clone(), id) {
+                panic!("'{}' and '{}' both encode to '{}'", previous, id, encoded);
+            }
+        }
+    }
+
+    /// An identifier that already looks like an escape sequence must survive:
+    /// the literal text `com_x2E` has to stay distinguishable from an encoded
+    /// `com.`, which is exactly what doubling `_` buys.
+    #[test]
+    fn literal_escape_sequences_are_themselves_escaped() {
+        assert_eq!(sanitize_app_id("com_x2E"), "com__x2E");
+        assert_ne!(sanitize_app_id("com_x2E"), sanitize_app_id("com."));
     }
 
     #[test]
     fn tpm_key_prefix_includes_sanitized_app_id() {
         assert_eq!(
             tpm_key_prefix("com.example.app"),
-            "tauri_se_tpm_com_example_app_"
+            "tauri_se_tpm_com_x2Eexample_x2Eapp_"
         );
     }
 
@@ -1254,7 +1468,7 @@ mod key_naming_tests {
     fn tpm_key_name_appends_key_name_to_prefix() {
         assert_eq!(
             tpm_key_name("com.example.app", "my-key"),
-            "tauri_se_tpm_com_example_app_my-key"
+            "tauri_se_tpm_com_x2Eexample_x2Eapp_my-key"
         );
     }
 
@@ -1262,7 +1476,7 @@ mod key_naming_tests {
     fn ngc_key_marker_wraps_sanitized_app_id() {
         assert_eq!(
             ngc_key_marker("com.example.app"),
-            "/tauri_se/com_example_app/"
+            "/tauri_se/com_x2Eexample_x2Eapp/"
         );
     }
 
@@ -1270,7 +1484,7 @@ mod key_naming_tests {
     fn ngc_key_name_builds_full_name() {
         assert_eq!(
             ngc_key_name("S-1-5-21-123", "com.example.app", "my-key"),
-            "S-1-5-21-123//tauri_se/com_example_app/my-key"
+            "S-1-5-21-123//tauri_se/com_x2Eexample_x2Eapp/my-key"
         );
     }
 

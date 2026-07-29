@@ -139,6 +139,23 @@ pub struct SignWithKeyRequest {
     /// The data to sign, base64-encoded on the wire (see `base64_bytes`)
     #[serde(with = "base64_bytes")]
     pub data: Vec<u8>,
+    /// What the user is being asked to approve, shown in the authentication
+    /// prompt (Face ID / Touch ID on Apple, BiometricPrompt on Android,
+    /// Windows Hello on Windows).
+    ///
+    /// The plugin cannot show the user the bytes being signed — they are opaque
+    /// and usually meaningless to a human — so this string is the only thing
+    /// that distinguishes one signature request from another at the moment of
+    /// consent. Supplying something specific ("Approve transfer of 5 XCH to
+    /// alice") turns an unexplained prompt into an informed one. Omitted, each
+    /// platform falls back to a generic message.
+    ///
+    /// This is a hint, not a guarantee: the OS controls the prompt, and no
+    /// platform ties the displayed string to the signed bytes cryptographically.
+    /// A caller that lies here produces a misleading prompt, so it should always
+    /// be derived from the same data being signed.
+    #[serde(default)]
+    pub reason: Option<String>,
     // Note: Authentication is enforced automatically by the platform based on the key's requirements
     // set at creation time. The auth_mode parameter is ignored for signing operations.
 }
@@ -163,9 +180,10 @@ mod sign_with_key_request_tests {
         let req = SignWithKeyRequest {
             key_name: "k".to_string(),
             data: vec![0, 1, 2, 253, 254, 255],
+            reason: None,
         };
         let json = serde_json::to_string(&req).unwrap();
-        assert_eq!(json, r#"{"keyName":"k","data":"AAEC/f7/"}"#);
+        assert_eq!(json, r#"{"keyName":"k","data":"AAEC/f7/","reason":null}"#);
     }
 
     #[test]
@@ -174,6 +192,7 @@ mod sign_with_key_request_tests {
         let req = SignWithKeyRequest {
             key_name: "k".to_string(),
             data: data.clone(),
+            reason: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: SignWithKeyRequest = serde_json::from_str(&json).unwrap();
@@ -185,6 +204,22 @@ mod sign_with_key_request_tests {
         let json = r#"{"keyName":"k","data":"not valid base64!!"}"#;
         assert!(serde_json::from_str::<SignWithKeyRequest>(json).is_err());
     }
+
+    /// `reason` is optional on the wire, so a caller (or an older binding) that
+    /// omits it entirely must still deserialize rather than fail the request.
+    #[test]
+    fn reason_is_optional() {
+        let json = r#"{"keyName":"k","data":"AAEC"}"#;
+        let req: SignWithKeyRequest = serde_json::from_str(json).unwrap();
+        assert!(req.reason.is_none());
+    }
+
+    #[test]
+    fn reason_round_trips_when_supplied() {
+        let json = r#"{"keyName":"k","data":"AAEC","reason":"Approve login"}"#;
+        let req: SignWithKeyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.reason.as_deref(), Some("Approve login"));
+    }
 }
 
 /// Request to delete a key
@@ -195,9 +230,34 @@ pub struct DeleteKeyRequest {
     pub key_name: Option<String>,
     /// Optional: The public key (base64) of the key to delete
     pub public_key: Option<String>,
+    /// Require the user to authenticate before the key is destroyed.
+    ///
+    /// No platform enforces authentication on deletion by itself: `SecItemDelete`,
+    /// `NCryptDeleteKey` and `KeyStore.deleteEntry` all succeed for keys created
+    /// with `pinOrBiometric` or `biometricOnly`. Anything that can reach this
+    /// command — including injected webview JavaScript — can therefore destroy
+    /// every key the app owns. Setting this adds a device-owner authentication
+    /// check the plugin performs itself, closing that path for apps that care.
+    ///
+    /// The check is a *device-owner* one (biometric or device passcode/PIN), not
+    /// a per-key one: the key's own access-control flags cannot be read back on
+    /// Apple platforms, so there is nothing to enforce against. It proves a
+    /// human with the device credential approved this deletion, which is the
+    /// property that matters here.
+    ///
+    /// Authentication runs *before* the key is looked up, so a deletion of a
+    /// key that does not exist still prompts. That is deliberate: prompting only
+    /// for keys that exist would turn the prompt into an existence oracle for a
+    /// caller that has deletion rights but not listing rights.
+    #[serde(default)]
+    pub require_auth: bool,
+    /// Message shown in the authentication prompt when `require_auth` is set.
+    /// Ignored otherwise. Falls back to a generic message.
+    #[serde(default)]
+    pub reason: Option<String>,
     // Note: At least one of key_name or public_key must be provided.
-    // Authentication requirements are determined by the key's own attributes,
-    // not by app-specified parameters. The platform enforces the key's requirements.
+    // Beyond `require_auth` above, authentication requirements are determined by
+    // the key's own attributes; the platform enforces those.
 }
 
 /// Response for key deletion

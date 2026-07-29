@@ -1,5 +1,7 @@
 package net.kackman.secureelement
 
+import android.security.keystore.KeyPermanentlyInvalidatedException
+import androidx.biometric.BiometricPrompt
 import org.junit.Assert.*
 import org.junit.Test
 import java.math.BigInteger
@@ -289,5 +291,107 @@ class PluginUnitTest {
     fun `isUserNotAuthenticatedException is false for an unrelated cause`() {
         val wrapped = RuntimeException("wrapped", IllegalStateException("boom"))
         assertFalse(SecureKeysPlugin.isUserNotAuthenticatedException(wrapped))
+    }
+
+    // ── error-code classification ────────────────────────────────────────────
+    // The codes these produce are the only part of an error that survives
+    // release-build sanitization, so an app branching on "the user cancelled"
+    // vs "the key is gone" depends entirely on this mapping being right.
+
+    @Test
+    fun `dismissing the prompt classifies as cancellation, not failure`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.USER_CANCELLED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_NEGATIVE_BUTTON),
+        )
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.USER_CANCELLED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_USER_CANCELED),
+        )
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.USER_CANCELLED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_CANCELED),
+        )
+    }
+
+    @Test
+    fun `a prompt that times out counts as cancellation`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.USER_CANCELLED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_TIMEOUT),
+        )
+    }
+
+    @Test
+    fun `lockout is an authentication failure, not unavailable hardware`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.AUTH_FAILED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_LOCKOUT),
+        )
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.AUTH_FAILED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_LOCKOUT_PERMANENT),
+        )
+    }
+
+    @Test
+    fun `missing credentials classify as an insecure device`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.DEVICE_NOT_SECURE,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_NO_BIOMETRICS),
+        )
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.DEVICE_NOT_SECURE,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL),
+        )
+    }
+
+    @Test
+    fun `an unrecognised biometric error falls back to internal`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.INTERNAL,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_VENDOR),
+        )
+        assertEquals(SecureKeysPlugin.ErrorCodes.INTERNAL, SecureKeysPlugin.classifyBiometricError(9999))
+    }
+
+    // A key invalidated by a biometric enrollment change is unrecoverable, and
+    // Android is the only platform that says so unambiguously. Reporting it as a
+    // generic signing failure would leave callers retrying a key that can never
+    // work again.
+
+    @Test
+    fun `a permanently invalidated key is reported as such`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.KEY_INVALIDATED,
+            SecureKeysPlugin.classifyKeyUseException(KeyPermanentlyInvalidatedException()),
+        )
+    }
+
+    @Test
+    fun `invalidation is detected through a wrapping exception`() {
+        val wrapped = RuntimeException("wrapped", KeyPermanentlyInvalidatedException())
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.KEY_INVALIDATED,
+            SecureKeysPlugin.classifyKeyUseException(wrapped),
+        )
+    }
+
+    @Test
+    fun `needing authentication is distinct from the key being destroyed`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.AUTH_FAILED,
+            SecureKeysPlugin.classifyKeyUseException(
+                android.security.keystore.UserNotAuthenticatedException("locked"),
+            ),
+        )
+    }
+
+    @Test
+    fun `an unrelated failure classifies as internal`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.INTERNAL,
+            SecureKeysPlugin.classifyKeyUseException(IllegalStateException("boom")),
+        )
     }
 }

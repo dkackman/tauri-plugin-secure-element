@@ -1,7 +1,9 @@
 use tauri::{command, AppHandle, Runtime};
 
 use crate::models::*;
-use crate::validation::{validate_key_name, validate_public_key_filter, validate_sign_data_size};
+use crate::validation::{
+    validate_key_name, validate_public_key_filter, validate_sign_data_size, validate_sign_reason,
+};
 use crate::Result;
 use crate::SecureElementExt;
 
@@ -62,10 +64,15 @@ pub(crate) async fn list_keys<R: Runtime>(
 #[command]
 pub(crate) async fn sign_with_key<R: Runtime>(
     app: AppHandle<R>,
-    payload: SignWithKeyRequest,
+    mut payload: SignWithKeyRequest,
 ) -> Result<SignWithKeyResponse> {
     validate_key_name(&payload.key_name)?;
     validate_sign_data_size(&payload.data)?;
+    // Store the normalized form back so every platform renders the same string
+    // in its prompt, rather than each trimming (or not) on its own.
+    if let Some(ref reason) = payload.reason {
+        payload.reason = Some(validate_sign_reason(reason)?);
+    }
     run_blocking(move || app.secure_element().sign_with_key(payload)).await
 }
 
@@ -109,6 +116,14 @@ pub(crate) async fn delete_key<R: Runtime>(
         payload.public_key = Some(validate_public_key_filter(public_key)?);
     }
 
+    // Same normalization as `sign_with_key`: the prompt string is only rendered
+    // when `require_auth` is set, but validating it unconditionally means a
+    // caller cannot smuggle an invalid one past the check by leaving the flag
+    // off and turning it on later.
+    if let Some(ref reason) = payload.reason {
+        payload.reason = Some(validate_sign_reason(reason)?);
+    }
+
     run_blocking(move || app.secure_element().delete_key(payload)).await
 }
 
@@ -142,6 +157,8 @@ mod tests {
         DeleteKeyRequest {
             key_name: key_name.map(str::to_string),
             public_key: public_key.map(str::to_string),
+            require_auth: false,
+            reason: None,
         }
     }
 

@@ -29,11 +29,19 @@ class SignWithKeyArgs: Decodable {
     /// .base64), matching the wire format Rust's `SignWithKeyRequest` now uses —
     /// a JSON number array here costs ~4x the bytes over the IPC boundary.
     let data: Data
+    /// Shown in the Face ID / Touch ID / passcode prompt so the user knows what
+    /// they are approving. `nil` uses the system default.
+    let reason: String?
 }
 
 class DeleteKeyArgs: Decodable {
     let keyName: String?
     let publicKey: String?
+    /// Require device-owner authentication before the key is destroyed. The
+    /// Keychain does not enforce this itself, even for auth-required keys.
+    let requireAuth: Bool?
+    /// Message shown in that prompt; ignored unless `requireAuth` is set.
+    let reason: String?
 }
 
 // MARK: - SecureEnclavePlugin
@@ -71,7 +79,7 @@ class SecureEnclavePlugin: Plugin {
             ])
         case let .failure(error):
             logError("generateSecureKey", error: error.localizedDescription)
-            invoke.reject(error.localizedDescription)
+            invoke.reject(error.localizedDescription, code: error.code)
         }
     }
 
@@ -91,7 +99,7 @@ class SecureEnclavePlugin: Plugin {
             invoke.resolve(["keys": keys])
         case let .failure(error):
             logError("listKeys", error: error.localizedDescription)
-            invoke.reject(error.localizedDescription)
+            invoke.reject(error.localizedDescription, code: error.code)
         }
     }
 
@@ -100,12 +108,12 @@ class SecureEnclavePlugin: Plugin {
     @objc func signWithKey(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(SignWithKeyArgs.self)
 
-        switch SecureEnclaveCore.signWithKey(keyName: args.keyName, data: args.data) {
+        switch SecureEnclaveCore.signWithKey(keyName: args.keyName, data: args.data, reason: args.reason) {
         case let .success(response):
             invoke.resolve(["signature": [UInt8](response.signature)])
         case let .failure(error):
             logError("signWithKey", error: error.localizedDescription)
-            invoke.reject(error.localizedDescription)
+            invoke.reject(error.localizedDescription, code: error.code)
         }
     }
 
@@ -114,12 +122,22 @@ class SecureEnclavePlugin: Plugin {
     @objc func deleteKey(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(DeleteKeyArgs.self)
 
-        switch SecureEnclaveCore.deleteKey(keyName: args.keyName, publicKey: args.publicKey) {
+        // A non-nil reason is what switches on the authentication check, so it
+        // is only supplied when the caller actually asked for one.
+        let authReason = (args.requireAuth ?? false)
+            ? (args.reason ?? "Authenticate to delete a secure key")
+            : nil
+
+        switch SecureEnclaveCore.deleteKey(
+            keyName: args.keyName,
+            publicKey: args.publicKey,
+            authReason: authReason
+        ) {
         case .success:
             invoke.resolve(["success": true])
         case let .failure(error):
             logError("deleteKey", error: error.localizedDescription)
-            invoke.reject(error.localizedDescription)
+            invoke.reject(error.localizedDescription, code: error.code)
         }
     }
 

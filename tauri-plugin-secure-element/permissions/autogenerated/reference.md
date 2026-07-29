@@ -1,6 +1,10 @@
 ## Default Permission
 
-Default permissions for the plugin
+Default permissions for the plugin: every command except key deletion.
+
+Grants ping, generateSecureKey, listKeys, signWithKey and
+checkSecureElementSupport. Add allow-delete-key explicitly to windows that need
+to destroy keys.
 
 #### This default permission set includes the following:
 
@@ -8,7 +12,6 @@ Default permissions for the plugin
 - `allow-generate-secure-key`
 - `allow-list-keys`
 - `allow-sign-with-key`
-- `allow-delete-key`
 - `allow-check-secure-element-support`
 
 ## Permission Table

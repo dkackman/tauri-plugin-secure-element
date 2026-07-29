@@ -82,6 +82,47 @@ public enum SecureEnclaveError: Error, LocalizedError {
     case invalidData(String)
     case biometricNotAvailable(String)
     case deviceNotSecure(String)
+    /// The user dismissed the Face ID / Touch ID / passcode prompt.
+    case userCancelled
+    /// Authentication ran and was rejected — wrong passcode, unrecognized
+    /// biometric, or biometry locked out after repeated failures.
+    case authFailed(String)
+
+    /// The machine-readable code reported to the caller.
+    ///
+    /// Must stay in sync with `ErrorCode` in `src/error.rs`; the Rust side
+    /// parses these strings and collapses anything it does not recognize to
+    /// `internal`. Unlike `errorDescription`, this is identical in debug and
+    /// release builds — it never embeds a key name or OS status — so it is the
+    /// only part of an error a shipping app can branch on.
+    public var code: String {
+        switch self {
+        case .keyAlreadyExists:
+            return "keyAlreadyExists"
+        case .keyNotFound:
+            return "keyNotFound"
+        case .keyNotAccessible:
+            return "keyNotAccessible"
+        case .userCancelled:
+            return "userCancelled"
+        case .authFailed:
+            return "authFailed"
+        case .invalidAuthMode:
+            return "unsupported"
+        case .biometricNotAvailable, .deviceNotSecure:
+            return "deviceNotSecure"
+        case .invalidData:
+            return "validation"
+        case .failedToCreateAccessControl,
+             .failedToCreateKey,
+             .failedToDeleteKey,
+             .failedToExportPublicKey,
+             .failedToExtractPublicKey,
+             .failedToQueryKeys,
+             .failedToSign:
+            return "internal"
+        }
+    }
 
     public var errorDescription: String? {
         switch self {
@@ -156,6 +197,14 @@ public enum SecureEnclaveError: Error, LocalizedError {
                 return "Device is not secure: \(detail)"
             #else
                 return "Device is not secure"
+            #endif
+        case .userCancelled:
+            return "Authentication was cancelled"
+        case let .authFailed(detail):
+            #if DEBUG
+                return "Authentication failed: \(detail)"
+            #else
+                return "Authentication failed"
             #endif
         }
     }
@@ -245,6 +294,59 @@ public enum SecureEnclaveCore {
     public static func extractCFErrorDescription(_ error: Unmanaged<CFError>) -> String {
         let cfError = error.takeRetainedValue()
         return CFErrorCopyDescription(cfError) as String? ?? "Unknown error"
+    }
+
+    /// Classifies a `CFError` raised by a key-use call that may have prompted
+    /// for authentication.
+    ///
+    /// `SecKeyCreateSignature` reports authentication outcomes as a `CFError`
+    /// whose code is either an `OSStatus` (`NSOSStatusErrorDomain`) or an
+    /// `LAError` (`LAErrorDomain`), depending on how far the request got before
+    /// failing. Both are checked, so that "the user dismissed the prompt" — by
+    /// far the most common failure in normal use — reaches the caller as
+    /// `userCancelled` instead of a generic signing fault it has to surface as
+    /// an error dialog.
+    ///
+    /// What this deliberately does *not* detect: a `.biometryCurrentSet` key
+    /// invalidated by a biometric enrollment change fails here with
+    /// `errSecAuthFailed`, the same status as a wrong passcode. Apple exposes
+    /// no distinct status for it, so this returns `.authFailed` and the plugin
+    /// never reports `keyInvalidated` on Apple platforms. Android, which throws
+    /// a dedicated `KeyPermanentlyInvalidatedException`, does.
+    public static func classifyAuthError(_ error: Unmanaged<CFError>) -> SecureEnclaveError {
+        let cfError = error.takeRetainedValue()
+        let description = CFErrorCopyDescription(cfError) as String? ?? "Unknown error"
+        let domain = CFErrorGetDomain(cfError) as String? ?? ""
+        let code = CFErrorGetCode(cfError)
+
+        if domain == LAErrorDomain {
+            switch code {
+            case LAError.userCancel.rawValue,
+                 LAError.userFallback.rawValue,
+                 LAError.systemCancel.rawValue,
+                 LAError.appCancel.rawValue:
+                return .userCancelled
+            case LAError.passcodeNotSet.rawValue,
+                 LAError.biometryNotAvailable.rawValue,
+                 LAError.biometryNotEnrolled.rawValue:
+                return .deviceNotSecure(description)
+            default:
+                return .authFailed(description)
+            }
+        }
+
+        switch code {
+        case Int(errSecUserCanceled):
+            return .userCancelled
+        case Int(errSecAuthFailed):
+            return .authFailed(description)
+        case Int(errSecInteractionNotAllowed):
+            return .keyNotAccessible
+        case Int(errSecItemNotFound):
+            return .keyNotFound(description)
+        default:
+            return .failedToSign(description)
+        }
     }
 
     /// Exports a public key from a private key as base64 string
@@ -471,9 +573,21 @@ public enum SecureEnclaveCore {
     }
 
     /// Sign data with a key from the Secure Enclave
-    public static func signWithKey(keyName: String, data: Data) -> Result<SignResponse, SecureEnclaveError> {
+    ///
+    /// `reason` is shown in the Face ID / Touch ID / passcode prompt. It travels
+    /// on an `LAContext` attached to the key lookup via
+    /// `kSecUseAuthenticationContext`: the context stays bound to the returned
+    /// `SecKey`, so the string is still in force when `SecKeyCreateSignature`
+    /// below actually triggers the prompt. Passing `nil` leaves the system
+    /// default in place.
+    public static func signWithKey(keyName: String, data: Data, reason: String? = nil) -> Result<SignResponse, SecureEnclaveError> {
         // Look up the key
-        let query = createKeyQuery(keyName: keyName, returnRef: true)
+        var query = createKeyQuery(keyName: keyName, returnRef: true)
+        if let reason, !reason.isEmpty {
+            let context = LAContext()
+            context.localizedReason = reason
+            query[kSecUseAuthenticationContext as String] = context
+        }
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
@@ -503,7 +617,10 @@ public enum SecureEnclaveCore {
             &signError
         ) as Data? else {
             if let error = signError {
-                return .failure(.failedToSign(extractCFErrorDescription(error)))
+                // Signing is the one call that prompts, so its failures need the
+                // full classification — cancel and auth-failure are ordinary
+                // outcomes here, not faults.
+                return .failure(classifyAuthError(error))
             }
             return .failure(.failedToSign("Unknown error"))
         }
@@ -511,8 +628,80 @@ public enum SecureEnclaveCore {
         return .success(SignResponse(signature: signature))
     }
 
+    /// Runs a device-owner authentication check and blocks until it resolves.
+    ///
+    /// Used to gate deletion, which the Keychain itself performs with no
+    /// authentication at all — `SecItemDelete` succeeds against a key created
+    /// with `.userPresence` or `.biometryCurrentSet` without ever prompting.
+    ///
+    /// `.deviceOwnerAuthentication` accepts biometry *or* the device passcode,
+    /// so this stays usable when biometry is locked out or unenrolled; the
+    /// property being established is "a human holding the device credential
+    /// approved this", not which factor they used.
+    ///
+    /// `evaluatePolicy` is callback-based, and the FFI and mobile bridges that
+    /// call this are both synchronous, so a semaphore turns it back into a
+    /// blocking call. Both callers already run off the main thread — macOS via
+    /// `spawn_blocking` in `commands.rs`, iOS on the plugin's own invoke thread
+    /// — so nothing that drives the UI is blocked while the prompt is up.
+    public static func authenticateDeviceOwner(reason: String) -> Result<Void, SecureEnclaveError> {
+        let context = LAContext()
+
+        var policyError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
+            return .failure(.deviceNotSecure(
+                policyError?.localizedDescription ?? "Device authentication is not available"
+            ))
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var authenticated = false
+        var evaluationError: NSError?
+
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, error in
+            authenticated = success
+            evaluationError = error as NSError?
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        if authenticated {
+            return .success(())
+        }
+
+        // Distinguish "the user declined" from "authentication failed", so the
+        // caller can stay silent for the former.
+        if let error = evaluationError {
+            switch error.code {
+            case LAError.userCancel.rawValue,
+                 LAError.appCancel.rawValue,
+                 LAError.systemCancel.rawValue,
+                 LAError.userFallback.rawValue:
+                return .failure(.userCancelled)
+            case LAError.passcodeNotSet.rawValue:
+                return .failure(.deviceNotSecure(error.localizedDescription))
+            default:
+                return .failure(.authFailed(error.localizedDescription))
+            }
+        }
+
+        return .failure(.authFailed("Authentication was not completed"))
+    }
+
     /// Delete a key from the Secure Enclave by name or public key
-    public static func deleteKey(keyName: String?, publicKey: String?) -> Result<Bool, SecureEnclaveError> {
+    ///
+    /// A non-nil `authReason` requires the device owner to authenticate before
+    /// anything is deleted. The check runs *before* the key is looked up, so
+    /// deleting a key that does not exist still prompts — otherwise the prompt
+    /// would reveal which key names exist to a caller that can delete but not
+    /// list.
+    public static func deleteKey(keyName: String?, publicKey: String?, authReason: String? = nil) -> Result<Bool, SecureEnclaveError> {
+        if let authReason {
+            if case let .failure(error) = authenticateDeviceOwner(reason: authReason) {
+                return .failure(error)
+            }
+        }
+
         // If keyName is provided, delete by name (fast path)
         if let keyName {
             let query = createKeyQuery(keyName: keyName, returnRef: false)
@@ -530,6 +719,19 @@ public enum SecureEnclaveCore {
             return .failure(.invalidData("Either keyName or publicKey must be provided"))
         }
 
+        return deleteKeyMatchingPublicKey(targetPublicKey)
+    }
+
+    /// Deletes the plugin-owned key whose exported public key equals
+    /// `targetPublicKey`.
+    ///
+    /// Split out of `deleteKey` to keep that function's branching within the
+    /// cyclomatic-complexity budget once the authentication gate was added.
+    ///
+    /// Idempotent in the same way `deleteKey` is: finding no match is success,
+    /// not an error, because the caller's goal — that key no longer exists — is
+    /// already satisfied.
+    private static func deleteKeyMatchingPublicKey(_ targetPublicKey: String) -> Result<Bool, SecureEnclaveError> {
         // Query for all keys
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
@@ -543,46 +745,44 @@ public enum SecureEnclaveCore {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
 
-        if status == errSecSuccess, let items = result as? [[String: Any]] {
-            for item in items {
-                // Only consider keys this plugin created.
-                guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
-                      let foundKeyName = decodeKeyName(fromTag: tagData)
-                else {
-                    continue
-                }
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else {
+            // No keys at all is success (idempotent); anything else is a fault.
+            return status == errSecItemNotFound ? .success(true) : .failure(.failedToQueryKeys(status))
+        }
 
-                guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
-                      CFGetTypeID(keyRef) == SecKeyGetTypeID()
-                else {
-                    continue
-                }
-                // swiftlint:disable:next force_cast
-                let privateKey = keyRef as! SecKey // safe: type ID verified above
-
-                // Check if this key's public key matches
-                if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
-                   publicKeyBase64 == targetPublicKey
-                {
-                    let deleteQuery = createKeyQuery(keyName: foundKeyName, returnRef: false)
-                    let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
-
-                    if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
-                        return .success(true)
-                    } else {
-                        return .failure(.failedToDeleteKey("Status: \(deleteStatus)"))
-                    }
-                }
+        for item in items {
+            // Only consider keys this plugin created.
+            guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
+                  let foundKeyName = decodeKeyName(fromTag: tagData)
+            else {
+                continue
             }
 
-            // Key not found by public key - return success (idempotent)
-            return .success(true)
-        } else if status == errSecItemNotFound {
-            // No keys found - return success (idempotent)
-            return .success(true)
-        } else {
-            return .failure(.failedToQueryKeys(status))
+            guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                  CFGetTypeID(keyRef) == SecKeyGetTypeID()
+            else {
+                continue
+            }
+            // swiftlint:disable:next force_cast
+            let privateKey = keyRef as! SecKey // safe: type ID verified above
+
+            // Check if this key's public key matches
+            if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
+               publicKeyBase64 == targetPublicKey
+            {
+                let deleteQuery = createKeyQuery(keyName: foundKeyName, returnRef: false)
+                let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+
+                if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
+                    return .success(true)
+                } else {
+                    return .failure(.failedToDeleteKey("Status: \(deleteStatus)"))
+                }
+            }
         }
+
+        // Key not found by public key - return success (idempotent)
+        return .success(true)
     }
 
     // Detects the type of secure element on macOS (Apple Silicon vs T2 vs none)

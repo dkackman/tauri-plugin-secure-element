@@ -5,52 +5,94 @@ A Tauri plugin for secure element functionality on Windows (TPM 2.0), macOS & iO
 [![npm](https://img.shields.io/npm/v/tauri-plugin-secure-element-api)](https://www.npmjs.com/package/tauri-plugin-secure-element-api)
 [![Crates.io Downloads (latest version)](https://img.shields.io/crates/dv/tauri-plugin-secure-element)](https://crates.io/crates/tauri-plugin-secure-element)
 
-## Features
+- Generate hardware-backed keys and sign with them, without the private key ever leaving the secure element
+- List, inspect and delete keys
+- Report what hardware backing a device actually has, and what a given key actually got
+- `none`, `pinOrBiometric` and `biometricOnly` authentication modes
+- One API across macOS, Windows, iOS and Android
 
-- Generate secure keys using hardware-backed secure storage
-- Sign data with keys stored in secure elements
-- List and manage secure keys
-- Check secure element support on the device
-- Support for biometric and PIN authentication modes
-- Cross-platform support for macOS, Windows, iOS, and Android
+> **Using the plugin in your app?** The consumer documentation — installation, API
+> reference, error codes, platform limitations and the **security model** — lives in
+> **[`tauri-plugin-secure-element/README.md`](tauri-plugin-secure-element/README.md)**,
+> which is also what renders on
+> [npm](https://www.npmjs.com/package/tauri-plugin-secure-element-api) and
+> [crates.io](https://crates.io/crates/tauri-plugin-secure-element). This file covers
+> working on the repository itself.
+>
+> Read the [security model](tauri-plugin-secure-element/README.md#security-model) before
+> relying on the plugin for anything where the per-platform differences matter — key
+> isolation, deletion and silent signing do not behave the same way on every platform.
+
+> **Beta.** Every release so far is a prerelease and the API may still change between
+> betas. See [`tauri-plugin-secure-element/todo.md`](tauri-plugin-secure-element/todo.md)
+> for the known issues and the remaining work before 1.0.
+
+## Repository layout
+
+A pnpm workspace monorepo:
+
+| Path                                                       | What it is                                                              |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [`tauri-plugin-secure-element/`](tauri-plugin-secure-element/) | The plugin — Rust core, Swift (iOS/macOS), Kotlin (Android), TS bindings |
+| [`test-app/`](test-app/)                                    | A Tauri app exercising the plugin on each platform                       |
+| [`docs/`](docs/)                                            | Platform setup guides, notably macOS code signing                        |
+
+Within the plugin, three files are worth knowing about because their purpose isn't
+obvious from the name:
+
+- `src/error_sanitize.rs` — returns detailed errors in debug builds and generic ones in release, so failures don't leak key names or OS status values
+- `src/der.rs` — converts the raw ECDSA R‖S signatures NCrypt produces into DER, so Windows signatures match the other platforms
+- `src/windows_raii.rs` — RAII wrappers for NCrypt handles; Windows code goes through these rather than raw handles
 
 ## Prerequisites
 
-- [Rust](https://www.rust-lang.org/) (latest stable version)
-- [Node.js](https://nodejs.org/) (version 20.19+ or 22.12+)
-- [pnpm](https://pnpm.io/) (package manager)
-- [Setup system dependencies for Tauri](https://v2.tauri.app/start/prerequisites/)
+- [Rust](https://www.rust-lang.org/) (latest stable)
+- [Node.js](https://nodejs.org/) 20.19+ or 22.12+, and [pnpm](https://pnpm.io/)
+- [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/)
 
-## Install and Build
+Per platform:
+
+- **iOS** — Xcode; swiftformat and swiftlint for the lint tasks
+- **Android** — Android Studio and the Android SDK. Do **not** install ktlint yourself: the lint scripts run `pnpm exec ktlint`, which resolves the pinned `@naturalcycles/ktlint`, and `android/build.gradle.kts` hands the ktlint Gradle plugin that same version. A `ktlint` on `PATH` from Homebrew or `~/.ktlint` is a different version that will disagree with CI about the same files; if you bump one, bump all three.
+- **macOS** — Xcode for the Secure Enclave FFI, plus a provisioning profile (see [`docs/macos-development.md`](docs/macos-development.md))
+- **Windows** — Visual Studio Build Tools and the Windows SDK, for Windows Hello and TPM
+
+## Build
 
 ```bash
 pnpm install
 pnpm build
 ```
 
-This will install dependencies, build the plugin, its JS bindings, and the test app frontend.
+Build order matters: the plugin's TypeScript bindings (`dist-js/`) must exist before the
+test app builds. `pnpm build` from the root handles this in dependency order, and the test
+app's `prebuild`/`predev` scripts do it automatically.
 
-## Running the Test App
+### Gradle needs `.tauri/tauri-api` first
 
-### iOS
+To run anything Gradle in `tauri-plugin-secure-element/android` — `./gradlew test`,
+`ktlintCheck` — `android/.tauri/tauri-api` has to exist. It is the `:tauri-android`
+project that `settings.gradle` includes: a copy of the tauri crate's own `mobile/android`
+library that the Tauri CLI drops there while building an app for Android. It is gitignored
+and no build step in this repository creates it, so on a fresh checkout Gradle fails with
+`No matching variant of project :tauri-android ... No variants exist`. Run
+`scripts/materialize-tauri-android.sh` (what CI does) to copy it from the crate source
+cargo has already downloaded.
+
+## Running the test app
 
 ```bash
 cd test-app
-pnpm tauri ios dev
+
+pnpm tauri ios dev        # iOS
+pnpm tauri android dev    # Android
+pnpm tauri dev            # Windows
 ```
 
-### Android
-
-```bash
-cd test-app
-pnpm tauri android dev
-```
-
-### macOS
-
-macOS Secure Enclave access requires special code signing setup with a provisioning profile. See the **[macOS Development Guide](docs/macos-development.md)** for detailed instructions. `pnpm tauri dev` will not work for Secure Enclave development because it runs the raw binary without a bundle structure or signed provisioning profile.
-
-Quick start (after setup):
+**macOS** needs a provisioning profile and special code signing — `pnpm tauri dev` will
+not work, because it runs the raw binary without a bundle structure or a signed
+provisioning profile. See the
+**[macOS Development Guide](docs/macos-development.md)**, then:
 
 ```bash
 cd test-app
@@ -58,345 +100,33 @@ cd test-app
 open src-tauri/target/debug/bundle/macos/test-app.app
 ```
 
-### Windows
+**Windows** needs a TPM 2.0 device and Windows 10 1607 (build 14393) or higher.
+
+Secure element features need real hardware — simulators and emulators have no hardware
+security module, and report themselves as emulated.
+
+## Before committing
 
 ```bash
-cd test-app
-pnpm tauri dev
+pnpm format   # Format all code
+pnpm lint     # Rust, Swift and Kotlin lints
+pnpm build    # Everything builds
 ```
 
-## Using Tauri Plugin Secure Element
+Rust tests run with `cargo test`; Kotlin unit tests with `./gradlew test` from
+`tauri-plugin-secure-element/android` (after the `.tauri/tauri-api` step above). CI runs
+all of these on Linux, macOS and Windows, and every job gates a release.
 
-### Installation
+## Debugging
 
-> **Beta.** Every release so far is a prerelease, and the API may still change between
-> betas. Pin an exact version and read the release notes before upgrading. See
-> [`tauri-plugin-secure-element/todo.md`](tauri-plugin-secure-element/todo.md) for the
-> known issues and the remaining work before 1.0.
+Use the VS Code launch configurations in `.vscode/launch.json`. Android logs:
+`./adb-logs.sh`.
 
-#### npm
+## Security
 
-```bash
-npm install tauri-plugin-secure-element-api@beta
-# or
-pnpm add tauri-plugin-secure-element-api@beta
-# or
-yarn add tauri-plugin-secure-element-api@beta
-```
-
-The `beta` tag always points at the newest prerelease. While there is no stable release
-yet, `latest` is kept in sync with it, so a plain `npm install` resolves to the same
-version — but prefer `@beta` so your intent survives the 1.0 release.
-
-#### Cargo
-
-```toml
-[dependencies]
-tauri-plugin-secure-element = "0.1.0-beta.8"
-```
-
-Cargo does not treat prereleases as compatible with one another: `"0.1.0-beta.8"` will
-**not** resolve to `0.1.0-beta.8`. Bump this line by hand for each beta.
-
-### Setup
-
-Add the plugin to your Rust code in `src-tauri/src/lib.rs`:
-
-```rust
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_secure_element::init())
-        // ... other plugins
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
-```
-
-Add the plugin permissions to `src-tauri/capabilities/default.json`:
-
-```json
-{
-  "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
-  "permissions": ["core:default", "secure-element:default"]
-}
-```
-
-### Android Biometrics
-
-In order to use biometric protected keys, add this to `src-tauri/gen/android/app/build.gradle.kts`:
-
-```kotlin
-dependencies {
-    implementation("androidx.biometric:biometric:1.1.0")
-}
-```
-
-**Note**: The `src-tauri/gen/android` folder is generated by Tauri but should be **committed to version control** and customized as needed. Once you add the biometric dependency, it will persist across builds (you only need to add it again if you completely regenerate the Android project with `tauri android init`).
-
-### iOS Face ID Permission
-
-**Important**: For authentication-required keys to work on iOS with Face ID, you must add the Face ID usage description to your iOS Info.plist.
-
-Add to `src-tauri/gen/apple/tauri-app_iOS/Info.plist` (replace `tauri-app_iOS` with your app name):
-
-```xml
-<key>NSFaceIDUsageDescription</key>
-<string>This app uses Face ID to authenticate access to your secure keys.</string>
-```
-
-Add this entry anywhere within the `<dict>` section of the Info.plist file.
-
-**Note**: Like the Android configuration, the `src-tauri/gen/apple` folder should be **committed to version control**. The Face ID permission will persist across builds unless you regenerate the iOS project with `tauri ios init`.
-
-Touch ID does not require a separate permission entry - it works automatically when Face ID permission is granted or when no biometric hardware is available.
-
-### Usage
-
-```typescript
-import {
-  checkSecureElementSupport,
-  generateSecureKey,
-  listKeys,
-  signWithKey,
-  deleteKey,
-} from "tauri-plugin-secure-element-api";
-
-// Check device secure element capabilities
-const capabilities = await checkSecureElementSupport();
-console.log("Strongest backing:", capabilities.strongest);
-console.log(
-  "Can enforce biometric-only:",
-  capabilities.canEnforceBiometricOnly
-);
-
-// Generate a new secure key
-const { publicKey, keyName } = await generateSecureKey(
-  "my-key-name",
-  "pinOrBiometric" // or 'none' or 'biometricOnly'
-);
-
-// List all keys
-const keys = await listKeys();
-
-// Sign data with a key
-const data = new Uint8Array([1, 2, 3, 4]);
-const signature = await signWithKey("my-key-name", data);
-
-// Delete a key
-await deleteKey("my-key-name");
-```
-
-## API Reference
-
-### `checkSecureElementSupport()`
-
-Returns detailed information about secure element hardware capabilities on the device.
-
-**Returns:** `Promise<SecureElementCapabilities>`
-
-```typescript
-/**
- * Hardware backing tiers, ordered weakest → strongest:
- * "none" < "firmware" < "integrated" < "discrete"
- */
-type SecureElementBacking = "none" | "firmware" | "integrated" | "discrete";
-
-interface SecureElementCapabilities {
-  /** A discrete physical security chip is available (e.g. discrete TPM 2.0, macOS T2, Android StrongBox) */
-  discrete: boolean;
-  /** An on-die isolated security core is available (e.g. Apple Silicon Secure Enclave, ARM TrustZone/TEE) */
-  integrated: boolean;
-  /** Firmware-backed security is available but no dedicated secure processor (e.g. Windows fTPM via Intel PTT or AMD PSP) */
-  firmware: boolean;
-  /** The security is emulated/virtual (e.g. vTPM in a VM, iOS Simulator, Android Emulator) */
-  emulated: boolean;
-  /** The strongest hardware backing tier available on this device */
-  strongest: SecureElementBacking;
-  /** Whether biometric-only authentication can be enforced at the key level right now
-   *  (reflects live enrollment on all supporting platforms; Android additionally
-   *  requires API 30+) */
-  canEnforceBiometricOnly: boolean;
-}
-```
-
-**Hardware Backing Tiers:**
-
-| Tier         | Description                                    | Examples                                           |
-| ------------ | ---------------------------------------------- | -------------------------------------------------- |
-| `none`       | No secure element available (software-only)    | Unsupported devices, some VMs                      |
-| `firmware`   | Firmware-backed, no dedicated secure processor | Windows fTPM (Intel PTT, AMD PSP)                  |
-| `integrated` | On-die isolated security core                  | Apple Silicon Secure Enclave, ARM TrustZone/TEE    |
-| `discrete`   | Physically separate security processor         | Discrete TPM 2.0, macOS T2 chip, Android StrongBox |
-
-**Usage Example:**
-
-```typescript
-const caps = await checkSecureElementSupport();
-
-// Check if any hardware backing is available
-if (caps.strongest === "none") {
-  console.warn("No secure element available - keys will be software-only");
-}
-
-// Check for high-security backing (discrete or integrated)
-if (caps.strongest === "discrete" || caps.strongest === "integrated") {
-  console.log("High-security hardware backing available");
-}
-
-// Warn if running in emulated environment
-if (caps.emulated) {
-  console.warn("Running in emulator/VM - security may be reduced");
-}
-
-// Check before creating biometric-only keys
-if (caps.canEnforceBiometricOnly) {
-  await generateSecureKey("my-key", "biometricOnly");
-}
-```
-
-### `generateSecureKey(keyName: string, authMode?: AuthenticationMode)`
-
-Generates a new secure key in the device's secure element.
-
-**Parameters:**
-
-- `keyName`: Unique name for the key
-- `authMode`: Authentication mode (`'none'`, `'pinOrBiometric'`, or `'biometricOnly'`)
-
-**Returns:** `Promise<GenerateSecureKeyResult>`
-
-```typescript
-interface GenerateSecureKeyResult {
-  publicKey: string;
-  keyName: string;
-}
-```
-
-**Note:** The `biometricOnly` mode requires Android 11 (API 30) or higher. On older Android versions, this mode will be rejected with an error. Use `checkSecureElementSupport().canEnforceBiometricOnly` to check support before creating biometric-only keys.
-
-**Note (iOS/macOS):** `biometricOnly` keys use `.biometryCurrentSet` and are **permanently
-invalidated when the enrolled biometric set changes** (adding/removing a fingerprint,
-re-enrolling Face ID). There is no recovery — the key and its signing capability are gone.
-Avoid `biometricOnly` for keys that need to survive routine re-enrollment; see
-[Authentication Modes](#authentication-modes) below.
-
-### `listKeys(keyName?: string, publicKey?: string)`
-
-Lists keys stored in the secure element. Can filter by key name or public key.
-
-**Returns:** `Promise<KeyInfo[]>`
-
-```typescript
-interface KeyInfo {
-  keyName: string;
-  publicKey: string;
-}
-```
-
-### `signWithKey(keyName: string, data: Uint8Array)`
-
-Signs data using a key stored in the secure element.
-
-**Parameters:**
-
-- `keyName`: Name of the key to use
-- `data`: Data to sign as `Uint8Array`
-
-**Returns:** `Promise<Uint8Array>` - The signature
-
-### `deleteKey(keyName?: string, publicKey?: string)`
-
-Deletes a key from the secure element. Exactly one parameter must be provided (not both).
-
-**Returns:** `Promise<boolean>` - Success status
-
-## Public Key Format
-
-Public keys are returned as base64-encoded strings in **X9.62 uncompressed point format** (65 bytes), consistent across all platforms:
-
-| Byte(s) | Content                 |
-| ------- | ----------------------- |
-| 0       | `0x04` (uncompressed)   |
-| 1-32    | X coordinate (32 bytes) |
-| 33-64   | Y coordinate (32 bytes) |
-
-All keys use the **secp256r1 (P-256)** elliptic curve.
-
-## Platform Support
-
-| Platform                   | Hardware       | `strongest`  | Notes                                           |
-| -------------------------- | -------------- | ------------ | ----------------------------------------------- |
-| **iOS**                    | Secure Enclave | `integrated` | On-die security core in A-series/M-series chips |
-| **macOS** (Apple Silicon)  | Secure Enclave | `integrated` | On-die security core in M1/M2/M3/M4 chips       |
-| **macOS** (Intel + T2)     | T2 Chip        | `discrete`   | Separate security processor on motherboard      |
-| **Android** (StrongBox)    | StrongBox      | `discrete`   | Tamper-resistant hardware module                |
-| **Android** (TEE only)     | TrustZone/TEE  | `integrated` | ARM TrustZone isolated execution environment    |
-| **Windows** (discrete TPM) | TPM 2.0        | `discrete`   | Separate TPM chip on motherboard                |
-| **Windows** (fTPM)         | Firmware TPM   | `firmware`   | Intel PTT or AMD PSP firmware-based TPM         |
-| **Simulators/Emulators**   | None           | `none`       | `emulated: true` flag is set                    |
-
-## Platform Limitations
-
-### Windows
-
-- Windows 11 (build 22000 or higher) requires TPM 2.0
-- TPM 2.0 is supported on Windows 10 (since version 1507)
-
-### macOS
-
-- Secure Enclave is available on Macs with Apple Silicon (M1/M2/M3/M4) or T2 chip
-
-### Android
-
-| Feature                   | Requirement | Notes                            |
-| ------------------------- | ----------- | -------------------------------- |
-| Hardware-backed keys      | API 23+     | TEE or StrongBox required        |
-| StrongBox                 | API 28+     | Falls back to TEE if unavailable |
-| `biometricOnly` auth mode | API 30+     | Rejected on older versions       |
-
-### iOS
-
-- Secure Enclave is available on all devices with A7 chip or later (iPhone 5s+)
-- Simulator does not support Secure Enclave - test on physical devices
-
-### Authentication Modes
-
-| Mode             | iOS/MacOS                         | Android                              | Windows             |
-| ---------------- | --------------------------------- | ------------------------------------ | ------------------- |
-| `none`           | ✅ No auth required               | ✅ No auth required                  | ✅ No auth required |
-| `pinOrBiometric` | ✅ Face ID, Touch ID, or passcode | ✅ Biometric or PIN/pattern/password | ✅ Windows Hello    |
-| `biometricOnly`  | ✅ Face ID / Touch ID only        | ✅ API 30+ only, biometric only      | ❌ Not supported    |
-
-**Note:** On iOS/macOS, `biometricOnly` keys use `.biometryCurrentSet`, which is
-**permanently invalidated if the enrolled biometric set changes** — adding a fingerprint,
-removing one, or re-enrolling Face ID destroys the key irrecoverably. Do not use
-`biometricOnly` for keys that must survive routine biometric re-enrollment.
-
-### When the user is prompted
-
-Platforms agree on prompting for every signature, but differ on whether creating an
-authenticated key prompts as well:
-
-| Platform    | `generateSecureKey` (`pinOrBiometric`) | `signWithKey`   |
-| ----------- | -------------------------------------- | --------------- |
-| iOS / macOS | No prompt                              | Prompt each use |
-| Android     | No prompt                              | Prompt each use |
-| **Windows** | **Windows Hello prompt**               | Prompt each use |
-
-Windows is the outlier. Authenticated keys live in the Microsoft Passport key storage
-provider, and binding a new key to your Windows Hello credential unlocks the NGC
-container — so creating the key raises a Hello prompt. This is enforced by the OS and
-cannot be suppressed: asking for silent creation fails with `NTE_SILENT_CONTEXT`
-(`0x80090022`) instead of creating the key quietly. `none` keys use the Platform Crypto
-Provider (TPM) and never prompt, on Windows or anywhere else.
-
-Because of this, call `generateSecureKey` from an explicit user action — an "enable
-secure signing" button rather than app startup — so the prompt arrives when the user
-expects it. This costs nothing on iOS/macOS/Android and avoids an unexplained Hello
-dialog on Windows.
+To report a vulnerability, see [SECURITY.md](SECURITY.md). For what the plugin does and
+does not protect against, see the
+[security model](tauri-plugin-secure-element/README.md#security-model).
 
 ## License
 
@@ -408,5 +138,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Links
 
+- [Plugin documentation](tauri-plugin-secure-element/README.md)
 - [Repository](https://github.com/dkackman/tauri-plugin-secure-element)
 - [Issues](https://github.com/dkackman/tauri-plugin-secure-element/issues)

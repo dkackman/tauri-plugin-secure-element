@@ -167,20 +167,79 @@ address (<dkackman@gmail.com>).
       so a different app run by the same user can open them. Contrast with iOS/macOS
       (keychain access groups) and Android (per-app keystore), where the OS enforces the
       app boundary.
-- [x] **`sanitize_app_id` collisions**: `.` → `_` means identifiers `a.b` and `a_b` land
-      in the same Windows namespace.
+- [x] **`sanitize_app_id` collisions**: `.` → `_` meant identifiers `a.b` and `a_b` landed
+      in the same Windows namespace. **Now fixed rather than only documented**: the
+      encoding is injective (`_` doubles to `__`, reserved characters become `_x{HH}`),
+      so distinct identifiers always get distinct namespaces. Breaking for existing
+      Windows keys created under an identifier containing a reserved character — they
+      remain in the provider under the old name and are no longer resolved. Documented
+      under "Breaking changes" in the README.
 - [x] **Deletion never requires authentication on any platform** (`SecItemDelete`,
       `NCryptDeleteKey`, `keyStore.deleteEntry` all proceed for auth-mandatory keys). Any
       code that can reach the plugin — including injected webview JS holding
       `secure-element:default` — can destroy every key. Documented as an availability
-      property, with a recommendation to grant `allow-delete-key` narrowly.
-- [x] **The default capability grants all six commands.** README now shows a minimal
-      sign-only capability example alongside `secure-element:default`.
+      property, and since **mitigated in three ways**: `allow-delete-key` was removed from
+      the default permission set, the recommendation to grant it narrowly stands, and
+      `deleteKey` now takes `requireAuth` to gate deletion behind a device-owner
+      authentication prompt the plugin enforces itself (LAContext on Apple,
+      BiometricPrompt on Android, `IUserConsentVerifierInterop` on Windows). The prompt
+      deliberately runs _before_ the key lookup so it cannot be used as an
+      existence oracle. **Not yet exercised on hardware on any platform.**
+- [x] **The default capability grants all six commands.** `allow-delete-key` has been
+      removed from `permissions/default.toml`, so the default set is now the five
+      non-destructive commands and deletion requires an explicit grant. README shows a
+      minimal sign-only capability alongside it. Breaking for apps that call `deleteKey`
+      under `secure-element:default`; the test app's own capability was updated to match.
 - [x] What the plugin does _not_ protect against: a compromised renderer can request
       signatures over attacker-chosen bytes for any non-auth key; auth-required keys
       limit this to one signature per user gesture, over data the user cannot see. Also
       documented: no platform exposes key attestation, and the plugin assumes OS/hardware
-      security is intact (no protection against a jailbroken/rooted device).
+      security is intact (no protection against a jailbroken/rooted device). Partially
+      mitigated since: `signWithKey` takes a caller-supplied `reason` shown in the prompt,
+      so the user is told what they are approving. The README is explicit that this is
+      app-supplied text no platform binds to the signed bytes.
+
+### 2b. Structured error codes — done
+
+Every failure used to reach JS as a free-form string, and `error_sanitize` replaced it
+with a _generic_ string in release builds, so a shipping app could not tell "the user
+tapped Cancel" from "hardware failure" from "the key was destroyed". Nothing anywhere
+handled Android's `KeyPermanentlyInvalidatedException`, which meant the `biometryCurrentSet`
+invalidation documented under item 3 was undetectable as well as unrecoverable — the app
+was told to design around a state it had no way to observe.
+
+- [x] `ErrorCode` in `src/error.rs`: `userCancelled`, `authFailed`, `keyInvalidated`,
+      `keyNotFound`, `keyAlreadyExists`, `keyNotAccessible`, `deviceNotSecure`,
+      `unsupported`, `validation`, `internal`. Errors now serialize as
+      `{code, message}` rather than a bare string — breaking for JS callers that read the
+      rejection as a string.
+- [x] Codes carry no key names or OS status values, so unlike messages they survive
+      release-build sanitization intact. Unknown codes collapse to `internal` at both the
+      Rust and TypeScript boundaries, so a newer platform layer against older bindings
+      degrades rather than erroring twice.
+- [x] Per-platform classification. Apple: `SecureEnclaveError.code`, plus
+      `classifyAuthError` mapping `LAError`/OSStatus (cancel, auth failure, lockout,
+      not-accessible). Android: `classifyBiometricError` over the `BiometricPrompt.ERROR_*`
+      codes and `classifyKeyUseException` for `KeyPermanentlyInvalidatedException` —
+      Android is the only platform that can report `keyInvalidated` precisely. Windows:
+      `classify_ncrypt_error` over NCrypt HRESULTs, including all three spellings of
+      "user cancelled" (`NTE_USER_CANCELLED`, `SCARD_W_CANCELLED_BY_USER`,
+      `HRESULT_FROM_WIN32(ERROR_CANCELLED)`).
+- [x] Codes cross the mobile bridge via Tauri's own `Invoke.reject(message, code)` and
+      `ErrorResponse.code`, rather than a message-prefix convention. The macOS FFI carries
+      it as a `"code"` field alongside `"error"` in the response JSON.
+- [x] `SecureElementError` and `isSecureElementError` in `guest-js`, with every command
+      routed through a wrapper so plugin errors and Tauri's own IPC errors reach callers
+      in one shape.
+- [x] Covered by unit tests on all three: Rust (code round-trip, serialization, FFI
+      parsing, NCrypt classification), Kotlin (biometric and key-use classification).
+      **The Apple `classifyAuthError` mapping is not exercised on hardware** — the OSStatus
+      and `LAError` values it keys on are documented ones, but which of them a given
+      failure actually produces is unverified.
+- [ ] Apple cannot distinguish an invalidated `.biometryCurrentSet` key from a failed
+      authentication — both are `errSecAuthFailed` — so `keyInvalidated` is never reported
+      on iOS/macOS. Documented rather than guessed at; worth revisiting if Apple exposes a
+      distinct status.
 
 ### 3. Reconcile `biometricOnly` docs with behavior
 
@@ -334,9 +393,16 @@ triggers UI, a plain `listKeys()` produces one Windows Hello prompt per key.
 - [ ] Add `CHANGELOG.md` and a stated MSRV / deprecation policy before 1.0.
 - [x] `CLAUDE.md` says `tauri` 2.10.1; `Cargo.toml` pins 2.11.5.
 - [x] `secure_element_ffi.swift:120` — `var info` is never mutated; should be `let`.
-- [ ] The Windows Hello prompt string `"Authenticate to sign data"` (`windows.rs`) is
-      hardcoded English and not localizable. Consider accepting it from the caller, which
-      also lets apps explain _what_ is being signed.
+- [x] The Windows Hello prompt string `"Authenticate to sign data"` (`windows.rs`) is
+      hardcoded English and not localizable. Fixed, and promoted out of polish: this was
+      the mitigation for the documented "the user is not shown what they are signing"
+      gap, not just an i18n nit. `signWithKey` now takes an optional `reason` that
+      reaches `NCRYPT_USE_CONTEXT_PROPERTY` on Windows, `LAContext.localizedReason` on
+      Apple (attached to the key lookup via `kSecUseAuthenticationContext`, so it is still
+      in force when `SecKeyCreateSignature` prompts) and `PromptInfo.setSubtitle` on
+      Android. The hardcoded strings remain only as fallbacks. Validated at the command
+      layer: trimmed, max 200 characters, no control characters, non-blank.
+      **Not yet exercised on hardware on any platform.**
 - [x] macOS FFI calls run synchronously on the async runtime's worker thread — including
       `sign`, which blocks on a Touch ID prompt. Wrap them in `spawn_blocking` so one
       pending signature can't stall other plugin commands.

@@ -18,10 +18,12 @@ extern "C" {
     fn secure_element_sign_with_key(
         key_name: *const std::ffi::c_char,
         data_base64: *const std::ffi::c_char,
+        reason: *const std::ffi::c_char,
     ) -> *mut std::ffi::c_char;
     fn secure_element_delete_key(
         key_name: *const std::ffi::c_char,
         public_key: *const std::ffi::c_char,
+        auth_reason: *const std::ffi::c_char,
     ) -> *mut std::ffi::c_char;
 }
 
@@ -96,6 +98,23 @@ mod ffi_helpers {
     /// Prevents memory exhaustion from unexpectedly large responses.
     const MAX_FFI_RESPONSE_SIZE: usize = 1024 * 1024;
 
+    /// Extracts an error from a parsed FFI response, if it carries one.
+    ///
+    /// The Swift layer emits `{"error": "...", "code": "..."}` (see `errorJson`
+    /// in `swift/secure_element_ffi.swift`). The code is the part callers branch
+    /// on; the message is generic in release builds. A response missing `code`
+    /// still yields an error — an older Swift binary paired with this Rust core
+    /// should degrade to `Internal`, not be mistaken for a success.
+    pub fn ffi_error(value: &serde_json::Value) -> Option<crate::Error> {
+        let message = value.get("error").and_then(|v| v.as_str())?;
+        let code = value
+            .get("code")
+            .and_then(|v| v.as_str())
+            .map(crate::ErrorCode::parse)
+            .unwrap_or(crate::ErrorCode::Internal);
+        Some(crate::Error::platform(code, message))
+    }
+
     /// Parses a JSON response from FFI, checking for error field first.
     /// Returns the parsed response or an error if the JSON contains an "error" field.
     pub fn parse_ffi_response<T: serde::de::DeserializeOwned>(json: &str) -> crate::Result<T> {
@@ -114,8 +133,8 @@ mod ffi_helpers {
             ))
         })?;
 
-        if let Some(error_msg) = value.get("error").and_then(|v| v.as_str()) {
-            return Err(crate::Error::Io(std::io::Error::other(error_msg)));
+        if let Some(error) = ffi_error(&value) {
+            return Err(error);
         }
 
         // Now deserialize to the expected type
@@ -222,6 +241,42 @@ mod ffi_helpers {
         }
 
         #[test]
+        fn parse_ffi_response_carries_the_swift_error_code() {
+            let result: crate::Result<Sample> = parse_ffi_response(
+                r#"{"error":"Authentication was cancelled","code":"userCancelled"}"#,
+            );
+            let err = result.unwrap_err();
+            assert_eq!(err.code(), crate::ErrorCode::UserCancelled);
+            assert_eq!(err.message(), "Authentication was cancelled");
+        }
+
+        /// An older Swift binary that predates codes must still fail — silently
+        /// deserializing an error payload as a success would be far worse than
+        /// reporting it as `Internal`.
+        #[test]
+        fn ffi_error_without_a_code_falls_back_to_internal() {
+            let value: serde_json::Value = serde_json::from_str(r#"{"error":"boom"}"#).unwrap();
+            let err = ffi_error(&value).unwrap();
+            assert_eq!(err.code(), crate::ErrorCode::Internal);
+        }
+
+        #[test]
+        fn ffi_error_is_none_for_a_success_payload() {
+            let value: serde_json::Value = serde_json::from_str(r#"{"value":"hi"}"#).unwrap();
+            assert!(ffi_error(&value).is_none());
+        }
+
+        #[test]
+        fn ffi_error_maps_an_unknown_code_to_internal() {
+            let value: serde_json::Value =
+                serde_json::from_str(r#"{"error":"boom","code":"fromTheFuture"}"#).unwrap();
+            assert_eq!(
+                ffi_error(&value).unwrap().code(),
+                crate::ErrorCode::Internal
+            );
+        }
+
+        #[test]
         fn parse_ffi_response_rejects_malformed_json() {
             let result: crate::Result<Sample> = parse_ffi_response("not json");
             assert!(result.is_err());
@@ -257,6 +312,19 @@ mod ffi_helpers {
             assert!(cstr.is_none());
         }
     }
+}
+
+/// Fallback message for the deletion authentication prompt.
+///
+/// Hardcoded English, like the equivalent signing fallback — which is why
+/// callers should supply their own already-localized `reason`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+const DEFAULT_DELETE_PROMPT: &str = "Authenticate to delete a secure key";
+
+/// Picks the message to show in the deletion prompt.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn resolve_delete_prompt(reason: Option<&str>) -> String {
+    reason.unwrap_or(DEFAULT_DELETE_PROMPT).to_string()
 }
 
 #[cfg(target_os = "windows")]
@@ -432,8 +500,16 @@ impl<R: Runtime> SecureElement<R> {
                 ))
             })?;
 
+            // A null reason tells the Swift side to use its default prompt.
+            let (reason_ptr, _reason_cstr_guard) =
+                ffi_helpers::optional_to_cstring(payload.reason.as_ref());
+
             let result_ptr = unsafe {
-                secure_element_sign_with_key(key_name_cstr.as_ptr(), data_base64_cstr.as_ptr())
+                secure_element_sign_with_key(
+                    key_name_cstr.as_ptr(),
+                    data_base64_cstr.as_ptr(),
+                    reason_ptr,
+                )
             };
 
             let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
@@ -446,8 +522,8 @@ impl<R: Runtime> SecureElement<R> {
                 ))
             })?;
 
-            if let Some(error_msg) = value.get("error").and_then(|v| v.as_str()) {
-                return Err(crate::Error::Io(std::io::Error::other(error_msg)));
+            if let Some(error) = ffi_helpers::ffi_error(&value) {
+                return Err(error);
             }
 
             let signature_base64 =
@@ -487,7 +563,7 @@ impl<R: Runtime> SecureElement<R> {
                 windows::KeyProviderType::Ngc => {
                     // Get HWND for Windows Hello dialog parenting
                     let hwnd = self.get_main_window_hwnd();
-                    windows::sign_hash_with_window(&key, &hash, hwnd)?
+                    windows::sign_hash_with_window(&key, &hash, hwnd, payload.reason.as_deref())?
                 }
                 windows::KeyProviderType::Tpm => {
                     // Silent signing for TPM keys
@@ -515,7 +591,16 @@ impl<R: Runtime> SecureElement<R> {
             let (public_key_ptr, _public_key_cstr_guard) =
                 ffi_helpers::optional_to_cstring(payload.public_key.as_ref());
 
-            let result_ptr = unsafe { secure_element_delete_key(key_name_ptr, public_key_ptr) };
+            // A non-null reason is what tells the Swift side to authenticate
+            // first; null means "delete without prompting", the default.
+            let auth_reason = payload
+                .require_auth
+                .then(|| resolve_delete_prompt(payload.reason.as_deref()));
+            let (auth_reason_ptr, _auth_reason_cstr_guard) =
+                ffi_helpers::optional_to_cstring(auth_reason.as_ref());
+
+            let result_ptr =
+                unsafe { secure_element_delete_key(key_name_ptr, public_key_ptr, auth_reason_ptr) };
 
             let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
 
@@ -527,8 +612,8 @@ impl<R: Runtime> SecureElement<R> {
                 ))
             })?;
 
-            if let Some(error_msg) = value.get("error").and_then(|v| v.as_str()) {
-                return Err(crate::Error::Io(std::io::Error::other(error_msg)));
+            if let Some(error) = ffi_helpers::ffi_error(&value) {
+                return Err(error);
             }
 
             let success = value
@@ -541,6 +626,38 @@ impl<R: Runtime> SecureElement<R> {
         #[cfg(target_os = "windows")]
         {
             let app_id = self.get_app_id();
+
+            // Authenticate before the key is even looked up. Doing it after
+            // would make the prompt an existence oracle: a caller with delete
+            // rights but no listing rights could probe for key names by
+            // watching whether a prompt appears.
+            if payload.require_auth {
+                let prompt = resolve_delete_prompt(payload.reason.as_deref());
+                let hwnd = self.get_main_window_hwnd().ok_or_else(|| {
+                    crate::Error::platform(
+                        crate::ErrorCode::Internal,
+                        "No application window available to host the authentication prompt",
+                    )
+                })?;
+
+                let verified =
+                    crate::windows_hello::request_user_consent(hwnd, &prompt).map_err(|e| {
+                        crate::Error::platform(
+                            crate::ErrorCode::Internal,
+                            crate::error_sanitize::sanitize_error(
+                                &format!("Windows Hello verification failed: {}", e),
+                                "Authentication failed",
+                            ),
+                        )
+                    })?;
+
+                if !verified {
+                    return Err(crate::Error::platform(
+                        crate::ErrorCode::UserCancelled,
+                        "Authentication was cancelled or not verified; key not deleted",
+                    ));
+                }
+            }
 
             // If key_name is provided, delete by name
             // If public_key is provided, find the key with that public key first

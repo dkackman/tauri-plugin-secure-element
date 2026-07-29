@@ -68,6 +68,51 @@ pub fn validate_sign_data_size(data: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
+/// Longest accepted authentication-prompt reason, in characters.
+///
+/// Generous enough for a sentence explaining what is being approved, short
+/// enough that it cannot be used to push the rest of a prompt off-screen or to
+/// smuggle a wall of text past the user.
+pub const MAX_SIGN_REASON_LENGTH: usize = 200;
+
+/// Validates the caller-supplied authentication-prompt reason.
+///
+/// This string is rendered in an OS-owned security dialog, so it gets more
+/// scrutiny than an ordinary argument. Rules:
+/// - Must not be blank when supplied (a blank prompt is worse than the default,
+///   which at least says something)
+/// - Must not exceed [`MAX_SIGN_REASON_LENGTH`] characters
+/// - Must not contain control characters, which can be used to blank out or
+///   visually restructure the prompt text around it
+///
+/// Returns the trimmed string, so trailing whitespace never shifts the layout
+/// of the dialog.
+pub fn validate_sign_reason(reason: &str) -> Result<String, Error> {
+    let trimmed = reason.trim();
+
+    if trimmed.is_empty() {
+        return Err(Error::Validation(
+            "Authentication reason cannot be blank; omit it to use the default prompt".to_string(),
+        ));
+    }
+
+    let length = trimmed.chars().count();
+    if length > MAX_SIGN_REASON_LENGTH {
+        return Err(Error::Validation(format!(
+            "Authentication reason exceeds maximum length of {} characters (got {})",
+            MAX_SIGN_REASON_LENGTH, length
+        )));
+    }
+
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(Error::Validation(
+            "Authentication reason must not contain control characters".to_string(),
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
 /// Validates and normalizes a public key filter string.
 /// Trims whitespace and checks length bounds.
 /// The filter is only used for exact `==` comparison against known-good base64 strings,
@@ -162,6 +207,57 @@ mod tests {
         // Test that 65 ASCII characters fails
         let too_long = "a".repeat(65);
         assert!(validate_key_name(&too_long).is_err());
+    }
+
+    #[test]
+    fn sign_reason_accepts_a_normal_explanation() {
+        assert_eq!(
+            validate_sign_reason("Approve transfer of 5 XCH to alice").unwrap(),
+            "Approve transfer of 5 XCH to alice"
+        );
+    }
+
+    #[test]
+    fn sign_reason_is_trimmed_so_prompts_render_consistently() {
+        assert_eq!(
+            validate_sign_reason("  Approve login  ").unwrap(),
+            "Approve login"
+        );
+    }
+
+    #[test]
+    fn sign_reason_rejects_blank_input() {
+        // A blank prompt is worse than the default, which at least says something.
+        assert!(validate_sign_reason("").is_err());
+        assert!(validate_sign_reason("   ").is_err());
+    }
+
+    #[test]
+    fn sign_reason_rejects_overlong_input() {
+        let at_limit = "a".repeat(MAX_SIGN_REASON_LENGTH);
+        assert!(validate_sign_reason(&at_limit).is_ok());
+
+        let too_long = "a".repeat(MAX_SIGN_REASON_LENGTH + 1);
+        assert!(validate_sign_reason(&too_long).is_err());
+    }
+
+    /// The reason is rendered inside an OS-owned security dialog, so newlines
+    /// and other control characters — which could push the real prompt text out
+    /// of view or visually restructure it — are refused rather than stripped.
+    #[test]
+    fn sign_reason_rejects_control_characters() {
+        assert!(validate_sign_reason("Approve\nSomething else entirely").is_err());
+        assert!(validate_sign_reason("Approve\u{0}login").is_err());
+        assert!(validate_sign_reason("Approve\rlogin").is_err());
+    }
+
+    /// Character count, not byte count: a reason of 200 accented letters is 200
+    /// glyphs in the dialog regardless of its UTF-8 length.
+    #[test]
+    fn sign_reason_limit_counts_characters_not_bytes() {
+        let multibyte = "é".repeat(MAX_SIGN_REASON_LENGTH);
+        assert!(multibyte.len() > MAX_SIGN_REASON_LENGTH);
+        assert!(validate_sign_reason(&multibyte).is_ok());
     }
 
     #[test]

@@ -9,8 +9,25 @@ private func resultToJson<T>(_ result: Result<T, SecureEnclaveError>, encoder: (
     case let .success(value):
         return dictionaryToJson(encoder(value))
     case let .failure(error):
-        return "{\"error\":\"\(escapeJsonString(error.localizedDescription))\"}"
+        return errorJson(error)
     }
+}
+
+/// Renders a `SecureEnclaveError` as the `{"error": ..., "code": ...}` shape
+/// `desktop.rs` parses.
+///
+/// The `code` is what the caller branches on and is identical in debug and
+/// release builds; `error` is prose that is deliberately generic in release.
+/// Both travel together so the Rust side never has to infer one from the other.
+private func errorJson(_ error: SecureEnclaveError) -> String {
+    let message = escapeJsonString(error.localizedDescription)
+    return "{\"error\":\"\(message)\",\"code\":\"\(error.code)\"}"
+}
+
+/// Renders an FFI-boundary failure — bad arguments that never reached
+/// `SecureEnclaveCore` — with the same shape as `errorJson`.
+private func argumentErrorJson(_ message: String) -> String {
+    "{\"error\":\"\(escapeJsonString(message))\",\"code\":\"validation\"}"
 }
 
 /// Convert dictionary to JSON string
@@ -20,9 +37,9 @@ private func dictionaryToJson(_ dict: [String: Any]) -> String {
         if let jsonString = String(data: jsonData, encoding: .utf8), !jsonString.isEmpty {
             return jsonString
         }
-        return "{\"error\":\"Failed to serialize response\"}"
+        return "{\"error\":\"Failed to serialize response\",\"code\":\"internal\"}"
     } catch {
-        return "{\"error\":\"Failed to serialize: \(escapeJsonString(error.localizedDescription))\"}"
+        return "{\"error\":\"Failed to serialize: \(escapeJsonString(error.localizedDescription))\",\"code\":\"internal\"}"
     }
 }
 
@@ -57,14 +74,14 @@ private func escapeJsonString(_ string: String) -> String {
 /// Allocate and return a C string from Swift string
 private func toCString(_ string: String) -> UnsafeMutablePointer<CChar> {
     guard !string.isEmpty else {
-        return strdup("{\"error\":\"Empty result\"}")!
+        return strdup("{\"error\":\"Empty result\",\"code\":\"internal\"}")!
     }
 
     let utf8Bytes = string.utf8CString
     let count = utf8Bytes.count
 
     guard let ptr = malloc(count)?.bindMemory(to: CChar.self, capacity: count) else {
-        return strdup("{\"error\":\"malloc failed\"}")!
+        return strdup("{\"error\":\"malloc failed\",\"code\":\"internal\"}")!
     }
 
     for index in 0 ..< count {
@@ -89,7 +106,7 @@ public func secureElementGenerateSecureKey(
     authMode: UnsafePointer<CChar>?
 ) -> UnsafeMutablePointer<CChar> {
     guard let keyNameStr = fromCString(keyName), !keyNameStr.isEmpty else {
-        return strdup("{\"error\":\"keyName is required\"}")!
+        return strdup(argumentErrorJson("keyName is required"))!
     }
 
     let authModeStr = fromCString(authMode)
@@ -133,21 +150,27 @@ public func secureElementListKeys(
 @_cdecl("secure_element_sign_with_key")
 public func secureElementSignWithKey(
     keyName: UnsafePointer<CChar>?,
-    dataBase64: UnsafePointer<CChar>?
+    dataBase64: UnsafePointer<CChar>?,
+    reason: UnsafePointer<CChar>?
 ) -> UnsafeMutablePointer<CChar> {
     guard let keyNameStr = fromCString(keyName), !keyNameStr.isEmpty else {
-        return strdup("{\"error\":\"keyName is required\"}")!
+        return strdup(argumentErrorJson("keyName is required"))!
     }
 
     guard let dataBase64Str = fromCString(dataBase64), !dataBase64Str.isEmpty else {
-        return strdup("{\"error\":\"data is required\"}")!
+        return strdup(argumentErrorJson("data is required"))!
     }
 
     guard let data = Data(base64Encoded: dataBase64Str) else {
-        return strdup("{\"error\":\"Failed to decode base64 data\"}")!
+        return strdup(argumentErrorJson("Failed to decode base64 data"))!
     }
 
-    let result = SecureEnclaveCore.signWithKey(keyName: keyNameStr, data: data)
+    // nil reason falls back to the platform default prompt.
+    let result = SecureEnclaveCore.signWithKey(
+        keyName: keyNameStr,
+        data: data,
+        reason: fromCString(reason)
+    )
     let json = resultToJson(result) { response in
         ["signature": response.signature.base64EncodedString()]
     }
@@ -158,16 +181,22 @@ public func secureElementSignWithKey(
 @_cdecl("secure_element_delete_key")
 public func secureElementDeleteKey(
     keyName: UnsafePointer<CChar>?,
-    publicKey: UnsafePointer<CChar>?
+    publicKey: UnsafePointer<CChar>?,
+    authReason: UnsafePointer<CChar>?
 ) -> UnsafeMutablePointer<CChar> {
     let keyNameStr = fromCString(keyName)
     let publicKeyStr = fromCString(publicKey)
 
     if keyNameStr == nil, publicKeyStr == nil {
-        return strdup("{\"error\":\"Either keyName or publicKey must be provided\"}")!
+        return strdup(argumentErrorJson("Either keyName or publicKey must be provided"))!
     }
 
-    let result = SecureEnclaveCore.deleteKey(keyName: keyNameStr, publicKey: publicKeyStr)
+    // A non-nil reason means the caller asked for authentication before deletion.
+    let result = SecureEnclaveCore.deleteKey(
+        keyName: keyNameStr,
+        publicKey: publicKeyStr,
+        authReason: fromCString(authReason)
+    )
     let json = resultToJson(result) { _ in
         ["success": true]
     }

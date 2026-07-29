@@ -1,3 +1,26 @@
+# Deliberately excludes `allow-delete-key`.
+#
+# Deletion requires no authentication on any platform — SecItemDelete,
+# NCryptDeleteKey and KeyStore.deleteEntry all proceed even for keys created
+# with `pinOrBiometric` or `biometricOnly` — so anything that can reach the
+# command can destroy every key the app has created, including injected webview
+# JavaScript. That is an availability risk most apps never need to take on, and
+# a default that grants it silently contradicts the advice to grant it narrowly.
+#
+# Apps that do delete keys should add `secure-element:allow-delete-key` to the
+# capability of the specific window that needs it.
 [default]
-description = "Default permissions for the plugin"
-permissions = ["allow-ping", "allow-generate-secure-key", "allow-list-keys", "allow-sign-with-key", "allow-delete-key", "allow-check-secure-element-support"]
+description = """
+Default permissions for the plugin: every command except key deletion.
+
+Grants ping, generateSecureKey, listKeys, signWithKey and
+checkSecureElementSupport. Add allow-delete-key explicitly to windows that need
+to destroy keys.
+"""
+permissions = [
+    "allow-ping",
+    "allow-generate-secure-key",
+    "allow-list-keys",
+    "allow-sign-with-key",
+    "allow-check-secure-element-support",
+]
