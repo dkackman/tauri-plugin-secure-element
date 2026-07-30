@@ -128,3 +128,9 @@ echo "To run: open '$BUNDLE_PATH'"
 echo ""
 echo "Or run directly: '$BUNDLE_PATH/Contents/MacOS/$APP_NAME'"
 echo ""
+
+# Launch the freshly built bundle. Set NO_OPEN=1 to build/sign without opening.
+if [ "${NO_OPEN:-0}" != "1" ]; then
+    echo "Opening $BUNDLE_PATH ..."
+    open "$BUNDLE_PATH"
+fi
