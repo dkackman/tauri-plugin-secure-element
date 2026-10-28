@@ -10,6 +10,12 @@ together.
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows: the Windows Hello prompt text is now passed as a NUL-terminated
+  UTF-16 string, as the provider expects, and creating a key whose name already
+  exists reports `keyAlreadyExists` instead of a generic error.
+
 ### Changed
 
 - Windows: TPM key names are now injective in `(appId, keyName)`; the old

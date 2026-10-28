@@ -33,6 +33,9 @@ const NTE_NOT_FOUND: HRESULT = HRESULT(0x80090011u32 as i32);
 /// NCrypt error: the key does not exist in this provider (NTE_NO_KEY)
 const NTE_NO_KEY: HRESULT = HRESULT(0x8009000Du32 as i32);
 
+/// NCrypt error: an object with this name already exists (NTE_EXISTS)
+const NTE_EXISTS: HRESULT = HRESULT(0x8009000Fu32 as i32);
+
 /// NCrypt error: access denied (NTE_PERM) - NGC provider returns this for
 /// keys that don't exist when probing without authentication. It is also what
 /// an existing but inaccessible key returns, so the two cases are only
@@ -82,6 +85,7 @@ fn classify_ncrypt_error(e: &windows::core::Error) -> crate::ErrorCode {
         // transient in the sense that authenticating can resolve it, unlike a
         // key that is simply absent.
         NTE_PERM => crate::ErrorCode::KeyNotAccessible,
+        NTE_EXISTS => crate::ErrorCode::KeyAlreadyExists,
         NTE_SILENT_CONTEXT => crate::ErrorCode::AuthFailed,
         _ => crate::ErrorCode::Internal,
     }
@@ -737,10 +741,11 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("NCryptCreatePersistedKey failed for '{}': {}", key_name, e),
+            ncrypt_error(
+                &e,
+                format!("NCryptCreatePersistedKey failed for '{}': {}", key_name, e),
                 "Failed to create key",
-            )))
+            )
         })?;
 
         let key = KeyHandle(key_handle);
@@ -842,10 +847,11 @@ fn create_tpm_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to create TPM key '{}': {}", key_name, e),
+            ncrypt_error(
+                &e,
+                format!("Failed to create TPM key '{}': {}", key_name, e),
                 "Failed to create key",
-            )))
+            )
         })?;
 
         let key = KeyHandle(key_handle);
@@ -994,8 +1000,11 @@ pub fn sign_hash_with_window(
         // so it is preferred over the generic fallback whenever given.
         let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
         let context_message = reason.unwrap_or(DEFAULT_SIGN_PROMPT);
+        // The provider expects a NUL-terminated UTF-16 string, so append the
+        // terminator explicitly.
         let context_bytes: Vec<u8> = context_message
             .encode_utf16()
+            .chain(std::iter::once(0u16))
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
@@ -1261,6 +1270,14 @@ mod error_classification_tests {
                 code
             );
         }
+    }
+
+    #[test]
+    fn name_collision_classifies_as_already_exists() {
+        assert_eq!(
+            classify_ncrypt_error(&error(NTE_EXISTS)),
+            crate::ErrorCode::KeyAlreadyExists
+        );
     }
 
     #[test]
