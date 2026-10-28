@@ -1,6 +1,8 @@
 package net.kackman.secureelement
 
 import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.security.keystore.KeyProperties
+import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import org.junit.Assert.*
 import org.junit.Test
@@ -292,6 +294,33 @@ class PluginUnitTest {
         val wrapped = RuntimeException("wrapped", IllegalStateException("boom"))
         assertFalse(SecureKeysPlugin.isUserNotAuthenticatedException(wrapped))
     }
+
+    // ── prompt authenticators ────────────────────────────────────────────────
+    // A prompt must offer only what the key will accept: a PIN accepted for a
+    // biometric-only key authenticates and then fails at the cryptographic step.
+
+    @Test
+    fun `biometric-only keys prompt with biometric only`() =
+        assertEquals(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            SecureKeysPlugin.allowedAuthenticatorsFor(KeyProperties.AUTH_BIOMETRIC_STRONG),
+        )
+
+    @Test
+    fun `mixed keys prompt with biometric or credential`() =
+        assertEquals(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+            SecureKeysPlugin.allowedAuthenticatorsFor(
+                KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+            ),
+        )
+
+    @Test
+    fun `unknown auth type prompts with both`() =
+        assertEquals(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+            SecureKeysPlugin.allowedAuthenticatorsFor(null),
+        )
 
     // ── error-code classification ────────────────────────────────────────────
     // The codes these produce are the only part of an error that survives
