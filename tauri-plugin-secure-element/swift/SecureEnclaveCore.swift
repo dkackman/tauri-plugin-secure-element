@@ -216,6 +216,15 @@ public enum SecureEnclaveError: Error, LocalizedError {
 public enum SecureEnclaveCore {
     // MARK: - Helper Functions
 
+    /// Serializes key creation and deletion.
+    ///
+    /// The Rust side calls in from several `spawn_blocking` threads, and
+    /// `kSecAttrApplicationTag` is not part of the keychain primary key, so an
+    /// unserialized check-then-create lets two concurrent callers both create a
+    /// key with the same tag. Never hold this across a call that blocks on the
+    /// user (`authenticateDeviceOwner`).
+    private static let mutationLock = NSLock()
+
     /// Converts authentication mode string to SecAccessControlCreateFlags.
     ///
     /// The Rust enum validates `authMode` before it reaches here, but the
@@ -445,6 +454,11 @@ public enum SecureEnclaveCore {
             }
         }
 
+        // Hold the lock from the existence probe through creation so the
+        // check-then-create is atomic with respect to other generate/delete calls.
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
         // Check if key already exists
         let checkQuery = createKeyQuery(keyName: keyName, returnRef: false)
         var checkResult: CFTypeRef?
@@ -529,12 +543,8 @@ public enum SecureEnclaveCore {
                 // Only surface keys this plugin created, identified by their tag
                 // namespace. The user-facing name is the tag minus the prefix.
                 guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
-                      let foundKeyName = decodeKeyName(fromTag: tagData)
-                else {
-                    continue
-                }
-
-                guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                      let foundKeyName = decodeKeyName(fromTag: tagData),
+                      let keyRef = item[kSecValueRef as String] as CFTypeRef?,
                       CFGetTypeID(keyRef) == SecKeyGetTypeID()
                 else {
                     continue
@@ -702,6 +712,11 @@ public enum SecureEnclaveCore {
             }
         }
 
+        // Authentication above blocks on the user, so the lock is taken only
+        // for the lookup and delete.
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
         // If keyName is provided, delete by name (fast path)
         if let keyName {
             let query = createKeyQuery(keyName: keyName, returnRef: false)
@@ -753,12 +768,8 @@ public enum SecureEnclaveCore {
         for item in items {
             // Only consider keys this plugin created.
             guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
-                  let foundKeyName = decodeKeyName(fromTag: tagData)
-            else {
-                continue
-            }
-
-            guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                  decodeKeyName(fromTag: tagData) != nil,
+                  let keyRef = item[kSecValueRef as String] as CFTypeRef?,
                   CFGetTypeID(keyRef) == SecKeyGetTypeID()
             else {
                 continue
@@ -770,7 +781,12 @@ public enum SecureEnclaveCore {
             if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
                publicKeyBase64 == targetPublicKey
             {
-                let deleteQuery = createKeyQuery(keyName: foundKeyName, returnRef: false)
+                // Delete the matched item by reference; a name query would also
+                // remove any other item sharing the tag.
+                let deleteQuery: [String: Any] = [
+                    kSecClass as String: kSecClassKey,
+                    kSecValueRef as String: privateKey,
+                ]
                 let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
 
                 if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
