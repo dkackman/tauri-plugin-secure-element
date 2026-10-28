@@ -384,9 +384,17 @@ public enum SecureEnclaveCore {
         #endif
     }
 
-    /// Checks if biometric authentication is available and enrolled on the device
-    /// Returns nil if available, or an error message describing why it's not available
-    public static func checkBiometricAvailability() -> String? {
+    /// Classifies a failed Keychain query status. A locked keychain
+    /// (`errSecInteractionNotAllowed`) is a recoverable access problem rather
+    /// than an internal fault.
+    public static func queryFailure(_ status: OSStatus) -> SecureEnclaveError {
+        status == errSecInteractionNotAllowed ? .keyNotAccessible : .failedToQueryKeys(status)
+    }
+
+    /// Checks if biometric authentication is available and enrolled on the device.
+    /// Returns nil if usable, or the error describing why not. Lockout is an
+    /// authentication failure (recoverable with the passcode), not missing hardware.
+    public static func checkBiometricAvailability() -> SecureEnclaveError? {
         let context = LAContext()
         var error: NSError?
 
@@ -398,17 +406,21 @@ public enum SecureEnclaveCore {
         if let laError = error {
             switch laError.code {
             case LAError.biometryNotAvailable.rawValue:
-                return "Biometric hardware is not available on this device."
+                return .biometricNotAvailable("Biometric hardware is not available on this device.")
             case LAError.biometryNotEnrolled.rawValue:
-                return "No biometric authentication is enrolled. Please set up Face ID or Touch ID in Settings."
+                return .biometricNotAvailable(
+                    "No biometric authentication is enrolled. Please set up Face ID or Touch ID in Settings."
+                )
             case LAError.biometryLockout.rawValue:
-                return "Biometric authentication is locked out due to too many failed attempts."
+                return .authFailed("Biometry is locked out; unlock with the device passcode and retry")
             default:
-                return "Biometric authentication is not available: \(laError.localizedDescription)"
+                return .biometricNotAvailable(
+                    "Biometric authentication is not available: \(laError.localizedDescription)"
+                )
             }
         }
 
-        return "Biometric authentication is not available on this device."
+        return .biometricNotAvailable("Biometric authentication is not available on this device.")
     }
 
     /// Checks whether the device has a passcode set.
@@ -446,7 +458,7 @@ public enum SecureEnclaveCore {
         let mode = authMode ?? "pinOrBiometric"
         if mode == "biometricOnly" {
             if let biometricError = checkBiometricAvailability() {
-                return .failure(.biometricNotAvailable(biometricError))
+                return .failure(biometricError)
             }
         } else if mode == "pinOrBiometric" {
             if let deviceSecureError = checkDeviceSecure() {
@@ -467,7 +479,7 @@ public enum SecureEnclaveCore {
         if checkStatus == errSecSuccess {
             return .failure(.keyAlreadyExists(keyName))
         } else if checkStatus != errSecItemNotFound {
-            return .failure(.failedToQueryKeys(checkStatus))
+            return .failure(queryFailure(checkStatus))
         }
 
         // Create access control
@@ -576,7 +588,7 @@ public enum SecureEnclaveCore {
                 ))
             }
         } else if status != errSecItemNotFound {
-            return .failure(.failedToQueryKeys(status))
+            return .failure(queryFailure(status))
         }
 
         return .success(ListKeysResponse(keys: keys))
@@ -762,7 +774,7 @@ public enum SecureEnclaveCore {
 
         guard status == errSecSuccess, let items = result as? [[String: Any]] else {
             // No keys at all is success (idempotent); anything else is a fault.
-            return status == errSecItemNotFound ? .success(true) : .failure(.failedToQueryKeys(status))
+            return status == errSecItemNotFound ? .success(true) : .failure(queryFailure(status))
         }
 
         for item in items {
