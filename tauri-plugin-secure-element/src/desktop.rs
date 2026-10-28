@@ -327,6 +327,36 @@ fn resolve_delete_prompt(reason: Option<&str>) -> String {
     reason.unwrap_or(DEFAULT_DELETE_PROMPT).to_string()
 }
 
+/// Builds the C string that tells the Swift side to authenticate before deleting.
+///
+/// `Ok(None)` means "do not authenticate" (a NULL pointer on the Swift side),
+/// so it is returned only when `require_auth` is false. A prompt that cannot be
+/// encoded must never degrade to that: it fails closed instead.
+#[cfg(target_os = "macos")]
+fn delete_auth_reason(
+    require_auth: bool,
+    reason: Option<&str>,
+) -> crate::Result<Option<std::ffi::CString>> {
+    if !require_auth {
+        return Ok(None);
+    }
+    std::ffi::CString::new(resolve_delete_prompt(reason))
+        .map(Some)
+        .map_err(|_| crate::Error::Validation("Authentication reason contains a NUL byte".into()))
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+struct SignFfiResponse {
+    signature: String,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(serde::Deserialize)]
+struct DeleteFfiResponse {
+    success: bool,
+}
+
 #[cfg(target_os = "windows")]
 use crate::windows;
 
@@ -514,31 +544,10 @@ impl<R: Runtime> SecureElement<R> {
 
             let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
 
-            // Parse and extract signature manually since we need to decode base64
-            let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to parse JSON: {}", e),
-                ))
-            })?;
-
-            if let Some(error) = ffi_helpers::ffi_error(&value) {
-                return Err(error);
-            }
-
-            let signature_base64 =
-                value
-                    .get("signature")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        crate::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Missing signature in response",
-                        ))
-                    })?;
+            let response: SignFfiResponse = ffi_helpers::parse_ffi_response(&json)?;
 
             let signature = base64::engine::general_purpose::STANDARD
-                .decode(signature_base64)
+                .decode(&response.signature)
                 .map_err(|e| {
                     crate::Error::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -593,33 +602,17 @@ impl<R: Runtime> SecureElement<R> {
 
             // A non-null reason is what tells the Swift side to authenticate
             // first; null means "delete without prompting", the default.
-            let auth_reason = payload
-                .require_auth
-                .then(|| resolve_delete_prompt(payload.reason.as_deref()));
-            let (auth_reason_ptr, _auth_reason_cstr_guard) =
-                ffi_helpers::optional_to_cstring(auth_reason.as_ref());
+            let auth_reason = delete_auth_reason(payload.require_auth, payload.reason.as_deref())?;
+            let auth_reason_ptr = auth_reason
+                .as_ref()
+                .map_or(std::ptr::null(), |c| c.as_ptr());
 
             let result_ptr =
                 unsafe { secure_element_delete_key(key_name_ptr, public_key_ptr, auth_reason_ptr) };
 
             let json = unsafe { ffi_helpers::ffi_string_to_owned(result_ptr)? };
 
-            // Parse and extract success field
-            let value: serde_json::Value = serde_json::from_str(&json).map_err(|e| {
-                crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to parse JSON: {}", e),
-                ))
-            })?;
-
-            if let Some(error) = ffi_helpers::ffi_error(&value) {
-                return Err(error);
-            }
-
-            let success = value
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let DeleteFfiResponse { success } = ffi_helpers::parse_ffi_response(&json)?;
 
             Ok(DeleteKeyResponse { success })
         }
@@ -755,5 +748,35 @@ mod ffi_link_tests {
         for symbol in symbols {
             assert!(!symbol.is_null());
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod delete_auth_reason_tests {
+    use super::*;
+
+    #[test]
+    fn delete_auth_reason_is_none_when_auth_not_required() {
+        assert!(delete_auth_reason(false, Some("x")).unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_auth_reason_uses_default_prompt() {
+        assert_eq!(
+            delete_auth_reason(true, None)
+                .unwrap()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            DEFAULT_DELETE_PROMPT
+        );
+    }
+
+    #[test]
+    fn delete_auth_reason_fails_closed_on_nul() {
+        assert!(matches!(
+            delete_auth_reason(true, Some("a\0b")),
+            Err(crate::Error::Validation(_))
+        ));
     }
 }
