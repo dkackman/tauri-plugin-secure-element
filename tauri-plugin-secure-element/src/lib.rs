@@ -22,6 +22,7 @@ mod error;
 mod error_sanitize;
 mod models;
 mod validation;
+mod windows_names;
 
 pub use error::{Error, ErrorCode, Result};
 

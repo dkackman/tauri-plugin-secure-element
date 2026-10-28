@@ -727,13 +727,15 @@ switch on `e.code` for anything conditional. See [Error handling](#error-handlin
 `secure-element:allow-delete-key` to the relevant capability, or `deleteKey` will be
 rejected by Tauri's permission layer.
 
-**Windows key names changed.** The app identifier is now escaped injectively into the key
-name (see [Key isolation](#key-isolation-is-not-the-same-on-every-platform)). Keys created
-by an earlier beta under an app identifier containing `.`, `/`, `:` or other reserved
-characters resolve under the old name and will not be found. They still exist in the
-provider; generate fresh keys after upgrading, and delete the old ones through an earlier
-build if you need to clean up. Only Windows is affected — iOS, macOS and Android name keys
-differently and are unchanged.
+**Windows key names changed.** The app identifier and key name are now escaped injectively
+into a single TPM key name (see
+[Key isolation](#key-isolation-is-not-the-same-on-every-platform)), so distinct
+`(appId, keyName)` pairs can no longer collide. TPM keys created by earlier betas, and
+Windows Hello keys created under an app identifier containing `.`, `/`, `:` or other
+reserved characters, resolve under the old name and will not be found. They still exist in
+the provider; generate fresh keys after upgrading, and delete the old ones through an
+earlier build if you need to clean up. Only Windows is affected — iOS, macOS and Android
+name keys differently and are unchanged.
 
 ## Versioning and API stability
 

@@ -10,6 +10,12 @@ together.
 
 ## [Unreleased]
 
+### Changed
+
+- Windows: TPM key names are now injective in `(appId, keyName)`; the old
+  `{app}_{key}` join let different pairs collide. TPM keys created by earlier
+  betas are not found by this version; generate fresh keys after upgrading.
+
 ## [0.1.0-beta.9] - 2026-08-02
 
 ### Added
