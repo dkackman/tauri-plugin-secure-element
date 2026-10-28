@@ -15,6 +15,11 @@ together.
 - Windows: the Windows Hello prompt text is now passed as a NUL-terminated
   UTF-16 string, as the provider expects, and creating a key whose name already
   exists reports `keyAlreadyExists` instead of a generic error.
+- Windows: deleting an auth-required key now reports the Windows Hello outcome
+  precisely (`userCancelled`, `authFailed`, `deviceNotSecure`, `unsupported`)
+  instead of `userCancelled` for every non-verified result.
+- Windows: a failure of the Windows Hello availability check while creating an
+  auth-required key is reported as `internal` instead of `deviceNotSecure`.
 
 ### Changed
 

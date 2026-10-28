@@ -644,7 +644,16 @@ pub fn create_key(
             ))
         }
         crate::models::AuthenticationMode::PinOrBiometric => {
-            if !windows_hello::is_windows_hello_configured() {
+            let configured = windows_hello::is_windows_hello_configured().map_err(|e| {
+                crate::Error::platform(
+                    crate::ErrorCode::Internal,
+                    sanitize_error(
+                        &format!("Could not determine Windows Hello availability: {e}"),
+                        "Could not determine Windows Hello availability",
+                    ),
+                )
+            })?;
+            if !configured {
                 return Err(crate::Error::platform(
                     crate::ErrorCode::DeviceNotSecure,
                     sanitize_error(
