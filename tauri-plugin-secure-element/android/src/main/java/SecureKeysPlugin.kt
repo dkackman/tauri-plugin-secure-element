@@ -348,11 +348,10 @@ class SecureKeysPlugin(
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private val executor: Executor = ContextCompat.getMainExecutor(activity)
 
-    // Tracks an in-flight biometric sign request so it can be resolved/rejected exactly
-    // once. If the Activity is recreated (e.g. screen rotation) while the prompt is shown,
-    // the next call to signWithBiometricPrompt will reject the stale invoke rather than
-    // leaving the JavaScript promise pending indefinitely.
-    private val pendingSignInvoke = AtomicReference<Invoke?>(null)
+    // Admits one authentication prompt at a time across sign and delete. A request
+    // that arrives while a prompt is up is rejected rather than shown, because
+    // androidx.biometric would hand it the in-flight prompt's result (see AuthSlot).
+    private val authSlot = AuthSlot()
 
     private fun getKeyEntry(keyName: String): KeyStore.PrivateKeyEntry? = keyStore.getEntry(keyName, null) as? KeyStore.PrivateKeyEntry
 
@@ -913,13 +912,13 @@ class SecureKeysPlugin(
     /**
      * Shows BiometricPrompt and performs signing after successful authentication.
      *
-     * The [invoke] is stored in [pendingSignInvoke] and cleared atomically on each
-     * callback path, ensuring it is resolved or rejected exactly once. If the Activity
-     * is recreated (e.g. screen rotation) while the prompt is visible, Android's
-     * BiometricPrompt will fire onAuthenticationError(ERROR_CANCELED), which clears the
-     * pending invoke via the normal rejection path. Any stale invoke that was not yet
-     * cleared (e.g. from a previous recreation that skipped the callback) is rejected
-     * immediately when the next sign request arrives.
+     * Holds [authSlot] for the life of the prompt; a request arriving while another
+     * prompt is up is rejected instead of shown. The [invoke] sits in a per-call
+     * reference that every exit path takes atomically, so it is settled exactly once
+     * and the slot is released exactly once with it. If the Activity is recreated
+     * (e.g. screen rotation) while the prompt is visible, BiometricPrompt fires
+     * onAuthenticationError(ERROR_CANCELED), which settles it via the normal
+     * rejection path.
      */
     private fun signWithBiometricPrompt(
         entry: KeyStore.PrivateKeyEntry,
@@ -938,12 +937,16 @@ class SecureKeysPlugin(
                     return
                 }
 
-        // Reject any previously-pending invoke that was never resolved (e.g. stale
-        // after an activity recreation that did not fire onAuthenticationError).
-        pendingSignInvoke.getAndSet(invoke)?.reject(
-            "Authentication cancelled: a new sign request superseded this one",
-            ErrorCodes.USER_CANCELLED,
-        )
+        if (!authSlot.tryAcquire()) {
+            invoke.reject("Another authentication prompt is already in progress", ErrorCodes.INTERNAL)
+            return
+        }
+
+        // Taking the invoke out of here is what settles it, and the slot is released
+        // in the same step, so neither can happen twice whichever callback fires.
+        val pending = AtomicReference<Invoke?>(invoke)
+
+        fun takePending(): Invoke? = pending.getAndSet(null)?.also { authSlot.release() }
 
         // Create and initialize the signature object for the CryptoObject.
         // initSign is expected to succeed for per-use auth keys (duration=0) even before
@@ -951,73 +954,65 @@ class SecureKeysPlugin(
         // unlocks it. On some older/vendor-specific Android versions it may throw instead,
         // so we handle that explicitly rather than letting the exception escape and
         // double-reject via the outer catch in signWithKey.
-        val cryptoObject =
+        val signature =
             try {
-                val signature = Signature.getInstance("SHA256withECDSA")
-                signature.initSign(entry.privateKey)
-                BiometricPrompt.CryptoObject(signature)
+                Signature.getInstance("SHA256withECDSA").apply { initSign(entry.privateKey) }
             } catch (e: Exception) {
                 val detailedMessage = "Failed to initialize signature for authentication: ${e.message}"
                 val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
                 Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
-                pendingSignInvoke.getAndSet(null)?.reject(errorMessage, classifyKeyUseException(e))
+                takePending()?.reject(errorMessage, classifyKeyUseException(e))
                 return
             }
+        val cryptoObject = BiometricPrompt.CryptoObject(signature)
 
-        val biometricPrompt =
-            BiometricPrompt(
-                fragmentActivity,
-                executor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        super.onAuthenticationSucceeded(result)
-                        // Take ownership; if already cleared (e.g. concurrent cancellation) do nothing.
-                        val pending = pendingSignInvoke.getAndSet(null) ?: return
-                        try {
-                            val authenticatedSignature =
-                                result.cryptoObject?.signature
-                                    ?: run {
-                                        pending.reject(
-                                            "No signature in crypto object after authentication",
-                                            ErrorCodes.INTERNAL,
-                                        )
-                                        return
-                                    }
-
-                            val signatureBytes = performSign(authenticatedSignature, data)
-
-                            // Base64, not a byte array: the Rust bridge deserializes this through
-                            // SignWithKeyResponse, whose `signature` field is base64 on the wire.
-                            val signatureBase64 = Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
-                            pending.resolveObject(mapOf("signature" to signatureBase64))
-                        } catch (e: Exception) {
-                            val detailedMessage = "Failed to sign after authentication: ${e.message}"
-                            val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                            Log.e(TAG, "signWithKey (post-auth): $detailedMessage", e)
-                            pending.reject(errorMessage, classifyKeyUseException(e))
-                        }
+        val callback =
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    // Take ownership; if already settled do nothing.
+                    val settling = takePending() ?: return
+                    // The result must carry the Signature this request initialised: one
+                    // belonging to any other prompt would sign this request's data with
+                    // that prompt's key.
+                    if (result.cryptoObject?.signature !== signature) {
+                        settling.reject("Authentication result does not belong to this request", ErrorCodes.INTERNAL)
+                        return
                     }
+                    try {
+                        val signatureBytes = performSign(signature, data)
 
-                    override fun onAuthenticationError(
-                        errorCode: Int,
-                        errString: CharSequence,
-                    ) {
-                        super.onAuthenticationError(errorCode, errString)
-                        val pending = pendingSignInvoke.getAndSet(null) ?: return
-                        val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
-                        val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
-                        Log.e(TAG, "signWithKey: $detailedMessage")
-                        pending.reject(errorMessage, classifyBiometricError(errorCode))
+                        // Base64, not a byte array: the Rust bridge deserializes this through
+                        // SignWithKeyResponse, whose `signature` field is base64 on the wire.
+                        val signatureBase64 = Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
+                        settling.resolveObject(mapOf("signature" to signatureBase64))
+                    } catch (e: Exception) {
+                        val detailedMessage = "Failed to sign after authentication: ${e.message}"
+                        val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+                        Log.e(TAG, "signWithKey (post-auth): $detailedMessage", e)
+                        settling.reject(errorMessage, classifyKeyUseException(e))
                     }
+                }
 
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                        // Called when a biometric is presented but not recognised.
-                        // Do not reject — the user can retry within the same prompt session.
-                        Log.d(TAG, "signWithKey: Authentication attempt failed, user can retry")
-                    }
-                },
-            )
+                override fun onAuthenticationError(
+                    errorCode: Int,
+                    errString: CharSequence,
+                ) {
+                    super.onAuthenticationError(errorCode, errString)
+                    val settling = takePending() ?: return
+                    val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
+                    val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
+                    Log.e(TAG, "signWithKey: $detailedMessage")
+                    settling.reject(errorMessage, classifyBiometricError(errorCode))
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    // Called when a biometric is presented but not recognised.
+                    // Do not reject — the user can retry within the same prompt session.
+                    Log.d(TAG, "signWithKey: Authentication attempt failed, user can retry")
+                }
+            }
 
         // Build prompt info
         // A caller-supplied reason is the only thing that tells the user *what*
@@ -1025,19 +1020,19 @@ class SecureKeysPlugin(
         // it takes precedence over the generic key-name subtitle.
         val promptInfo = buildPromptInfo(reason ?: "Sign with key: $keyName")
 
-        // Show authentication UI with CryptoObject. authenticate() can throw
-        // synchronously (e.g. IllegalArgumentException for an unsupported
-        // authenticator combination) instead of going through the callback, so route
-        // that failure through pendingSignInvoke like every other exit path here -
-        // otherwise it escapes to signWithKey's outer catch and double-rejects the
-        // invoke pendingSignInvoke already holds.
+        // Construct the prompt and show it with the CryptoObject. Either step can throw
+        // synchronously (authenticate() e.g. IllegalArgumentException for an
+        // unsupported authenticator combination) instead of going through the
+        // callback, so route that failure through takePending like every other exit
+        // path here - otherwise it escapes to signWithKey's outer catch, double-rejects
+        // the invoke, and leaves the slot held forever.
         try {
-            biometricPrompt.authenticate(promptInfo, cryptoObject)
+            BiometricPrompt(fragmentActivity, executor, callback).authenticate(promptInfo, cryptoObject)
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
             Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
-            pendingSignInvoke.getAndSet(null)?.reject(errorMessage, ErrorCodes.INTERNAL)
+            takePending()?.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
 
@@ -1146,50 +1141,53 @@ class SecureKeysPlugin(
                     return
                 }
 
-        // Guards against the invoke being resolved twice if a callback fires more
-        // than once (the same contract signWithBiometricPrompt maintains via
-        // pendingSignInvoke).
+        if (!authSlot.tryAcquire()) {
+            invoke.reject("Another authentication prompt is already in progress", ErrorCodes.INTERNAL)
+            return
+        }
+
+        // Guards against the invoke being settled - and the slot released - twice if
+        // a callback fires more than once (the same contract signWithBiometricPrompt
+        // maintains).
         val pending = AtomicReference<Invoke?>(invoke)
 
-        val biometricPrompt =
-            BiometricPrompt(
-                fragmentActivity,
-                executor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        super.onAuthenticationSucceeded(result)
-                        pending.getAndSet(null) ?: return
-                        onAuthenticated()
-                    }
+        fun takePending(): Invoke? = pending.getAndSet(null)?.also { authSlot.release() }
 
-                    override fun onAuthenticationError(
-                        errorCode: Int,
-                        errString: CharSequence,
-                    ) {
-                        super.onAuthenticationError(errorCode, errString)
-                        val invokeToReject = pending.getAndSet(null) ?: return
-                        val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
-                        val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
-                        Log.e(TAG, "deleteKey: $detailedMessage")
-                        invokeToReject.reject(errorMessage, classifyBiometricError(errorCode))
-                    }
+        val callback =
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    takePending() ?: return
+                    onAuthenticated()
+                }
 
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                        // A presented credential was not recognised; the user can
-                        // retry within the same prompt, so do not reject yet.
-                        Log.d(TAG, "deleteKey: Authentication attempt failed, user can retry")
-                    }
-                },
-            )
+                override fun onAuthenticationError(
+                    errorCode: Int,
+                    errString: CharSequence,
+                ) {
+                    super.onAuthenticationError(errorCode, errString)
+                    val invokeToReject = takePending() ?: return
+                    val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
+                    val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
+                    Log.e(TAG, "deleteKey: $detailedMessage")
+                    invokeToReject.reject(errorMessage, classifyBiometricError(errorCode))
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    // A presented credential was not recognised; the user can
+                    // retry within the same prompt, so do not reject yet.
+                    Log.d(TAG, "deleteKey: Authentication attempt failed, user can retry")
+                }
+            }
 
         try {
-            biometricPrompt.authenticate(buildPromptInfo(reason))
+            BiometricPrompt(fragmentActivity, executor, callback).authenticate(buildPromptInfo(reason))
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
             Log.e(TAG, "deleteKey: $detailedMessage", e)
-            pending.getAndSet(null)?.reject(errorMessage, ErrorCodes.INTERNAL)
+            takePending()?.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
 

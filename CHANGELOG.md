@@ -10,6 +10,14 @@ together.
 
 ## [Unreleased]
 
+### Fixed
+
+- Android: only one authentication prompt runs at a time. A `signWithKey` or
+  authenticated `deleteKey` issued while a prompt is showing is now rejected with
+  `internal` instead of superseding the prompt, which could sign the new request's
+  data with the earlier request's key. A sign result whose `CryptoObject` is not
+  the one the request created is rejected.
+
 ## [0.1.0-beta.9] - 2026-08-02
 
 ### Added

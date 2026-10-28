@@ -394,4 +394,32 @@ class PluginUnitTest {
             SecureKeysPlugin.classifyKeyUseException(IllegalStateException("boom")),
         )
     }
+
+    // ── single in-flight authentication slot ─────────────────────────────────
+    // androidx.biometric keeps one client callback per Activity and will not
+    // show a second prompt while one is up, so a second request racing the
+    // first would receive the first prompt's CryptoObject. Only one prompt may
+    // be outstanding at a time; the slot enforces that.
+
+    @Test
+    fun `auth slot acquires once`() {
+        val slot = AuthSlot()
+        assertTrue(slot.tryAcquire())
+        assertFalse(slot.tryAcquire())
+    }
+
+    @Test
+    fun `auth slot can be reacquired after release`() {
+        val slot = AuthSlot()
+        assertTrue(slot.tryAcquire())
+        slot.release()
+        assertTrue(slot.tryAcquire())
+    }
+
+    @Test
+    fun `release without acquire is a no-op`() {
+        val slot = AuthSlot()
+        slot.release()
+        assertTrue(slot.tryAcquire())
+    }
 }
