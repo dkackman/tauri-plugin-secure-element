@@ -816,6 +816,17 @@ public enum SecureEnclaveCore {
     // Detects the type of secure element on macOS (Apple Silicon vs T2 vs none)
     #if os(macOS)
         private static func detectMacSecureElementType() -> (discrete: Bool, integrated: Bool) {
+            // An x86_64 process under Rosetta 2 runs on Apple Silicon, so the
+            // compile-time arch says Intel while the hardware has an integrated
+            // Secure Enclave. The key is absent (non-zero return) on real Intel Macs.
+            var translated: Int32 = 0
+            var translatedSize = MemoryLayout<Int32>.size
+            if sysctlbyname("sysctl.proc_translated", &translated, &translatedSize, nil, 0) == 0,
+               translated == 1
+            {
+                return (discrete: false, integrated: true)
+            }
+
             // Check if running on Apple Silicon (arm64)
             // Apple Silicon Macs have an integrated Secure Enclave on the SoC
             #if arch(arm64)

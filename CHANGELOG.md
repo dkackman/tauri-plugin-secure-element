@@ -10,6 +10,20 @@ together.
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: concurrent `generateSecureKey` calls could create duplicate keys; key
+  creation is now serialized. Deleting by public key now deletes only the
+  matched key.
+- Apple: a locked keychain now reports `keyNotAccessible`, and biometry lockout
+  reports `authFailed` for `biometricOnly` generation. Empty strings returned
+  across the FFI boundary now fail closed.
+- macOS: debug builds now get detailed Swift error messages (the `DEBUG`
+  compilation flag was never passed to `swiftc`).
+- macOS: a process running under Rosetta is no longer reported as having a
+  discrete (T2) Secure Enclave; it is reported as integrated.
+- `ios/Package.swift` macOS deployment floor corrected to 10.15.
+
 ## [0.1.0-beta.9] - 2026-08-02
 
 ### Added
