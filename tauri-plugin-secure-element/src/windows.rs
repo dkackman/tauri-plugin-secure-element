@@ -36,7 +36,9 @@ const NTE_NO_KEY: HRESULT = HRESULT(0x8009000Du32 as i32);
 /// NCrypt error: access denied (NTE_PERM) - NGC provider returns this for
 /// keys that don't exist when probing without authentication. It is also what
 /// an existing but inaccessible key returns, so the two cases are only
-/// distinguishable by enumeration (see `key_present_in_provider`).
+/// distinguishable by enumeration. `try_open_key` reports it as
+/// `KeyProbe::AccessDenied` rather than folding it into "not found", and
+/// `try_open_key_auto` / `key_present_in_provider` resolve it by enumeration.
 const NTE_PERM: HRESULT = HRESULT(0x80090010u32 as i32);
 
 /// NCrypt status: the enumeration has no further keys (NTE_NO_MORE_ITEMS).
@@ -376,40 +378,65 @@ pub struct FoundKey {
 /// Every other failure is an `Err`, so callers can tell "not there" apart from
 /// "could not tell" — a distinction that matters for delete, where reporting success
 /// on an unknown failure would tell the caller a key was destroyed when it was not.
+///
+/// That includes failing to resolve the user SID or to open the NGC provider:
+/// those propagate rather than silently skipping NGC, which would let an
+/// existing Windows Hello key read as absent. An NGC key that exists but is
+/// access-denied (`NTE_PERM`, settled by enumeration) is `KeyNotAccessible`.
 pub fn try_open_key_auto(
     app_id: &str,
     key_name: &str,
 ) -> crate::Result<Option<(KeyHandle, KeyProviderType)>> {
     // Try NGC provider first (keys have format {SID}//tauri_se/{app_id}/{key_name})
-    if let Ok(sid) = get_current_user_sid() {
-        let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
-        if let Ok(ngc_provider) = open_ngc_provider() {
-            // NGC provider is available. Use try_open_key so that only a genuine
-            // "key not found" falls through to the TPM path. Any other error
-            // (corrupted key, service fault, etc.) is propagated immediately —
-            // silently retrying in TPM could return a wrong key or hide the real
-            // cause behind a misleading "key not found in TPM" error.
-            if let Some(probe) = try_open_key(&ngc_provider, &ngc_full_name)? {
-                // The probe handle was acquired with NCRYPT_SILENT_FLAG, which is
-                // sticky: NCrypt marks the whole key context as "must not show UI",
-                // so any later operation on it that needs a gesture fails with
-                // NTE_SILENT_CONTEXT (0x80090022). Signing an NGC key always needs
-                // the Windows Hello prompt, so close the probe and reopen the key
-                // without the flag. Opening never prompts on its own — the gesture
-                // happens at NCryptSignHash — so provider detection stays silent.
-                drop(probe);
-                let key = open_key_internal(&ngc_provider, &ngc_full_name)?;
-                return Ok(Some((key, KeyProviderType::Ngc)));
+    let sid = get_current_user_sid()?;
+    let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
+    let ngc_provider = open_ngc_provider()?;
+
+    // Only a genuine "key not found" falls through to the TPM path. Any other
+    // error (corrupted key, service fault, etc.) is propagated immediately —
+    // silently retrying in TPM could return a wrong key or hide the real
+    // cause behind a misleading "key not found in TPM" error.
+    match try_open_key(&ngc_provider, &ngc_full_name)? {
+        KeyProbe::Opened(probe) => {
+            // The probe handle was acquired with NCRYPT_SILENT_FLAG, which is
+            // sticky: NCrypt marks the whole key context as "must not show UI",
+            // so any later operation on it that needs a gesture fails with
+            // NTE_SILENT_CONTEXT (0x80090022). Signing an NGC key always needs
+            // the Windows Hello prompt, so close the probe and reopen the key
+            // without the flag. Opening never prompts on its own — the gesture
+            // happens at NCryptSignHash — so provider detection stays silent.
+            drop(probe);
+            let key = open_key_internal(&ngc_provider, &ngc_full_name)?;
+            return Ok(Some((key, KeyProviderType::Ngc)));
+        }
+        KeyProbe::AccessDenied => {
+            // NTE_PERM is also what the NGC provider returns for a key that was
+            // never created, so enumeration decides: present means it exists
+            // but cannot be touched; absent means fall through to TPM.
+            if enumerate_key_names(&ngc_provider)?
+                .iter()
+                .any(|n| n == &ngc_full_name)
+            {
+                return Err(crate::Error::platform(
+                    crate::ErrorCode::KeyNotAccessible,
+                    sanitize_error(
+                        &format!("Key '{}' exists but is not accessible", key_name),
+                        "Key is not accessible",
+                    ),
+                ));
             }
         }
+        KeyProbe::NotFound => {}
     }
 
     // Try TPM provider
     let tpm_full_name = tpm_key_name(app_id, key_name);
     let tpm_provider = open_provider()?;
     match try_open_key(&tpm_provider, &tpm_full_name)? {
-        Some(key) => Ok(Some((key, KeyProviderType::Tpm))),
-        None => Ok(None),
+        KeyProbe::Opened(key) => Ok(Some((key, KeyProviderType::Tpm))),
+        // NTE_PERM on the TPM provider is not an NGC ambiguity; as before, it
+        // reads as absent.
+        KeyProbe::NotFound | KeyProbe::AccessDenied => Ok(None),
     }
 }
 
@@ -447,18 +474,27 @@ fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Resul
     }
 }
 
-/// Tries to open a key, returning `Ok(None)` specifically when the key does not
-/// exist (NTE_BAD_KEYSET / NTE_NOT_FOUND). Any other provider error is returned
-/// as `Err` so the caller can distinguish "not there" from a real failure.
-fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<Option<KeyHandle>> {
+/// Outcome of silently probing a provider for a key.
+enum KeyProbe {
+    /// The key exists and was opened (with `NCRYPT_SILENT_FLAG`).
+    Opened(KeyHandle),
+    /// The provider reports no such key (NTE_BAD_KEYSET / NTE_NOT_FOUND / NTE_NO_KEY).
+    NotFound,
+    /// `NTE_PERM`. On the NGC provider this means either "never created" or
+    /// "exists but inaccessible"; only enumeration can tell them apart.
+    AccessDenied,
+}
+
+/// Silently probes for a key. Only the codes named in [`KeyProbe`] are folded
+/// into a result; any other provider error is returned as `Err` so the caller
+/// can distinguish "not there" from a real failure.
+fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<KeyProbe> {
     unsafe {
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
         let key_name_h = HSTRING::from(full_name);
 
         // Use NCRYPT_SILENT_FLAG to prevent Windows Hello UI prompts during
-        // provider probing. The NGC provider may return NTE_PERM (access denied)
-        // for keys that simply don't exist; we treat that as "not found" so the
-        // caller can fall through to the next provider.
+        // provider probing.
         match NCryptOpenKey(
             provider.0,
             &mut key_handle,
@@ -466,19 +502,20 @@ fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<Opt
             CERT_KEY_SPEC(0),
             NCRYPT_SILENT_FLAG,
         ) {
-            Ok(()) => Ok(Some(KeyHandle(key_handle))),
+            Ok(()) => Ok(KeyProbe::Opened(KeyHandle(key_handle))),
+            Err(e) if e.code() == NTE_PERM => Ok(KeyProbe::AccessDenied),
             Err(e)
                 if e.code() == NTE_BAD_KEYSET
                     || e.code() == NTE_NOT_FOUND
-                    || e.code() == NTE_NO_KEY
-                    || e.code() == NTE_PERM =>
+                    || e.code() == NTE_NO_KEY =>
             {
-                Ok(None)
+                Ok(KeyProbe::NotFound)
             }
-            Err(e) => Err(crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to open key '{}': {}", full_name, e),
+            Err(e) => Err(ncrypt_error(
+                &e,
+                format!("Failed to open key '{}': {}", full_name, e),
                 "Failed to open key",
-            )))),
+            )),
         }
     }
 }
@@ -539,46 +576,21 @@ fn enumerate_key_names(provider: &ProviderHandle) -> crate::Result<Vec<String>> 
 /// Silently determines whether a provider holds a key by this full name,
 /// without leaving a handle open.
 ///
-/// `try_open_key` folds `NTE_PERM` into "not found" because the NGC provider
-/// returns access-denied for keys that were never created. That conflation is
-/// safe for a caller about to fall through to the other provider, but not for
-/// one deciding whether a name is free: an NGC key that exists and is merely
-/// inaccessible would read as absent and its name would be handed to a second
-/// key in the other provider. Enumeration settles that one ambiguous case, and
-/// it needs no access to the key itself.
+/// `KeyProbe::AccessDenied` is ambiguous on the NGC provider, which returns it
+/// for keys that were never created. That is safe for a caller about to fall
+/// through to the other provider, but not for one deciding whether a name is
+/// free: an NGC key that exists and is merely inaccessible would read as absent
+/// and its name would be handed to a second key in the other provider.
+/// Enumeration settles that one ambiguous case, and it needs no access to the
+/// key itself.
 fn key_present_in_provider(provider: &ProviderHandle, full_name: &str) -> crate::Result<bool> {
-    unsafe {
-        let mut key_handle = NCRYPT_KEY_HANDLE::default();
-        let key_name_h = HSTRING::from(full_name);
-
-        match NCryptOpenKey(
-            provider.0,
-            &mut key_handle,
-            PCWSTR(key_name_h.as_ptr()),
-            CERT_KEY_SPEC(0),
-            NCRYPT_SILENT_FLAG,
-        ) {
-            Ok(()) => {
-                // Nothing is done with the key, so hand it straight to the
-                // guard rather than leaking it.
-                drop(KeyHandle(key_handle));
-                Ok(true)
-            }
-            Err(e)
-                if e.code() == NTE_BAD_KEYSET
-                    || e.code() == NTE_NOT_FOUND
-                    || e.code() == NTE_NO_KEY =>
-            {
-                Ok(false)
-            }
-            Err(e) if e.code() == NTE_PERM => Ok(enumerate_key_names(provider)?
-                .iter()
-                .any(|name| name == full_name)),
-            Err(e) => Err(crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to check for key '{}': {}", full_name, e),
-                "Failed to check for key",
-            )))),
-        }
+    match try_open_key(provider, full_name)? {
+        // Nothing is done with the key; dropping the guard closes it.
+        KeyProbe::Opened(_) => Ok(true),
+        KeyProbe::NotFound => Ok(false),
+        KeyProbe::AccessDenied => Ok(enumerate_key_names(provider)?
+            .iter()
+            .any(|name| name == full_name)),
     }
 }
 

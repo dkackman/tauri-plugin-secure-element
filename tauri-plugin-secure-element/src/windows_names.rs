@@ -74,6 +74,10 @@ pub(crate) fn tpm_key_prefix(app_id: &str) -> String {
 /// The encoding is applied to `{app_id}/{key_name}` as a whole. `sanitize_app_id`
 /// is a prefix code, so the result is injective in `(app_id, key_name)`; the
 /// previous `{app}_{key}` join let different pairs collide.
+///
+/// Precondition: `key_name` contains no `/` (it is validated upstream). A `/`
+/// in `key_name` would escape to the same `_x2F` as the delimiter and break
+/// injectivity in the pair.
 pub(crate) fn tpm_key_name(app_id: &str, key_name: &str) -> String {
     format!(
         "{}{}",
@@ -86,7 +90,11 @@ pub(crate) fn tpm_key_name(app_id: &str, key_name: &str) -> String {
 ///
 /// Returns `None` for other apps' keys, for names that are not a valid encoding
 /// (a `_` not doubled), and for anything whose decoded form falls outside the
-/// `[A-Za-z0-9_-]` alphabet that key names are validated to.
+/// `[A-Za-z0-9_-]` alphabet that key names are validated to, and for an empty
+/// key name (never a valid key).
+///
+/// Relies on the same precondition as [`tpm_key_name`]: `key_name` contains no
+/// `/`, validated upstream. That is what makes the encoding injective in the pair.
 pub(crate) fn decode_tpm_key_name(full_name: &str, app_id: &str) -> Option<String> {
     let rest = full_name.strip_prefix(tpm_key_prefix(app_id).as_str())?;
     let mut decoded = String::with_capacity(rest.len());
@@ -101,10 +109,11 @@ pub(crate) fn decode_tpm_key_name(full_name: &str, app_id: &str) -> Option<Strin
             decoded.push(c);
         }
     }
-    decoded
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        .then_some(decoded)
+    (!decoded.is_empty()
+        && decoded
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+    .then_some(decoded)
 }
 
 /// Builds the NGC key marker for the given app identifier
@@ -182,6 +191,14 @@ mod tests {
             None
         );
         assert_eq!(decode_tpm_key_name("unrelated", "com.example"), None);
+    }
+
+    #[test]
+    fn decode_rejects_empty_key_name() {
+        assert_eq!(
+            decode_tpm_key_name(&tpm_key_prefix("com.example"), "com.example"),
+            None
+        );
     }
 
     #[test]

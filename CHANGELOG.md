@@ -15,6 +15,10 @@ together.
 - Windows: TPM key names are now injective in `(appId, keyName)`; the old
   `{app}_{key}` join let different pairs collide. TPM keys created by earlier
   betas are not found by this version; generate fresh keys after upgrading.
+- Windows: failures to resolve the user SID or open the NGC provider while
+  looking up a key now propagate instead of silently skipping Windows Hello
+  keys, and an NGC key that exists but is access-denied (`NTE_PERM`) reports
+  `keyNotAccessible` instead of reading as absent.
 
 ## [0.1.0-beta.9] - 2026-08-02
 
