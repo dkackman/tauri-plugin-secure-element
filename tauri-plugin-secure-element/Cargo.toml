@@ -82,8 +82,17 @@ windows = { version = "0.62.2", features = [
     "Win32_System_WinRT",
 ] }
 # The interop call above returns an `IAsyncOperation`, which as of `windows`
-# 0.62 lives in this crate rather than in `windows::Foundation`. Kept at the
-# version `windows` itself depends on so both see the same type.
+# 0.62 lives in this crate rather than in `windows::Foundation`.
+#
+# NOT independently bumpable. This must stay on the exact `windows-future` line
+# that the pinned `windows` release itself depends on (0.3.x for `windows` 0.62),
+# because the two share `windows-core` traits: a newer `windows-future` pairs
+# with a newer `windows-core`, and `IAsyncOperation` then stops implementing the
+# `Interface` trait `RequestVerificationForWindowAsync` is bound on, so
+# src/windows_hello.rs fails to type-check on Windows. The breakage is invisible
+# on macOS/Linux, where the Windows-only deps are never compiled. Check with
+# `cargo tree -i windows-future` on a Windows target, and change this line only
+# together with `windows` above. Exclude it from automated dependency bumps.
 windows-future = "0.3.2"
 winver = "1"
 raw-window-handle = "0.6"
