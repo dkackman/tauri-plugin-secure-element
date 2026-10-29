@@ -120,15 +120,20 @@ jobs:
         run: |
           curl -fsSL -o /tmp/swiftformat.zip https://github.com/nicklockwood/SwiftFormat/releases/download/0.64.1/swiftformat.zip
           unzip -o /tmp/swiftformat.zip -d /tmp/swiftformat
-          sudo install -m 0755 /tmp/swiftformat/swiftformat /usr/local/bin/swiftformat
-          swiftformat --version
+          # Prepend to PATH: a preinstalled Homebrew swiftformat would otherwise shadow it.
+          echo /tmp/swiftformat >> "$GITHUB_PATH"
+          test "$(/tmp/swiftformat/swiftformat --version)" = "0.64.1"
+          /tmp/swiftformat/swiftformat --version
 
       # Both paths, not just ios/. ios/Sources/SecureEnclaveCore.swift is a symlink into
       # swift/, and swiftformat skips symlinks — so the largest and most
       # security-critical Swift file was reported as "skipped" and never checked, along
       # with the macOS-only swift/secure_element_ffi.swift.
       - name: Check Swift formatting
-        run: swiftformat --lint ios/ swift/
+        run: |
+          command -v swiftformat
+          swiftformat --version
+          swiftformat --lint ios/ swift/
 
       # No path argument: .swiftlint.yml lists what to lint, including swift/, and
       # excludes the symlink so nothing is linted twice.
