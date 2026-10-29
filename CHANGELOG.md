@@ -16,8 +16,9 @@ together.
   creation is now serialized. Deleting by public key now deletes only the
   matched key.
 - Apple: a locked keychain now reports `keyNotAccessible`, and biometry lockout
-  reports `authFailed` for `biometricOnly` generation. Empty strings returned
-  across the FFI boundary now fail closed.
+  reports `authFailed` for `biometricOnly` generation. An empty `authMode` or
+  delete `authReason` passed to the macOS FFI is now rejected instead of being
+  treated as absent.
 - macOS: debug builds now get detailed Swift error messages (the `DEBUG`
   compilation flag was never passed to `swiftc`).
 - macOS: a process running under Rosetta is no longer reported as having a

@@ -140,6 +140,9 @@ fn main() {
         // Cargo sets PROFILE for build scripts. The Swift error sanitizer keys off
         // `#if DEBUG`, which swiftc does not define on its own, so without this flag
         // debug builds got the same generic messages as release.
+        // Swift's DEBUG follows Cargo's PROFILE while the Rust side's error_sanitize
+        // follows debug_assertions; a release profile with debug-assertions = true
+        // therefore gets detailed Rust text but generic Swift text, which leaks nothing.
         if std::env::var("PROFILE").as_deref() == Ok("debug") {
             swiftc_args.extend(["-D", "DEBUG"]);
         }

@@ -454,6 +454,17 @@ public enum SecureEnclaveCore {
 
     /// Generate a new secure key in the Secure Enclave
     public static func generateSecureKey(keyName: String, authMode: String?) -> Result<GenerateKeyResponse, SecureEnclaveError> {
+        // Resolve the mode first so an invalid or empty authMode always reports
+        // its own error and the existence probe below is never an oracle for
+        // callers without a valid mode.
+        let flags: SecAccessControlCreateFlags
+        switch getAccessControlFlags(authMode: authMode) {
+        case let .success(value):
+            flags = value
+        case let .failure(error):
+            return .failure(error)
+        }
+
         // Check biometric availability if biometricOnly mode is requested
         let mode = authMode ?? "pinOrBiometric"
         if mode == "biometricOnly" {
@@ -482,14 +493,6 @@ public enum SecureEnclaveCore {
             return .failure(queryFailure(checkStatus))
         }
 
-        // Create access control
-        let flags: SecAccessControlCreateFlags
-        switch getAccessControlFlags(authMode: authMode) {
-        case let .success(value):
-            flags = value
-        case let .failure(error):
-            return .failure(error)
-        }
         var accessError: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
@@ -758,6 +761,9 @@ public enum SecureEnclaveCore {
     /// Idempotent in the same way `deleteKey` is: finding no match is success,
     /// not an error, because the caller's goal — that key no longer exists — is
     /// already satisfied.
+    ///
+    /// Must be called with `mutationLock` held; it does not lock itself because
+    /// `NSLock` is not recursive.
     private static func deleteKeyMatchingPublicKey(_ targetPublicKey: String) -> Result<Bool, SecureEnclaveError> {
         // Query for all keys
         let query: [String: Any] = [
@@ -794,14 +800,20 @@ public enum SecureEnclaveCore {
                publicKeyBase64 == targetPublicKey
             {
                 // Delete the matched item by reference; a name query would also
-                // remove any other item sharing the tag.
+                // remove any other item sharing the tag. The token ID routes the
+                // delete to the same keychain domain as the lookup that found it.
                 let deleteQuery: [String: Any] = [
                     kSecClass as String: kSecClassKey,
+                    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
                     kSecValueRef as String: privateKey,
                 ]
                 let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
 
-                if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
+                // Unlike the delete-by-name path, errSecItemNotFound is a failure
+                // here: mutationLock rules out a concurrent in-process delete and
+                // the public key was just confirmed to match, so a not-found means
+                // the delete hit nothing and the key may still exist.
+                if deleteStatus == errSecSuccess {
                     return .success(true)
                 } else {
                     return .failure(.failedToDeleteKey("Status: \(deleteStatus)"))

@@ -197,6 +197,7 @@ public func secureElementDeleteKey(
     }
 
     // A non-nil reason means the caller asked for authentication before deletion.
+    // An empty reason is rejected above as a validation error.
     let result = SecureEnclaveCore.deleteKey(
         keyName: keyNameStr,
         publicKey: publicKeyStr,
