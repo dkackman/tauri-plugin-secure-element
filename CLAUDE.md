@@ -10,7 +10,7 @@ This is a **pnpm workspace monorepo**: the main plugin lives in `tauri-plugin-se
 
 Beyond Rust/Node/pnpm/Tauri CLI, the non-obvious platform tooling:
 
-- iOS: Xcode, swiftformat, swiftlint
+- iOS: Xcode, swiftformat 0.64.1 (to match CI), swiftlint
 - Android: Android Studio, Android SDK, ktlint — do not install it yourself. The lint
   scripts run `pnpm exec ktlint`, which resolves the pinned `@naturalcycles/ktlint`,
   and `android/build.gradle.kts` hands the ktlint Gradle plugin that same version. A
