@@ -261,7 +261,8 @@ interface SecureElementCapabilities {
 
 | Tier         | Description                                    | Examples                                           |
 | ------------ | ---------------------------------------------- | -------------------------------------------------- |
-| `none`       | No secure element available (software-only)    | Unsupported devices, some VMs                      |
+| `none`       | No secure element available                    | Unsupported devices, some VMs                      |
+| `software`   | Key exists but is protected by the OS only     | Android emulator, devices with no TEE              |
 | `firmware`   | Firmware-backed, no dedicated secure processor | Windows fTPM (Intel PTT, AMD PSP)                  |
 | `integrated` | On-die isolated security core                  | Apple Silicon Secure Enclave, ARM TrustZone/TEE    |
 | `discrete`   | Physically separate security processor         | Discrete TPM 2.0, macOS T2 chip, Android StrongBox |
@@ -273,7 +274,7 @@ const caps = await checkSecureElementSupport();
 
 // Check if any hardware backing is available
 if (caps.strongest === "none") {
-  console.warn("No secure element available - keys will be software-only");
+  console.warn("No secure element available");
 }
 
 // Check for high-security backing (discrete or integrated)
@@ -474,28 +475,30 @@ To verify a signature produced by this plugin:
 **Example (Node.js):**
 
 ```typescript
-import { createVerify } from "crypto";
+import { createPublicKey, createVerify } from "crypto";
 
 function verifySignature(
   publicKeyBase64: string,
   data: Uint8Array,
   signatureDer: Uint8Array
 ): boolean {
-  // Convert X9.62 public key to PEM format
-  const publicKeyBuffer = Buffer.from(publicKeyBase64, "base64");
-  const publicKey = {
-    key: publicKeyBuffer,
-    format: "raw",
-    type: "spki",
-    namedCurve: "P-256",
-  };
+  // The plugin returns an X9.62 uncompressed point: 0x04 || X || Y (65 bytes)
+  const point = Buffer.from(publicKeyBase64, "base64");
+  if (point.length !== 65 || point[0] !== 0x04)
+    throw new Error("Expected a 65-byte uncompressed P-256 point");
+  const key = createPublicKey({
+    format: "jwk",
+    key: {
+      kty: "EC",
+      crv: "P-256",
+      x: point.subarray(1, 33).toString("base64url"),
+      y: point.subarray(33, 65).toString("base64url"),
+    },
+  });
 
   const verify = createVerify("SHA256");
   verify.update(data); // Pass raw data - verify() hashes internally
-  return verify.verify(
-    { key: publicKey, dsaEncoding: "der" },
-    Buffer.from(signatureDer)
-  );
+  return verify.verify({ key, dsaEncoding: "der" }, Buffer.from(signatureDer));
 }
 ```
 
@@ -642,6 +645,13 @@ relying on it for anything where those differences matter.
     presence to sign with, so any same-user process that knows (or guesses) the key name
     can request signatures with no prompt and no way for the user to notice. Prefer
     `pinOrBiometric` unless you have a specific reason to accept this.
+
+### Locked devices
+
+Apple keys are created with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, so they are
+unusable while the device is locked and never leave the device. Android keys do not set
+`setUnlockedDeviceRequired`, so an `authMode: "none"` key remains usable while the device
+is locked; only keys that require authentication are gated, by the prompt.
 
 ### Deletion is not authenticated unless you ask for it
 
