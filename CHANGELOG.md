@@ -36,6 +36,16 @@ together.
   the old `{app}_{key}` join let different pairs collide. `authMode: "none"`
   keys created by earlier betas are not found by this version; generate fresh
   keys after upgrading.
+- macOS: `deleteKey` with `requireAuth` now fails closed with a `validation` error
+  if the prompt text cannot be passed to the OS, instead of silently skipping
+  authentication. (reachable only through the Rust API; the command layer already rejected control characters)
+- macOS: `signWithKey` and `deleteKey` responses now go through the same
+  size-capped FFI parser as the other commands.
+- README: the Node.js signature-verification example now works (it builds the key
+  from a JWK instead of an unsupported raw key).
+- README: documented the `software` hardware-backing tier, and that Android
+  `authMode: "none"` keys remain usable while the device is locked (Apple keys are
+  `WhenUnlockedThisDeviceOnly`).
 - macOS: concurrent `generateSecureKey` calls could create duplicate keys; key
   creation is now serialized. Deleting by public key now deletes only the
   matched key.
