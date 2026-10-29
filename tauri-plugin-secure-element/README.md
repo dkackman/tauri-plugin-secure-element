@@ -261,7 +261,7 @@ interface SecureElementCapabilities {
 
 | Tier         | Description                                    | Examples                                           |
 | ------------ | ---------------------------------------------- | -------------------------------------------------- |
-| `none`       | No secure element available (software-only)    | Unsupported devices, some VMs                      |
+| `none`       | No secure element available                    | Unsupported devices, some VMs                      |
 | `software`   | Key exists but is protected by the OS only     | Android emulator, devices with no TEE              |
 | `firmware`   | Firmware-backed, no dedicated secure processor | Windows fTPM (Intel PTT, AMD PSP)                  |
 | `integrated` | On-die isolated security core                  | Apple Silicon Secure Enclave, ARM TrustZone/TEE    |
@@ -274,7 +274,7 @@ const caps = await checkSecureElementSupport();
 
 // Check if any hardware backing is available
 if (caps.strongest === "none") {
-  console.warn("No secure element available - keys will be software-only");
+  console.warn("No secure element available");
 }
 
 // Check for high-security backing (discrete or integrated)
@@ -484,6 +484,8 @@ function verifySignature(
 ): boolean {
   // The plugin returns an X9.62 uncompressed point: 0x04 || X || Y (65 bytes)
   const point = Buffer.from(publicKeyBase64, "base64");
+  if (point.length !== 65 || point[0] !== 0x04)
+    throw new Error("Expected a 65-byte uncompressed P-256 point");
   const key = createPublicKey({
     format: "jwk",
     key: {
@@ -643,11 +645,13 @@ relying on it for anything where those differences matter.
     presence to sign with, so any same-user process that knows (or guesses) the key name
     can request signatures with no prompt and no way for the user to notice. Prefer
     `pinOrBiometric` unless you have a specific reason to accept this.
-- **Locked devices**: Apple keys are created with
-  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, so they are unusable while the device is
-  locked and never leave the device. Android keys do not set `setUnlockedDeviceRequired`,
-  so an `authMode: "none"` key remains usable while the device is locked; only keys that
-  require authentication are gated, by the prompt.
+
+### Locked devices
+
+Apple keys are created with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, so they are
+unusable while the device is locked and never leave the device. Android keys do not set
+`setUnlockedDeviceRequired`, so an `authMode: "none"` key remains usable while the device
+is locked; only keys that require authentication are gated, by the prompt.
 
 ### Deletion is not authenticated unless you ask for it
 

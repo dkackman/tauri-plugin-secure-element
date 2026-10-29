@@ -14,14 +14,11 @@ together.
 
 - macOS: `deleteKey` with `requireAuth` now fails closed with a `validation` error
   if the prompt text cannot be passed to the OS, instead of silently skipping
-  authentication.
+  authentication. (reachable only through the Rust API; the command layer already rejected control characters)
 - macOS: `signWithKey` and `deleteKey` responses now go through the same
   size-capped FFI parser as the other commands.
 - README: the Node.js signature-verification example now works (it builds the key
   from a JWK instead of an unsupported raw key).
-
-### Changed
-
 - README: documented the `software` hardware-backing tier, and that Android
   `authMode: "none"` keys remain usable while the device is locked (Apple keys are
   `WhenUnlockedThisDeviceOnly`).
