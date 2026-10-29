@@ -378,9 +378,9 @@ public enum SecureEnclaveCore {
     /// Checks if running on simulator
     public static var isSimulator: Bool {
         #if targetEnvironment(simulator)
-            return true
+            true
         #else
-            return false
+            false
         #endif
     }
 
@@ -857,11 +857,11 @@ public enum SecureEnclaveCore {
     static func detectSecureElementTiers() -> (discrete: Bool, integrated: Bool) {
         #if os(iOS) || os(watchOS) || os(tvOS)
             // iOS devices always have an integrated Secure Enclave on the SoC
-            return (discrete: false, integrated: true)
+            (discrete: false, integrated: true)
         #elseif os(macOS)
-            return detectMacSecureElementType()
+            detectMacSecureElementType()
         #else
-            return (discrete: false, integrated: false)
+            (discrete: false, integrated: false)
         #endif
     }
 
