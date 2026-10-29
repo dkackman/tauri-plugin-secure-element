@@ -50,11 +50,11 @@ private func escapeJsonString(_ string: String) -> String {
     // Use JSONSerialization to properly escape all special characters including
     // control characters that the simple replacingOccurrences approach misses
     guard let data = try? JSONSerialization.data(
-        withJSONObject: string,
-        options: .fragmentsAllowed
-    ),
-        let escaped = String(data: data, encoding: .utf8),
-        escaped.count >= 2
+              withJSONObject: string,
+              options: .fragmentsAllowed
+          ),
+          let escaped = String(data: data, encoding: .utf8),
+          escaped.count >= 2
     else {
         // Fallback: filter out control characters we can't escape
         return string.unicodeScalars
@@ -109,7 +109,8 @@ public func secureElementGenerateSecureKey(
         return strdup(argumentErrorJson("keyName is required"))!
     }
 
-    let authModeStr = fromCString(authMode)
+    // An empty string is passed through so getAccessControlFlags rejects it (fail closed).
+    let authModeStr = authMode.map { String(cString: $0) }
 
     let result = SecureEnclaveCore.generateSecureKey(keyName: keyNameStr, authMode: authModeStr)
     let json = resultToJson(result) { response in
@@ -191,7 +192,12 @@ public func secureElementDeleteKey(
         return strdup(argumentErrorJson("Either keyName or publicKey must be provided"))!
     }
 
+    if let authReason, String(cString: authReason).isEmpty {
+        return strdup(argumentErrorJson("authReason must not be empty"))!
+    }
+
     // A non-nil reason means the caller asked for authentication before deletion.
+    // An empty reason is rejected above as a validation error.
     let result = SecureEnclaveCore.deleteKey(
         keyName: keyNameStr,
         publicKey: publicKeyStr,
