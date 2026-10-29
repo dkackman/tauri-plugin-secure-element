@@ -9,6 +9,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
 import android.util.Base64
 import android.util.Log
 import androidx.biometric.BiometricManager
@@ -83,6 +84,11 @@ class SecureKeysPlugin(
 ) : Plugin(activity) {
     companion object {
         private const val TAG = "SecureKeysPlugin"
+
+        // Deletion always accepts either a strong biometric or the device credential.
+        private const val ANY_AUTHENTICATOR =
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
 
         /**
          * Wire values for `SecureElementBacking`. These strings cross the JS bridge
@@ -253,6 +259,82 @@ class SecureKeysPlugin(
         }
 
         /**
+         * Whether a [BiometricPrompt] can be shown. androidx returns silently from
+         * `authenticate` - with no callback - when the FragmentManager has saved its
+         * state, and the host activity being finished or destroyed is equally
+         * unrecoverable, so the caller must settle the invoke itself.
+         */
+        internal fun promptCanBeShown(
+            isStateSaved: Boolean,
+            isFinishing: Boolean,
+            isDestroyed: Boolean,
+        ): Boolean = !isStateSaved && !isFinishing && !isDestroyed
+
+        /**
+         * Authenticators a prompt should offer for a key whose `KeyInfo` reports
+         * [userAuthenticationType]. A biometric-only key can never be unlocked by a
+         * PIN, so offering the credential option would let the user authenticate and
+         * then fail at the cryptographic step. `null` (a failed lookup) offers
+         * both; the key still enforces its own requirement.
+         */
+
+        internal fun allowedAuthenticatorsFor(userAuthenticationType: Int?): Int =
+            if (userAuthenticationType == KeyProperties.AUTH_BIOMETRIC_STRONG) {
+                BiometricManager.Authenticators.BIOMETRIC_STRONG
+            } else {
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            }
+
+        /**
+         * Pure decision behind [backingOf]: maps what `KeyInfo` reported to a backing tier.
+         *
+         * `KeyInfo.getSecurityLevel()` only exists from API 31, but this library's minSdk
+         * is 30. On API 30 the only signal is `isInsideSecureHardware`, which cannot tell
+         * StrongBox from the TEE, so the tier is derived from whether StrongBox was the
+         * requested (and successfully used) backing: a StrongBox key inside secure
+         * hardware is discrete, any other key inside secure hardware is integrated.
+         * On API 31+ the reported `securityLevel` is authoritative.
+         */
+        internal fun backingFromKeyInfo(
+            sdkInt: Int,
+            securityLevel: Int?,
+            insideSecureHardware: Boolean,
+            usedStrongBox: Boolean,
+        ): String =
+            if (sdkInt >= Build.VERSION_CODES.S && securityLevel != null) {
+                when (securityLevel) {
+                    KeyProperties.SECURITY_LEVEL_STRONGBOX -> BACKING_DISCRETE
+
+                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
+                    KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
+                    -> BACKING_INTEGRATED
+
+                    else -> BACKING_SOFTWARE
+                }
+            } else if (insideSecureHardware) {
+                if (usedStrongBox) BACKING_DISCRETE else BACKING_INTEGRATED
+            } else {
+                BACKING_SOFTWARE
+            }
+
+        /**
+         * True when [e] is, or is caused by, a [StrongBoxUnavailableException]. Key
+         * generation surfaces it wrapped in a `ProviderException`, so the cause chain
+         * is walked. Only this failure justifies falling back from StrongBox to the TEE.
+         */
+        internal fun isStrongBoxUnavailable(e: Throwable): Boolean {
+            var current: Throwable? = e
+            var depth = 0
+            while (current != null && depth < 10) {
+                if (current is StrongBoxUnavailableException) return true
+                current = current.cause
+                depth++
+            }
+            return false
+        }
+
+        /**
          * Classifies a `BiometricPrompt` authentication error.
          *
          * Pure and internal so the mapping is unit-testable — the callback it
@@ -280,9 +362,13 @@ class SecureKeysPlugin(
 
                 BiometricPrompt.ERROR_NO_BIOMETRICS,
                 BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL,
-                BiometricPrompt.ERROR_HW_NOT_PRESENT,
-                BiometricPrompt.ERROR_HW_UNAVAILABLE,
                 -> ErrorCodes.DEVICE_NOT_SECURE
+
+                // No biometric hardware at all is a capability the device lacks, not a
+                // setup the user can fix. ERROR_HW_UNAVAILABLE is transient and falls
+                // through to INTERNAL below.
+                BiometricPrompt.ERROR_HW_NOT_PRESENT,
+                -> ErrorCodes.UNSUPPORTED
 
                 else -> ErrorCodes.INTERNAL
             }
@@ -335,6 +421,28 @@ class SecureKeysPlugin(
         const val INTERNAL = "internal"
     }
 
+    /**
+     * Logs a failure with full detail (key names, exception text and stack) only in
+     * debug builds; release builds log [releaseMessage], which carries neither a key
+     * name nor the exception, so logcat shows that something failed without leaking
+     * what it was about.
+     */
+    private fun logError(
+        releaseMessage: String,
+        detailedMessage: String,
+        e: Throwable? = null,
+    ) {
+        if (BuildConfig.DEBUG) Log.e(TAG, detailedMessage, e) else Log.e(TAG, releaseMessage)
+    }
+
+    private fun logWarn(
+        releaseMessage: String,
+        detailedMessage: String,
+        e: Throwable? = null,
+    ) {
+        if (BuildConfig.DEBUG) Log.w(TAG, detailedMessage, e) else Log.w(TAG, releaseMessage)
+    }
+
     private fun sanitizeError(
         detailedMessage: String,
         genericMessage: String,
@@ -348,11 +456,10 @@ class SecureKeysPlugin(
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private val executor: Executor = ContextCompat.getMainExecutor(activity)
 
-    // Tracks an in-flight biometric sign request so it can be resolved/rejected exactly
-    // once. If the Activity is recreated (e.g. screen rotation) while the prompt is shown,
-    // the next call to signWithBiometricPrompt will reject the stale invoke rather than
-    // leaving the JavaScript promise pending indefinitely.
-    private val pendingSignInvoke = AtomicReference<Invoke?>(null)
+    // Admits one authentication prompt at a time across sign and delete. A request
+    // that arrives while a prompt is up is rejected rather than shown, because
+    // androidx.biometric would hand it the in-flight prompt's result (see AuthSlot).
+    private val authSlot = AuthSlot()
 
     private fun getKeyEntry(keyName: String): KeyStore.PrivateKeyEntry? = keyStore.getEntry(keyName, null) as? KeyStore.PrivateKeyEntry
 
@@ -385,7 +492,7 @@ class SecureKeysPlugin(
     ): Boolean {
         if (keyStore.containsAlias(aliasFor(keyName))) {
             val message = sanitizeErrorWithKeyName(keyName, "Key already exists")
-            Log.e(TAG, "$operation: Key already exists: $keyName")
+            logError("$operation: key already exists", "$operation: Key already exists: $keyName")
             invoke.reject(message, ErrorCodes.KEY_ALREADY_EXISTS)
             return false
         }
@@ -399,7 +506,7 @@ class SecureKeysPlugin(
     ): Boolean {
         if (!keyStore.containsAlias(aliasFor(keyName))) {
             val message = sanitizeErrorWithKeyName(keyName, "Key not found")
-            Log.e(TAG, "$operation: Key not found: $keyName")
+            logError("$operation: key not found", "$operation: Key not found: $keyName")
             invoke.reject(message, ErrorCodes.KEY_NOT_FOUND)
             return false
         }
@@ -408,19 +515,44 @@ class SecureKeysPlugin(
 
     /**
      * Builds a BiometricPrompt.PromptInfo for authentication.
-     * Always allows both biometric and device credential (PIN/pattern/password).
-     * The key itself enforces its actual requirements - if a key was created with
-     * biometric-only, PIN authentication will fail at the cryptographic level.
+     * [authenticators] comes from [allowedAuthenticatorsFor]. A prompt without
+     * DEVICE_CREDENTIAL must carry a negative button, which the framework requires.
      */
-    private fun buildPromptInfo(subtitle: String): BiometricPrompt.PromptInfo =
-        BiometricPrompt.PromptInfo
-            .Builder()
-            .setTitle("Authentication Required")
-            .setSubtitle(subtitle)
-            .setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    BiometricManager.Authenticators.DEVICE_CREDENTIAL,
-            ).build()
+    private fun buildPromptInfo(
+        subtitle: String,
+        authenticators: Int,
+    ): BiometricPrompt.PromptInfo {
+        val builder =
+            BiometricPrompt.PromptInfo
+                .Builder()
+                .setTitle("Authentication Required")
+                .setSubtitle(subtitle)
+                .setAllowedAuthenticators(authenticators)
+        if (authenticators and BiometricManager.Authenticators.DEVICE_CREDENTIAL == 0) {
+            builder.setNegativeButtonText("Cancel")
+        }
+        return builder.build()
+    }
+
+    /**
+     * The `KeyProperties.AUTH_*` mask the key was generated with
+     * (`KeyInfo.getUserAuthenticationType`, available since API 30), or null when
+     * the lookup fails. Same `KeyInfo` lookup as [backingOf]; see the note there on why
+     * the key must not be narrowed to `ECPrivateKey`.
+     */
+    private fun userAuthenticationTypeOf(entry: KeyStore.PrivateKeyEntry): Int? =
+        try {
+            val privateKey = entry.privateKey
+            val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
+            keyFactory.getKeySpec(privateKey, KeyInfo::class.java).userAuthenticationType
+        } catch (e: Exception) {
+            logWarn(
+                "Could not read the key's authentication type; offering all authenticators",
+                "Could not read the key's authentication type; offering all authenticators: ${e.message}",
+                e,
+            )
+            null
+        }
 
     private fun buildKeyGenParameterSpec(
         alias: String,
@@ -489,7 +621,7 @@ class SecureKeysPlugin(
         try {
             return activity.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
         } catch (e: Exception) {
-            Log.e(TAG, "Error checking for StrongBox feature", e)
+            logError("Error checking for StrongBox feature", "Error checking for StrongBox feature", e)
             throw e
         }
     }
@@ -526,17 +658,17 @@ class SecureKeysPlugin(
             keyPairGenerator.initialize(keyGenParameterSpec)
             keyPairGenerator.generateKeyPair()
 
-            val backing = backingOf(testAlias)
+            val backing = backingOf(testAlias, usedStrongBox = false)
             Log.i(TAG, "TEE check: probe key backing=$backing")
             return backing == BACKING_INTEGRATED || backing == BACKING_DISCRETE
         } catch (e: Exception) {
-            Log.e(TAG, "TEE check failed", e)
+            logError("TEE check failed", "TEE check failed", e)
             return false
         } finally {
             try {
                 keyStore.deleteEntry(testAlias)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to clean up test key", e)
+                logWarn("Failed to clean up test key", "Failed to clean up test key", e)
             }
         }
     }
@@ -550,7 +682,10 @@ class SecureKeysPlugin(
      * backing is a claim this plugin should only make when it can prove it, and
      * over-reporting would let a caller believe a key is protected when it isn't.
      */
-    private fun backingOf(alias: String): String {
+    private fun backingOf(
+        alias: String,
+        usedStrongBox: Boolean,
+    ): String {
         // KeyInfo is available from API 23, well below this library's minSdk of 30, so
         // the backing is always inspectable in principle.
         val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
@@ -561,30 +696,31 @@ class SecureKeysPlugin(
         // always yields null and reports "no hardware" on every device, backed or not.
         val privateKey = entry?.privateKey
         if (privateKey == null) {
-            Log.w(TAG, "Backing check: key '$alias' could not be inspected, assuming software")
+            logWarn(
+                "Backing check: key could not be inspected, assuming software",
+                "Backing check: key '$alias' could not be inspected, assuming software",
+            )
             return BACKING_SOFTWARE
         }
 
         return try {
             val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
             val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // getSecurityLevel() replaces the deprecated isInsideSecureHardware on API 31+
-                when (keyInfo.securityLevel) {
-                    KeyProperties.SECURITY_LEVEL_STRONGBOX -> BACKING_DISCRETE
-
-                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
-                    KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
-                    -> BACKING_INTEGRATED
-
-                    else -> BACKING_SOFTWARE
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                if (keyInfo.isInsideSecureHardware) BACKING_INTEGRATED else BACKING_SOFTWARE
-            }
+            val sdkInt = Build.VERSION.SDK_INT
+            @Suppress("DEPRECATION")
+            backingFromKeyInfo(
+                sdkInt = sdkInt,
+                // getSecurityLevel() exists from API 31 only; never touch it below that.
+                securityLevel = if (sdkInt >= Build.VERSION_CODES.S) keyInfo.securityLevel else null,
+                insideSecureHardware = keyInfo.isInsideSecureHardware,
+                usedStrongBox = usedStrongBox,
+            )
         } catch (e: Exception) {
-            Log.w(TAG, "Backing check: failed to read KeyInfo for '$alias', assuming software", e)
+            logWarn(
+                "Backing check: failed to read KeyInfo, assuming software",
+                "Backing check: failed to read KeyInfo for '$alias', assuming software",
+                e,
+            )
             BACKING_SOFTWARE
         }
     }
@@ -702,7 +838,7 @@ class SecureKeysPlugin(
             ret.put("canEnforceBiometricOnly", canEnforceBiometricOnly)
             invoke.resolve(ret)
         } catch (e: Exception) {
-            Log.e(TAG, "Error in checkSecureElementSupport", e)
+            logError("Error in checkSecureElementSupport", "Error in checkSecureElementSupport", e)
             val detailedMessage = "Failed to check Secure Element support: ${e.message ?: e.javaClass.simpleName}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to check Secure Element support")
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
@@ -781,38 +917,40 @@ class SecureKeysPlugin(
                     Log.i(TAG, "generateSecureKey: Key created with StrongBox backing")
                 }
             } catch (e: Exception) {
-                // If Secure Element was requested but failed, fall back to regular hardware-backed storage
-                if (useSecureElement) {
-                    Log.w(
-                        TAG,
-                        "generateSecureKey: StrongBox key creation failed, falling back to TEE. " +
-                            "Reason: ${e.message ?: e.javaClass.simpleName}",
+                // Only a StrongBox-unavailable failure justifies the TEE fallback; anything
+                // else (bad spec, keystore failure) is a real error and must surface.
+                if (!useSecureElement || !isStrongBoxUnavailable(e)) throw e
+                // StrongBox was requested but is unavailable: fall back to regular hardware-backed storage
+                logWarn(
+                    "generateSecureKey: StrongBox unavailable, falling back to TEE",
+                    "generateSecureKey: StrongBox key creation failed, falling back to TEE. " +
+                        "Reason: ${e.message ?: e.javaClass.simpleName}",
+                )
+
+                // Clean up any partial key entry left by the failed StrongBox attempt
+                try {
+                    keyStore.deleteEntry(alias)
+                } catch (deleteEx: Exception) {
+                    logWarn(
+                        "generateSecureKey: failed to clean up partial StrongBox key",
+                        "generateSecureKey: Failed to clean up partial StrongBox key",
+                        deleteEx,
+                    )
+                }
+
+                // Create a new KeyPairGenerator instance since it can't be reinitialized
+                keyPairGenerator =
+                    KeyPairGenerator.getInstance(
+                        KeyProperties.KEY_ALGORITHM_EC,
+                        "AndroidKeyStore",
                     )
 
-                    // Clean up any partial key entry left by the failed StrongBox attempt
-                    try {
-                        keyStore.deleteEntry(alias)
-                    } catch (deleteEx: Exception) {
-                        Log.w(TAG, "generateSecureKey: Failed to clean up partial StrongBox key", deleteEx)
-                    }
+                keyGenParameterSpec = buildKeyGenParameterSpec(alias, authMode, false)
 
-                    // Create a new KeyPairGenerator instance since it can't be reinitialized
-                    keyPairGenerator =
-                        KeyPairGenerator.getInstance(
-                            KeyProperties.KEY_ALGORITHM_EC,
-                            "AndroidKeyStore",
-                        )
-
-                    keyGenParameterSpec = buildKeyGenParameterSpec(alias, authMode, false)
-
-                    keyPairGenerator.initialize(keyGenParameterSpec)
-                    keyPairGenerator.generateKeyPair()
-                    usedStrongBox = false
-                    Log.i(TAG, "generateSecureKey: Key created with TEE backing (StrongBox fallback)")
-                } else {
-                    // Re-throw if StrongBox wasn't expected
-                    throw e
-                }
+                keyPairGenerator.initialize(keyGenParameterSpec)
+                keyPairGenerator.generateKeyPair()
+                usedStrongBox = false
+                Log.i(TAG, "generateSecureKey: Key created with TEE backing (StrongBox fallback)")
             }
 
             // Get the public key
@@ -828,13 +966,14 @@ class SecureKeysPlugin(
             // itself. `usedStrongBox` only records what was requested and whether the
             // StrongBox attempt threw — it cannot tell TEE from software, so trusting
             // it would label a software key "integrated".
-            val backing = backingOf(alias)
+            val backing = backingOf(alias, usedStrongBox)
             if (usedStrongBox && backing != BACKING_DISCRETE) {
                 Log.w(TAG, "generateSecureKey: StrongBox requested but key reports backing=$backing")
             }
             if (backing == BACKING_SOFTWARE) {
-                Log.w(
-                    TAG,
+                logWarn(
+                    "generateSecureKey: key is NOT hardware-backed " +
+                        "(no TEE or StrongBox on this device); returning backing=software",
                     "generateSecureKey: key '${args.keyName}' is NOT hardware-backed " +
                         "(no TEE or StrongBox on this device); returning backing=software",
                 )
@@ -848,7 +987,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to create key")
-            Log.e(TAG, "generateSecureKey: $detailedMessage", e)
+            logError(
+                "generateSecureKey failed",
+                "generateSecureKey: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
@@ -894,7 +1037,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to list keys: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to list keys")
-            Log.e(TAG, "listKeys: $detailedMessage", e)
+            logError(
+                "listKeys failed",
+                "listKeys: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
@@ -913,13 +1060,13 @@ class SecureKeysPlugin(
     /**
      * Shows BiometricPrompt and performs signing after successful authentication.
      *
-     * The [invoke] is stored in [pendingSignInvoke] and cleared atomically on each
-     * callback path, ensuring it is resolved or rejected exactly once. If the Activity
-     * is recreated (e.g. screen rotation) while the prompt is visible, Android's
-     * BiometricPrompt will fire onAuthenticationError(ERROR_CANCELED), which clears the
-     * pending invoke via the normal rejection path. Any stale invoke that was not yet
-     * cleared (e.g. from a previous recreation that skipped the callback) is rejected
-     * immediately when the next sign request arrives.
+     * Holds [authSlot] for the life of the prompt; a request arriving while another
+     * prompt is up is rejected instead of shown. The [invoke] sits in a per-call
+     * reference that every exit path takes atomically, so it is settled exactly once
+     * and the slot is released exactly once with it. If the Activity is recreated
+     * (e.g. screen rotation) while the prompt is visible, BiometricPrompt fires
+     * onAuthenticationError(ERROR_CANCELED), which settles it via the normal
+     * rejection path.
      */
     private fun signWithBiometricPrompt(
         entry: KeyStore.PrivateKeyEntry,
@@ -938,12 +1085,16 @@ class SecureKeysPlugin(
                     return
                 }
 
-        // Reject any previously-pending invoke that was never resolved (e.g. stale
-        // after an activity recreation that did not fire onAuthenticationError).
-        pendingSignInvoke.getAndSet(invoke)?.reject(
-            "Authentication cancelled: a new sign request superseded this one",
-            ErrorCodes.USER_CANCELLED,
-        )
+        if (!authSlot.tryAcquire()) {
+            invoke.reject("Another authentication prompt is already in progress", ErrorCodes.INTERNAL)
+            return
+        }
+
+        // Taking the invoke out of here is what settles it, and the slot is released
+        // in the same step, so neither can happen twice whichever callback fires.
+        val pending = AtomicReference<Invoke?>(invoke)
+
+        fun takePending(): Invoke? = pending.getAndSet(null)?.also { authSlot.release() }
 
         // Create and initialize the signature object for the CryptoObject.
         // initSign is expected to succeed for per-use auth keys (duration=0) even before
@@ -951,93 +1102,115 @@ class SecureKeysPlugin(
         // unlocks it. On some older/vendor-specific Android versions it may throw instead,
         // so we handle that explicitly rather than letting the exception escape and
         // double-reject via the outer catch in signWithKey.
-        val cryptoObject =
-            try {
-                val signature = Signature.getInstance("SHA256withECDSA")
-                signature.initSign(entry.privateKey)
-                BiometricPrompt.CryptoObject(signature)
-            } catch (e: Exception) {
-                val detailedMessage = "Failed to initialize signature for authentication: ${e.message}"
-                val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
-                pendingSignInvoke.getAndSet(null)?.reject(errorMessage, classifyKeyUseException(e))
-                return
+        val signature: Signature
+        val cryptoObject: BiometricPrompt.CryptoObject
+        try {
+            signature = Signature.getInstance("SHA256withECDSA").apply { initSign(entry.privateKey) }
+            cryptoObject = BiometricPrompt.CryptoObject(signature)
+        } catch (e: Exception) {
+            val detailedMessage = "Failed to initialize signature for authentication: ${e.message}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+            logError(
+                "signWithBiometricPrompt failed",
+                "signWithBiometricPrompt: $detailedMessage",
+                e,
+            )
+            takePending()?.reject(errorMessage, classifyKeyUseException(e))
+            return
+        }
+
+        val callback =
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    // Take ownership; if already settled do nothing.
+                    val settling = takePending() ?: return
+                    // The result must carry the Signature this request initialised: one
+                    // belonging to any other prompt would sign this request's data with
+                    // that prompt's key.
+                    if (result.cryptoObject?.signature !== signature) {
+                        settling.reject("Authentication result does not belong to this request", ErrorCodes.INTERNAL)
+                        return
+                    }
+                    try {
+                        val signatureBytes = performSign(signature, data)
+
+                        // Base64, not a byte array: the Rust bridge deserializes this through
+                        // SignWithKeyResponse, whose `signature` field is base64 on the wire.
+                        val signatureBase64 = Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
+                        settling.resolveObject(mapOf("signature" to signatureBase64))
+                    } catch (e: Exception) {
+                        val detailedMessage = "Failed to sign after authentication: ${e.message}"
+                        val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+                        logError(
+                            "signWithKey (post-auth) failed",
+                            "signWithKey (post-auth): $detailedMessage",
+                            e,
+                        )
+                        settling.reject(errorMessage, classifyKeyUseException(e))
+                    }
+                }
+
+                override fun onAuthenticationError(
+                    errorCode: Int,
+                    errString: CharSequence,
+                ) {
+                    super.onAuthenticationError(errorCode, errString)
+                    val settling = takePending() ?: return
+                    val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
+                    val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
+                    logError(
+                        "signWithKey failed",
+                        "signWithKey: $detailedMessage",
+                    )
+                    settling.reject(errorMessage, classifyBiometricError(errorCode))
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    // Called when a biometric is presented but not recognised.
+                    // Do not reject — the user can retry within the same prompt session.
+                    Log.d(TAG, "signWithKey: Authentication attempt failed, user can retry")
+                }
             }
 
-        val biometricPrompt =
-            BiometricPrompt(
-                fragmentActivity,
-                executor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        super.onAuthenticationSucceeded(result)
-                        // Take ownership; if already cleared (e.g. concurrent cancellation) do nothing.
-                        val pending = pendingSignInvoke.getAndSet(null) ?: return
-                        try {
-                            val authenticatedSignature =
-                                result.cryptoObject?.signature
-                                    ?: run {
-                                        pending.reject(
-                                            "No signature in crypto object after authentication",
-                                            ErrorCodes.INTERNAL,
-                                        )
-                                        return
-                                    }
-
-                            val signatureBytes = performSign(authenticatedSignature, data)
-
-                            // Base64, not a byte array: the Rust bridge deserializes this through
-                            // SignWithKeyResponse, whose `signature` field is base64 on the wire.
-                            val signatureBase64 = Base64.encodeToString(signatureBytes, Base64.NO_WRAP)
-                            pending.resolveObject(mapOf("signature" to signatureBase64))
-                        } catch (e: Exception) {
-                            val detailedMessage = "Failed to sign after authentication: ${e.message}"
-                            val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                            Log.e(TAG, "signWithKey (post-auth): $detailedMessage", e)
-                            pending.reject(errorMessage, classifyKeyUseException(e))
-                        }
-                    }
-
-                    override fun onAuthenticationError(
-                        errorCode: Int,
-                        errString: CharSequence,
-                    ) {
-                        super.onAuthenticationError(errorCode, errString)
-                        val pending = pendingSignInvoke.getAndSet(null) ?: return
-                        val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
-                        val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
-                        Log.e(TAG, "signWithKey: $detailedMessage")
-                        pending.reject(errorMessage, classifyBiometricError(errorCode))
-                    }
-
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                        // Called when a biometric is presented but not recognised.
-                        // Do not reject — the user can retry within the same prompt session.
-                        Log.d(TAG, "signWithKey: Authentication attempt failed, user can retry")
-                    }
-                },
-            )
-
-        // Build prompt info
-        // A caller-supplied reason is the only thing that tells the user *what*
-        // they are approving — the bytes being signed are never displayed — so
-        // it takes precedence over the generic key-name subtitle.
-        val promptInfo = buildPromptInfo(reason ?: "Sign with key: $keyName")
-
-        // Show authentication UI with CryptoObject. authenticate() can throw
-        // synchronously (e.g. IllegalArgumentException for an unsupported
-        // authenticator combination) instead of going through the callback, so route
-        // that failure through pendingSignInvoke like every other exit path here -
-        // otherwise it escapes to signWithKey's outer catch and double-rejects the
-        // invoke pendingSignInvoke already holds.
+        // Building, constructing and showing the prompt can each throw synchronously
+        // instead of going through the callback (PromptInfo.Builder.build() throws
+        // IllegalArgumentException for an unsupported authenticator combination), so
+        // route that failure through takePending like every other exit path here -
+        // otherwise it escapes to signWithKey's outer catch, double-rejects the
+        // invoke, and leaves the slot held forever.
         try {
-            biometricPrompt.authenticate(promptInfo, cryptoObject)
+            if (!promptCanBeShown(
+                    fragmentActivity.supportFragmentManager.isStateSaved,
+                    fragmentActivity.isFinishing,
+                    fragmentActivity.isDestroyed,
+                )
+            ) {
+                takePending()?.reject(
+                    "Authentication prompt cannot be shown while the app is not in the foreground",
+                    ErrorCodes.USER_CANCELLED,
+                )
+                return
+            }
+            // A caller-supplied reason is the only thing that tells the user *what*
+            // they are approving — the bytes being signed are never displayed — so
+            // it takes precedence over the generic key-name subtitle.
+            val promptInfo =
+                buildPromptInfo(
+                    reason ?: "Sign with key: $keyName",
+                    allowedAuthenticatorsFor(userAuthenticationTypeOf(entry)),
+                )
+            BiometricPrompt(fragmentActivity, executor, callback).authenticate(promptInfo, cryptoObject)
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-            Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
-            pendingSignInvoke.getAndSet(null)?.reject(errorMessage, ErrorCodes.INTERNAL)
+            logError(
+                "signWithBiometricPrompt failed",
+                "signWithBiometricPrompt: $detailedMessage",
+                e,
+            )
+            takePending()?.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
 
@@ -1084,14 +1257,22 @@ class SecureKeysPlugin(
                     // Some other error - not auth related
                     val detailedMessage = "Failed to sign: ${e.message}"
                     val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                    Log.e(TAG, "signWithKey: $detailedMessage", e)
+                    logError(
+                        "signWithKey failed",
+                        "signWithKey: $detailedMessage",
+                        e,
+                    )
                     invoke.reject(errorMessage, classifyKeyUseException(e))
                 }
             }
         } catch (e: Exception) {
             val detailedMessage = "Failed to sign: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-            Log.e(TAG, "signWithKey: $detailedMessage", e)
+            logError(
+                "signWithKey failed",
+                "signWithKey: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, classifyKeyUseException(e))
         }
     }
@@ -1104,7 +1285,11 @@ class SecureKeysPlugin(
             } catch (e: Exception) {
                 val detailedMessage = "Failed to parse delete arguments: ${e.message}"
                 val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                Log.e(TAG, "deleteKey: $detailedMessage", e)
+                logError(
+                    "deleteKey failed",
+                    "deleteKey: $detailedMessage",
+                    e,
+                )
                 invoke.reject(errorMessage, ErrorCodes.VALIDATION)
                 return
             }
@@ -1146,50 +1331,72 @@ class SecureKeysPlugin(
                     return
                 }
 
-        // Guards against the invoke being resolved twice if a callback fires more
-        // than once (the same contract signWithBiometricPrompt maintains via
-        // pendingSignInvoke).
+        if (!authSlot.tryAcquire()) {
+            invoke.reject("Another authentication prompt is already in progress", ErrorCodes.INTERNAL)
+            return
+        }
+
+        // Guards against the invoke being settled - and the slot released - twice if
+        // a callback fires more than once (the same contract signWithBiometricPrompt
+        // maintains).
         val pending = AtomicReference<Invoke?>(invoke)
 
-        val biometricPrompt =
-            BiometricPrompt(
-                fragmentActivity,
-                executor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        super.onAuthenticationSucceeded(result)
-                        pending.getAndSet(null) ?: return
-                        onAuthenticated()
-                    }
+        fun takePending(): Invoke? = pending.getAndSet(null)?.also { authSlot.release() }
 
-                    override fun onAuthenticationError(
-                        errorCode: Int,
-                        errString: CharSequence,
-                    ) {
-                        super.onAuthenticationError(errorCode, errString)
-                        val invokeToReject = pending.getAndSet(null) ?: return
-                        val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
-                        val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
-                        Log.e(TAG, "deleteKey: $detailedMessage")
-                        invokeToReject.reject(errorMessage, classifyBiometricError(errorCode))
-                    }
+        val callback =
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    takePending() ?: return
+                    onAuthenticated()
+                }
 
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                        // A presented credential was not recognised; the user can
-                        // retry within the same prompt, so do not reject yet.
-                        Log.d(TAG, "deleteKey: Authentication attempt failed, user can retry")
-                    }
-                },
-            )
+                override fun onAuthenticationError(
+                    errorCode: Int,
+                    errString: CharSequence,
+                ) {
+                    super.onAuthenticationError(errorCode, errString)
+                    val invokeToReject = takePending() ?: return
+                    val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
+                    val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
+                    logError(
+                        "deleteKey failed",
+                        "deleteKey: $detailedMessage",
+                    )
+                    invokeToReject.reject(errorMessage, classifyBiometricError(errorCode))
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    // A presented credential was not recognised; the user can
+                    // retry within the same prompt, so do not reject yet.
+                    Log.d(TAG, "deleteKey: Authentication attempt failed, user can retry")
+                }
+            }
 
         try {
-            biometricPrompt.authenticate(buildPromptInfo(reason))
+            if (!promptCanBeShown(
+                    fragmentActivity.supportFragmentManager.isStateSaved,
+                    fragmentActivity.isFinishing,
+                    fragmentActivity.isDestroyed,
+                )
+            ) {
+                takePending()?.reject(
+                    "Authentication prompt cannot be shown while the app is not in the foreground",
+                    ErrorCodes.USER_CANCELLED,
+                )
+                return
+            }
+            BiometricPrompt(fragmentActivity, executor, callback).authenticate(buildPromptInfo(reason, ANY_AUTHENTICATOR))
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-            Log.e(TAG, "deleteKey: $detailedMessage", e)
-            pending.getAndSet(null)?.reject(errorMessage, ErrorCodes.INTERNAL)
+            logError(
+                "deleteKey failed",
+                "deleteKey: $detailedMessage",
+                e,
+            )
+            takePending()?.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
 
@@ -1219,7 +1426,11 @@ class SecureKeysPlugin(
                 } catch (e: Exception) {
                     val detailedMessage = "Failed to delete key: ${e.message}"
                     val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                    Log.e(TAG, "deleteKey: $detailedMessage", e)
+                    logError(
+                        "deleteKey failed",
+                        "deleteKey: $detailedMessage",
+                        e,
+                    )
                     invoke.reject(errorMessage, ErrorCodes.INTERNAL)
                 }
                 return
@@ -1254,7 +1465,11 @@ class SecureKeysPlugin(
                     } catch (e: Exception) {
                         val detailedMessage = "Failed to delete key: ${e.message}"
                         val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                        Log.e(TAG, "deleteKey: $detailedMessage", e)
+                        logError(
+                            "deleteKey failed",
+                            "deleteKey: $detailedMessage",
+                            e,
+                        )
                         invoke.reject(errorMessage, ErrorCodes.INTERNAL)
                         return
                     }
@@ -1268,7 +1483,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to delete key: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-            Log.e(TAG, "deleteKey: $detailedMessage", e)
+            logError(
+                "deleteKey failed",
+                "deleteKey: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }

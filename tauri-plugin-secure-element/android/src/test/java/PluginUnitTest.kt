@@ -1,10 +1,14 @@
 package net.kackman.secureelement
 
 import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
+import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import org.junit.Assert.*
 import org.junit.Test
 import java.math.BigInteger
+import java.security.ProviderException
 
 /**
  * Host-JVM unit tests for pure logic in SecureKeysPlugin.
@@ -293,6 +297,33 @@ class PluginUnitTest {
         assertFalse(SecureKeysPlugin.isUserNotAuthenticatedException(wrapped))
     }
 
+    // ── prompt authenticators ────────────────────────────────────────────────
+    // A prompt must offer only what the key will accept: a PIN accepted for a
+    // biometric-only key authenticates and then fails at the cryptographic step.
+
+    @Test
+    fun `biometric-only keys prompt with biometric only`() =
+        assertEquals(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            SecureKeysPlugin.allowedAuthenticatorsFor(KeyProperties.AUTH_BIOMETRIC_STRONG),
+        )
+
+    @Test
+    fun `mixed keys prompt with biometric or credential`() =
+        assertEquals(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+            SecureKeysPlugin.allowedAuthenticatorsFor(
+                KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+            ),
+        )
+
+    @Test
+    fun `unknown auth type prompts with both`() =
+        assertEquals(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+            SecureKeysPlugin.allowedAuthenticatorsFor(null),
+        )
+
     // ── error-code classification ────────────────────────────────────────────
     // The codes these produce are the only part of an error that survives
     // release-build sanitization, so an app branching on "the user cancelled"
@@ -347,6 +378,18 @@ class PluginUnitTest {
     }
 
     @Test
+    fun `missing biometric hardware is unsupported and unavailable hardware is internal`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.UNSUPPORTED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_HW_NOT_PRESENT),
+        )
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.INTERNAL,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_HW_UNAVAILABLE),
+        )
+    }
+
+    @Test
     fun `an unrecognised biometric error falls back to internal`() {
         assertEquals(
             SecureKeysPlugin.ErrorCodes.INTERNAL,
@@ -393,5 +436,86 @@ class PluginUnitTest {
             SecureKeysPlugin.ErrorCodes.INTERNAL,
             SecureKeysPlugin.classifyKeyUseException(IllegalStateException("boom")),
         )
+    }
+
+    // ── single in-flight authentication slot ─────────────────────────────────
+    // androidx.biometric keeps one client callback per Activity and will not
+    // show a second prompt while one is up, so a second request racing the
+    // first would receive the first prompt's CryptoObject. Only one prompt may
+    // be outstanding at a time; the slot enforces that.
+
+    @Test
+    fun `auth slot acquires once`() {
+        val slot = AuthSlot()
+        assertTrue(slot.tryAcquire())
+        assertFalse(slot.tryAcquire())
+    }
+
+    @Test
+    fun `auth slot can be reacquired after release`() {
+        val slot = AuthSlot()
+        assertTrue(slot.tryAcquire())
+        slot.release()
+        assertTrue(slot.tryAcquire())
+    }
+
+    @Test
+    fun `release without acquire is a no-op`() {
+        val slot = AuthSlot()
+        slot.release()
+        assertTrue(slot.tryAcquire())
+    }
+
+    @Test
+    fun promptCanBeShown_trueWhenNothingBlocksIt() {
+        assertTrue(SecureKeysPlugin.promptCanBeShown(isStateSaved = false, isFinishing = false, isDestroyed = false))
+    }
+
+    @Test
+    fun promptCanBeShown_falseWhenStateSaved() {
+        assertFalse(SecureKeysPlugin.promptCanBeShown(isStateSaved = true, isFinishing = false, isDestroyed = false))
+    }
+
+    @Test
+    fun promptCanBeShown_falseWhenFinishing() {
+        assertFalse(SecureKeysPlugin.promptCanBeShown(isStateSaved = false, isFinishing = true, isDestroyed = false))
+    }
+
+    @Test
+    fun promptCanBeShown_falseWhenDestroyed() {
+        assertFalse(SecureKeysPlugin.promptCanBeShown(isStateSaved = false, isFinishing = false, isDestroyed = true))
+    }
+
+    @Test
+    fun `api 30 strongbox key inside secure hardware is discrete`() {
+        assertEquals("discrete", SecureKeysPlugin.backingFromKeyInfo(30, null, true, true))
+    }
+
+    @Test
+    fun `api 30 non-strongbox key inside secure hardware is integrated`() {
+        assertEquals("integrated", SecureKeysPlugin.backingFromKeyInfo(30, null, true, false))
+    }
+
+    @Test
+    fun `api 30 key outside secure hardware is software`() {
+        assertEquals("software", SecureKeysPlugin.backingFromKeyInfo(30, null, false, true))
+    }
+
+    @Test
+    fun `api 31 strongbox security level is discrete`() {
+        assertEquals(
+            "discrete",
+            SecureKeysPlugin.backingFromKeyInfo(31, KeyProperties.SECURITY_LEVEL_STRONGBOX, true, false),
+        )
+    }
+
+    @Test
+    fun `a wrapped StrongBoxUnavailableException is recognised`() {
+        assertTrue(SecureKeysPlugin.isStrongBoxUnavailable(ProviderException("x", StrongBoxUnavailableException())))
+    }
+
+    @Test
+    fun `an unrelated exception is not StrongBox unavailability`() {
+        assertFalse(SecureKeysPlugin.isStrongBoxUnavailable(IllegalStateException()))
     }
 }

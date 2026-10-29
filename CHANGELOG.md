@@ -12,6 +12,26 @@ together.
 
 ### Fixed
 
+- Android: the authentication prompt for a biometric-only key no longer offers
+  the device-PIN option (which authenticated and then failed at signing).
+- Android: only one authentication prompt runs at a time. A `signWithKey` or
+  authenticated `deleteKey` issued while a prompt is showing is now rejected with
+  `internal` instead of superseding the prompt, which could sign the new request's
+  data with the earlier request's key. A sign result whose `CryptoObject` is not
+  the one the request created is rejected.
+- Android: an authentication prompt that cannot be shown because the app is not
+  in the foreground (saved fragment state, or a finishing or destroyed activity)
+  is now rejected with `userCancelled` instead of silently never calling back and
+  holding the authentication slot.
+- Android: on API 30 a key created in StrongBox is now reported as `discrete`
+  rather than `integrated` (`KeyInfo.getSecurityLevel` only exists from API 31),
+  and key generation falls back from StrongBox to the TEE only when StrongBox is
+  actually unavailable; other failures are reported instead of being retried.
+- Android: `ERROR_HW_NOT_PRESENT` from the biometric prompt is now reported as
+  `unsupported` and `ERROR_HW_UNAVAILABLE` as `internal`, instead of both being
+  `deviceNotSecure`.
+- Android: release builds no longer write key names or exception details to
+  logcat; the detailed messages are logged in debug builds only.
 - Windows: the Windows Hello prompt text is now passed as a NUL-terminated
   UTF-16 string, as the provider expects, and creating a key whose name already
   exists reports `keyAlreadyExists` instead of a generic error.
