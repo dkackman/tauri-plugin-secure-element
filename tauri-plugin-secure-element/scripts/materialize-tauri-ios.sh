@@ -12,13 +12,21 @@
 # copy straight from the crate source cargo has already downloaded, which is what
 # makes `swift test` runnable in CI without building an entire iOS app first.
 #
+# The tauri version comes from the test app's lockfile, not a fresh resolution. This
+# plugin directory has no Cargo.lock, so a bare `cargo metadata` here would resolve
+# whatever the newest tauri 2.x is today. test-app/src-tauri/Cargo.lock is the pinned
+# version the repo actually builds against, and newer tauri Gradle/Swift scripts can
+# need a newer Kotlin plugin than android/settings.gradle pins (tauri 2.12.5's
+# mobile/android uses `compilerOptions`, which Kotlin Gradle plugin 1.8.20 rejects).
+#
 # Safe to re-run: an existing copy is replaced.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+manifest="$(pwd)/../test-app/src-tauri/Cargo.toml"
 
 tauri_src=$(
-  cargo metadata --format-version 1 | python3 -c '
+  cargo metadata --format-version 1 --manifest-path "$manifest" | python3 -c '
 import json, os, sys
 
 meta = json.load(sys.stdin)
