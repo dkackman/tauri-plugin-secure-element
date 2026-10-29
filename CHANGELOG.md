@@ -49,16 +49,10 @@ together.
   `keyNotAccessible` instead of being treated as absent, so `deleteKey` no
   longer reports success and `signWithKey` no longer reports `keyNotFound` for
   a key that exists.
-
-### Changed
-
-- **Breaking (Windows):** key names are now injective in `(appId, keyName)`;
-  the old `{app}_{key}` join let different pairs collide. `authMode: "none"`
-  keys created by earlier betas are not found by this version; generate fresh
-  keys after upgrading.
 - macOS: `deleteKey` with `requireAuth` now fails closed with a `validation` error
   if the prompt text cannot be passed to the OS, instead of silently skipping
-  authentication. (reachable only through the Rust API; the command layer already rejected control characters)
+  authentication (reachable only through the Rust API; the command layer already
+  rejected control characters).
 - macOS: `signWithKey` and `deleteKey` responses now go through the same
   size-capped FFI parser as the other commands.
 - README: the Node.js signature-verification example now works (it builds the key
@@ -78,6 +72,13 @@ together.
 - macOS: a process running under Rosetta is no longer reported as having a
   discrete (T2) Secure Enclave; it is reported as integrated.
 - `ios/Package.swift` macOS deployment floor corrected to 10.15.
+
+### Changed
+
+- **Breaking (Windows):** key names are now injective in `(appId, keyName)`;
+  the old `{app}_{key}` join let different pairs collide. `authMode: "none"`
+  keys created by earlier betas are not found by this version; generate fresh
+  keys after upgrading.
 
 ## [0.1.0-beta.9] - 2026-08-02
 
