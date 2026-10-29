@@ -16,14 +16,15 @@ together.
   the device-PIN option (which authenticated and then failed at signing), and a
   failure while building the prompt is now reported instead of leaving the
   authentication slot held.
-
-### Fixed
-
 - Android: only one authentication prompt runs at a time. A `signWithKey` or
   authenticated `deleteKey` issued while a prompt is showing is now rejected with
   `internal` instead of superseding the prompt, which could sign the new request's
   data with the earlier request's key. A sign result whose `CryptoObject` is not
   the one the request created is rejected.
+- Android: an authentication prompt that cannot be shown because the app is not
+  in the foreground (saved fragment state, or a finishing or destroyed activity)
+  is now rejected with `userCancelled` instead of silently never calling back and
+  holding the authentication slot.
 
 ## [0.1.0-beta.9] - 2026-08-02
 

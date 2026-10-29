@@ -253,6 +253,18 @@ class SecureKeysPlugin(
         }
 
         /**
+         * Whether a [BiometricPrompt] can be shown. androidx returns silently from
+         * `authenticate` - with no callback - when the FragmentManager has saved its
+         * state, and the host activity being finished or destroyed is equally
+         * unrecoverable, so the caller must settle the invoke itself.
+         */
+        internal fun promptCanBeShown(
+            isStateSaved: Boolean,
+            isFinishing: Boolean,
+            isDestroyed: Boolean,
+        ): Boolean = !isStateSaved && !isFinishing && !isDestroyed
+
+        /**
          * Authenticators a prompt should offer for a key whose `KeyInfo` reports
          * [userAuthenticationType]. A biometric-only key can never be unlocked by a
          * PIN, so offering the credential option would let the user authenticate and
@@ -1063,6 +1075,18 @@ class SecureKeysPlugin(
         // otherwise it escapes to signWithKey's outer catch, double-rejects the
         // invoke, and leaves the slot held forever.
         try {
+            if (!promptCanBeShown(
+                    fragmentActivity.supportFragmentManager.isStateSaved,
+                    fragmentActivity.isFinishing,
+                    fragmentActivity.isDestroyed,
+                )
+            ) {
+                takePending()?.reject(
+                    "Authentication prompt cannot be shown while the app is not in the foreground",
+                    ErrorCodes.USER_CANCELLED,
+                )
+                return
+            }
             val promptInfo =
                 buildPromptInfo(
                     reason ?: "Sign with key: $keyName",
@@ -1223,6 +1247,18 @@ class SecureKeysPlugin(
             }
 
         try {
+            if (!promptCanBeShown(
+                    fragmentActivity.supportFragmentManager.isStateSaved,
+                    fragmentActivity.isFinishing,
+                    fragmentActivity.isDestroyed,
+                )
+            ) {
+                takePending()?.reject(
+                    "Authentication prompt cannot be shown while the app is not in the foreground",
+                    ErrorCodes.USER_CANCELLED,
+                )
+                return
+            }
             BiometricPrompt(fragmentActivity, executor, callback).authenticate(buildPromptInfo(reason, allowedAuthenticatorsFor(null)))
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"

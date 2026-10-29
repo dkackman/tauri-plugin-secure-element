@@ -451,4 +451,24 @@ class PluginUnitTest {
         slot.release()
         assertTrue(slot.tryAcquire())
     }
+
+    @Test
+    fun promptCanBeShown_trueWhenNothingBlocksIt() {
+        assertTrue(SecureKeysPlugin.promptCanBeShown(isStateSaved = false, isFinishing = false, isDestroyed = false))
+    }
+
+    @Test
+    fun promptCanBeShown_falseWhenStateSaved() {
+        assertFalse(SecureKeysPlugin.promptCanBeShown(isStateSaved = true, isFinishing = false, isDestroyed = false))
+    }
+
+    @Test
+    fun promptCanBeShown_falseWhenFinishing() {
+        assertFalse(SecureKeysPlugin.promptCanBeShown(isStateSaved = false, isFinishing = true, isDestroyed = false))
+    }
+
+    @Test
+    fun promptCanBeShown_falseWhenDestroyed() {
+        assertFalse(SecureKeysPlugin.promptCanBeShown(isStateSaved = false, isFinishing = false, isDestroyed = true))
+    }
 }
