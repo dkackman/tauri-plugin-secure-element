@@ -8,10 +8,11 @@ use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
 /// Checks if Windows Hello is configured/enrolled on the system
 /// Returns true if Windows Hello PIN or biometric is actually enrolled (not just available)
 /// Uses the official Windows Runtime API for reliable detection
-pub fn is_windows_hello_configured() -> bool {
-    // Use the official Windows Hello API to check availability
-    // Returns false if the check fails (Windows Hello not available or error occurred)
-    check_windows_hello_availability().unwrap_or_default()
+///
+/// `Ok(false)` means Hello is definitively not usable; `Err` means the check itself
+/// failed, which callers must not conflate with "not configured".
+pub fn is_windows_hello_configured() -> Result<bool, windows::core::Error> {
+    check_windows_hello_availability()
 }
 
 /// Checks Windows Hello availability using the UserConsentVerifier API
@@ -44,12 +45,14 @@ fn availability_means_configured(availability: UserConsentVerifierAvailability) 
 /// `HWND` — the same handle the Windows Hello signing path already parents its
 /// dialog to.
 ///
-/// Returns `Ok(true)` only on [`UserConsentVerificationResult::Verified`]. Every
-/// other outcome — the user cancelled, retries exhausted, Hello not configured —
-/// is `Ok(false)`, since none of them authorize the operation. A genuine API
-/// failure propagates as `Err`, so a broken verifier cannot be mistaken for a
-/// refusal (or, worse, for consent).
-pub fn request_user_consent(hwnd: isize, message: &str) -> Result<bool, windows::core::Error> {
+/// Returns the verifier's result; only [`UserConsentVerificationResult::Verified`]
+/// authorizes the operation (see [`consent_result_error`]). A genuine API failure
+/// propagates as `Err`, so a broken verifier cannot be mistaken for a refusal
+/// (or, worse, for consent).
+pub fn request_user_consent(
+    hwnd: isize,
+    message: &str,
+) -> Result<UserConsentVerificationResult, windows::core::Error> {
     let interop: IUserConsentVerifierInterop =
         windows::core::factory::<UserConsentVerifier, IUserConsentVerifierInterop>()?;
 
@@ -63,7 +66,42 @@ pub fn request_user_consent(hwnd: isize, message: &str) -> Result<bool, windows:
         )?
     };
 
-    Ok(operation.join()? == UserConsentVerificationResult::Verified)
+    operation.join()
+}
+
+/// Maps a consent result to the error that should be reported, or `None` when the
+/// user was verified. Anything unrecognised is `Internal`, never success.
+pub fn consent_result_error(
+    result: UserConsentVerificationResult,
+) -> Option<(crate::ErrorCode, &'static str)> {
+    use crate::ErrorCode;
+    if result == UserConsentVerificationResult::Verified {
+        None
+    } else if result == UserConsentVerificationResult::Canceled {
+        Some((
+            ErrorCode::UserCancelled,
+            "Authentication was cancelled; key not deleted",
+        ))
+    } else if result == UserConsentVerificationResult::RetriesExhausted {
+        Some((
+            ErrorCode::AuthFailed,
+            "Authentication failed; key not deleted",
+        ))
+    } else if result == UserConsentVerificationResult::NotConfiguredForUser {
+        Some((
+            ErrorCode::DeviceNotSecure,
+            "Windows Hello is not configured for this user",
+        ))
+    } else if result == UserConsentVerificationResult::DeviceNotPresent
+        || result == UserConsentVerificationResult::DisabledByPolicy
+    {
+        Some((
+            ErrorCode::Unsupported,
+            "Windows Hello is not available on this device",
+        ))
+    } else {
+        Some((ErrorCode::Internal, "Windows Hello verification failed"))
+    }
 }
 
 #[cfg(test)]
@@ -102,7 +140,50 @@ mod tests {
     // linker to resolve the WinRT interop imports this module depends on.
     #[test]
     fn public_entry_points_link() {
-        let _ = is_windows_hello_configured as fn() -> bool;
-        let _ = request_user_consent as fn(isize, &str) -> Result<bool, windows::core::Error>;
+        let _ = is_windows_hello_configured as fn() -> Result<bool, windows::core::Error>;
+        let _ = request_user_consent
+            as fn(isize, &str) -> Result<UserConsentVerificationResult, windows::core::Error>;
+    }
+
+    #[test]
+    fn verified_has_no_error() {
+        assert_eq!(
+            consent_result_error(UserConsentVerificationResult::Verified),
+            None
+        );
+    }
+
+    #[test]
+    fn consent_outcomes_map_to_their_own_codes() {
+        use crate::ErrorCode;
+        let code = |r| consent_result_error(r).map(|(c, _)| c);
+        assert_eq!(
+            code(UserConsentVerificationResult::Canceled),
+            Some(ErrorCode::UserCancelled)
+        );
+        assert_eq!(
+            code(UserConsentVerificationResult::RetriesExhausted),
+            Some(ErrorCode::AuthFailed)
+        );
+        assert_eq!(
+            code(UserConsentVerificationResult::NotConfiguredForUser),
+            Some(ErrorCode::DeviceNotSecure)
+        );
+        assert_eq!(
+            code(UserConsentVerificationResult::DeviceNotPresent),
+            Some(ErrorCode::Unsupported)
+        );
+        assert_eq!(
+            code(UserConsentVerificationResult::DisabledByPolicy),
+            Some(ErrorCode::Unsupported)
+        );
+        assert_eq!(
+            code(UserConsentVerificationResult::DeviceBusy),
+            Some(ErrorCode::Internal)
+        );
+        assert_eq!(
+            code(UserConsentVerificationResult(i32::MAX)),
+            Some(ErrorCode::Internal)
+        );
     }
 }

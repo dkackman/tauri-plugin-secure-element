@@ -633,7 +633,7 @@ impl<R: Runtime> SecureElement<R> {
                     )
                 })?;
 
-                let verified =
+                let result =
                     crate::windows_hello::request_user_consent(hwnd, &prompt).map_err(|e| {
                         crate::Error::platform(
                             crate::ErrorCode::Internal,
@@ -644,11 +644,8 @@ impl<R: Runtime> SecureElement<R> {
                         )
                     })?;
 
-                if !verified {
-                    return Err(crate::Error::platform(
-                        crate::ErrorCode::UserCancelled,
-                        "Authentication was cancelled or not verified; key not deleted",
-                    ));
+                if let Some((code, message)) = crate::windows_hello::consent_result_error(result) {
+                    return Err(crate::Error::platform(code, message));
                 }
             }
 

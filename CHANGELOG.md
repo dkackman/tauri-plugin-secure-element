@@ -12,6 +12,30 @@ together.
 
 ### Fixed
 
+- Windows: the Windows Hello prompt text is now passed as a NUL-terminated
+  UTF-16 string, as the provider expects, and creating a key whose name already
+  exists reports `keyAlreadyExists` instead of a generic error.
+- Windows: deleting an auth-required key now reports the Windows Hello outcome
+  precisely (`userCancelled`, `authFailed`, `deviceNotSecure`, `unsupported`)
+  instead of `userCancelled` for every non-verified result.
+- Windows: a failure of the Windows Hello availability check while creating an
+  auth-required key is reported as `internal` instead of `deviceNotSecure`.
+- Windows: failures to resolve the user SID or open the NGC provider while
+  looking up a key now propagate instead of silently skipping Windows Hello
+  keys.
+- Windows: an NGC key that exists but is access-denied (`NTE_PERM`) reports
+  `keyNotAccessible` instead of reading as absent.
+- Windows: an inaccessible `authMode: "none"` key now reports
+  `keyNotAccessible` instead of being treated as absent, so `deleteKey` no
+  longer reports success and `signWithKey` no longer reports `keyNotFound` for
+  a key that exists.
+
+### Changed
+
+- **Breaking (Windows):** key names are now injective in `(appId, keyName)`;
+  the old `{app}_{key}` join let different pairs collide. `authMode: "none"`
+  keys created by earlier betas are not found by this version; generate fresh
+  keys after upgrading.
 - macOS: `deleteKey` with `requireAuth` now fails closed with a `validation` error
   if the prompt text cannot be passed to the OS, instead of silently skipping
   authentication. (reachable only through the Rust API; the command layer already rejected control characters)
