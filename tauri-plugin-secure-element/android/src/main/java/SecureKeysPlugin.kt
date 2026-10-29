@@ -356,9 +356,13 @@ class SecureKeysPlugin(
 
                 BiometricPrompt.ERROR_NO_BIOMETRICS,
                 BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL,
-                BiometricPrompt.ERROR_HW_NOT_PRESENT,
-                BiometricPrompt.ERROR_HW_UNAVAILABLE,
                 -> ErrorCodes.DEVICE_NOT_SECURE
+
+                // No biometric hardware at all is a capability the device lacks, not a
+                // setup the user can fix. ERROR_HW_UNAVAILABLE is transient and falls
+                // through to INTERNAL below.
+                BiometricPrompt.ERROR_HW_NOT_PRESENT,
+                -> ErrorCodes.UNSUPPORTED
 
                 else -> ErrorCodes.INTERNAL
             }
@@ -411,6 +415,28 @@ class SecureKeysPlugin(
         const val INTERNAL = "internal"
     }
 
+    /**
+     * Logs a failure with full detail (key names, exception text and stack) only in
+     * debug builds; release builds log [releaseMessage], which carries neither a key
+     * name nor the exception, so logcat shows that something failed without leaking
+     * what it was about.
+     */
+    private fun logError(
+        releaseMessage: String,
+        detailedMessage: String,
+        e: Throwable? = null,
+    ) {
+        if (BuildConfig.DEBUG) Log.e(TAG, detailedMessage, e) else Log.e(TAG, releaseMessage)
+    }
+
+    private fun logWarn(
+        releaseMessage: String,
+        detailedMessage: String,
+        e: Throwable? = null,
+    ) {
+        if (BuildConfig.DEBUG) Log.w(TAG, detailedMessage, e) else Log.w(TAG, releaseMessage)
+    }
+
     private fun sanitizeError(
         detailedMessage: String,
         genericMessage: String,
@@ -460,7 +486,7 @@ class SecureKeysPlugin(
     ): Boolean {
         if (keyStore.containsAlias(aliasFor(keyName))) {
             val message = sanitizeErrorWithKeyName(keyName, "Key already exists")
-            Log.e(TAG, "$operation: Key already exists: $keyName")
+            logError("$operation: key already exists", "$operation: Key already exists: $keyName")
             invoke.reject(message, ErrorCodes.KEY_ALREADY_EXISTS)
             return false
         }
@@ -474,7 +500,7 @@ class SecureKeysPlugin(
     ): Boolean {
         if (!keyStore.containsAlias(aliasFor(keyName))) {
             val message = sanitizeErrorWithKeyName(keyName, "Key not found")
-            Log.e(TAG, "$operation: Key not found: $keyName")
+            logError("$operation: key not found", "$operation: Key not found: $keyName")
             invoke.reject(message, ErrorCodes.KEY_NOT_FOUND)
             return false
         }
@@ -587,7 +613,7 @@ class SecureKeysPlugin(
         try {
             return activity.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
         } catch (e: Exception) {
-            Log.e(TAG, "Error checking for StrongBox feature", e)
+            logError("Error checking for StrongBox feature", "Error checking for StrongBox feature", e)
             throw e
         }
     }
@@ -628,13 +654,13 @@ class SecureKeysPlugin(
             Log.i(TAG, "TEE check: probe key backing=$backing")
             return backing == BACKING_INTEGRATED || backing == BACKING_DISCRETE
         } catch (e: Exception) {
-            Log.e(TAG, "TEE check failed", e)
+            logError("TEE check failed", "TEE check failed", e)
             return false
         } finally {
             try {
                 keyStore.deleteEntry(testAlias)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to clean up test key", e)
+                logWarn("Failed to clean up test key", "Failed to clean up test key", e)
             }
         }
     }
@@ -662,7 +688,10 @@ class SecureKeysPlugin(
         // always yields null and reports "no hardware" on every device, backed or not.
         val privateKey = entry?.privateKey
         if (privateKey == null) {
-            Log.w(TAG, "Backing check: key '$alias' could not be inspected, assuming software")
+            logWarn(
+                "Backing check: key could not be inspected, assuming software",
+                "Backing check: key '$alias' could not be inspected, assuming software",
+            )
             return BACKING_SOFTWARE
         }
 
@@ -679,7 +708,11 @@ class SecureKeysPlugin(
                 usedStrongBox = usedStrongBox,
             )
         } catch (e: Exception) {
-            Log.w(TAG, "Backing check: failed to read KeyInfo for '$alias', assuming software", e)
+            logWarn(
+                "Backing check: failed to read KeyInfo, assuming software",
+                "Backing check: failed to read KeyInfo for '$alias', assuming software",
+                e,
+            )
             BACKING_SOFTWARE
         }
     }
@@ -797,7 +830,7 @@ class SecureKeysPlugin(
             ret.put("canEnforceBiometricOnly", canEnforceBiometricOnly)
             invoke.resolve(ret)
         } catch (e: Exception) {
-            Log.e(TAG, "Error in checkSecureElementSupport", e)
+            logError("Error in checkSecureElementSupport", "Error in checkSecureElementSupport", e)
             val detailedMessage = "Failed to check Secure Element support: ${e.message ?: e.javaClass.simpleName}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to check Secure Element support")
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
@@ -880,8 +913,8 @@ class SecureKeysPlugin(
                 // else (bad spec, keystore failure) is a real error and must surface.
                 if (!useSecureElement || !isStrongBoxUnavailable(e)) throw e
                 // StrongBox was requested but is unavailable: fall back to regular hardware-backed storage
-                Log.w(
-                    TAG,
+                logWarn(
+                    "generateSecureKey: StrongBox unavailable, falling back to TEE",
                     "generateSecureKey: StrongBox key creation failed, falling back to TEE. " +
                         "Reason: ${e.message ?: e.javaClass.simpleName}",
                 )
@@ -890,7 +923,11 @@ class SecureKeysPlugin(
                 try {
                     keyStore.deleteEntry(alias)
                 } catch (deleteEx: Exception) {
-                    Log.w(TAG, "generateSecureKey: Failed to clean up partial StrongBox key", deleteEx)
+                    logWarn(
+                        "generateSecureKey: failed to clean up partial StrongBox key",
+                        "generateSecureKey: Failed to clean up partial StrongBox key",
+                        deleteEx,
+                    )
                 }
 
                 // Create a new KeyPairGenerator instance since it can't be reinitialized
@@ -926,8 +963,9 @@ class SecureKeysPlugin(
                 Log.w(TAG, "generateSecureKey: StrongBox requested but key reports backing=$backing")
             }
             if (backing == BACKING_SOFTWARE) {
-                Log.w(
-                    TAG,
+                logWarn(
+                    "generateSecureKey: key is NOT hardware-backed " +
+                        "(no TEE or StrongBox on this device); returning backing=software",
                     "generateSecureKey: key '${args.keyName}' is NOT hardware-backed " +
                         "(no TEE or StrongBox on this device); returning backing=software",
                 )
@@ -941,7 +979,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to create key: ${e.message ?: e.javaClass.simpleName}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to create key")
-            Log.e(TAG, "generateSecureKey: $detailedMessage", e)
+            logError(
+                "generateSecureKey failed",
+                "generateSecureKey: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
@@ -987,7 +1029,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to list keys: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to list keys")
-            Log.e(TAG, "listKeys: $detailedMessage", e)
+            logError(
+                "listKeys failed",
+                "listKeys: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
@@ -1054,7 +1100,11 @@ class SecureKeysPlugin(
             } catch (e: Exception) {
                 val detailedMessage = "Failed to initialize signature for authentication: ${e.message}"
                 val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
+                logError(
+                    "signWithBiometricPrompt failed",
+                    "signWithBiometricPrompt: $detailedMessage",
+                    e,
+                )
                 takePending()?.reject(errorMessage, classifyKeyUseException(e))
                 return
             }
@@ -1083,7 +1133,11 @@ class SecureKeysPlugin(
                     } catch (e: Exception) {
                         val detailedMessage = "Failed to sign after authentication: ${e.message}"
                         val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                        Log.e(TAG, "signWithKey (post-auth): $detailedMessage", e)
+                        logError(
+                            "signWithKey (post-auth) failed",
+                            "signWithKey (post-auth): $detailedMessage",
+                            e,
+                        )
                         settling.reject(errorMessage, classifyKeyUseException(e))
                     }
                 }
@@ -1096,7 +1150,10 @@ class SecureKeysPlugin(
                     val settling = takePending() ?: return
                     val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
                     val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
-                    Log.e(TAG, "signWithKey: $detailedMessage")
+                    logError(
+                        "signWithKey failed",
+                        "signWithKey: $detailedMessage",
+                    )
                     settling.reject(errorMessage, classifyBiometricError(errorCode))
                 }
 
@@ -1140,7 +1197,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-            Log.e(TAG, "signWithBiometricPrompt: $detailedMessage", e)
+            logError(
+                "signWithBiometricPrompt failed",
+                "signWithBiometricPrompt: $detailedMessage",
+                e,
+            )
             takePending()?.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
@@ -1188,14 +1249,22 @@ class SecureKeysPlugin(
                     // Some other error - not auth related
                     val detailedMessage = "Failed to sign: ${e.message}"
                     val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                    Log.e(TAG, "signWithKey: $detailedMessage", e)
+                    logError(
+                        "signWithKey failed",
+                        "signWithKey: $detailedMessage",
+                        e,
+                    )
                     invoke.reject(errorMessage, classifyKeyUseException(e))
                 }
             }
         } catch (e: Exception) {
             val detailedMessage = "Failed to sign: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-            Log.e(TAG, "signWithKey: $detailedMessage", e)
+            logError(
+                "signWithKey failed",
+                "signWithKey: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, classifyKeyUseException(e))
         }
     }
@@ -1208,7 +1277,11 @@ class SecureKeysPlugin(
             } catch (e: Exception) {
                 val detailedMessage = "Failed to parse delete arguments: ${e.message}"
                 val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                Log.e(TAG, "deleteKey: $detailedMessage", e)
+                logError(
+                    "deleteKey failed",
+                    "deleteKey: $detailedMessage",
+                    e,
+                )
                 invoke.reject(errorMessage, ErrorCodes.VALIDATION)
                 return
             }
@@ -1278,7 +1351,10 @@ class SecureKeysPlugin(
                     val invokeToReject = takePending() ?: return
                     val detailedMessage = "Authentication failed: $errString (code: $errorCode)"
                     val errorMessage = sanitizeError(detailedMessage, "Authentication failed")
-                    Log.e(TAG, "deleteKey: $detailedMessage")
+                    logError(
+                        "deleteKey failed",
+                        "deleteKey: $detailedMessage",
+                    )
                     invokeToReject.reject(errorMessage, classifyBiometricError(errorCode))
                 }
 
@@ -1307,7 +1383,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-            Log.e(TAG, "deleteKey: $detailedMessage", e)
+            logError(
+                "deleteKey failed",
+                "deleteKey: $detailedMessage",
+                e,
+            )
             takePending()?.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }
@@ -1338,7 +1418,11 @@ class SecureKeysPlugin(
                 } catch (e: Exception) {
                     val detailedMessage = "Failed to delete key: ${e.message}"
                     val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                    Log.e(TAG, "deleteKey: $detailedMessage", e)
+                    logError(
+                        "deleteKey failed",
+                        "deleteKey: $detailedMessage",
+                        e,
+                    )
                     invoke.reject(errorMessage, ErrorCodes.INTERNAL)
                 }
                 return
@@ -1373,7 +1457,11 @@ class SecureKeysPlugin(
                     } catch (e: Exception) {
                         val detailedMessage = "Failed to delete key: ${e.message}"
                         val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-                        Log.e(TAG, "deleteKey: $detailedMessage", e)
+                        logError(
+                            "deleteKey failed",
+                            "deleteKey: $detailedMessage",
+                            e,
+                        )
                         invoke.reject(errorMessage, ErrorCodes.INTERNAL)
                         return
                     }
@@ -1387,7 +1475,11 @@ class SecureKeysPlugin(
         } catch (e: Exception) {
             val detailedMessage = "Failed to delete key: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")
-            Log.e(TAG, "deleteKey: $detailedMessage", e)
+            logError(
+                "deleteKey failed",
+                "deleteKey: $detailedMessage",
+                e,
+            )
             invoke.reject(errorMessage, ErrorCodes.INTERNAL)
         }
     }

@@ -29,6 +29,11 @@ together.
   rather than `integrated` (`KeyInfo.getSecurityLevel` only exists from API 31),
   and key generation falls back from StrongBox to the TEE only when StrongBox is
   actually unavailable; other failures are reported instead of being retried.
+- Android: `ERROR_HW_NOT_PRESENT` from the biometric prompt is now reported as
+  `unsupported` and `ERROR_HW_UNAVAILABLE` as `internal`, instead of both being
+  `deviceNotSecure`.
+- Android: release builds no longer write key names or exception details to
+  logcat; the detailed messages are logged in debug builds only.
 
 ## [0.1.0-beta.9] - 2026-08-02
 

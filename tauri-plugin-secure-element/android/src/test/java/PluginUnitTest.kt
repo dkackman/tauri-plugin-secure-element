@@ -378,6 +378,18 @@ class PluginUnitTest {
     }
 
     @Test
+    fun `missing biometric hardware is unsupported and unavailable hardware is internal`() {
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.UNSUPPORTED,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_HW_NOT_PRESENT),
+        )
+        assertEquals(
+            SecureKeysPlugin.ErrorCodes.INTERNAL,
+            SecureKeysPlugin.classifyBiometricError(BiometricPrompt.ERROR_HW_UNAVAILABLE),
+        )
+    }
+
+    @Test
     fun `an unrecognised biometric error falls back to internal`() {
         assertEquals(
             SecureKeysPlugin.ErrorCodes.INTERNAL,
