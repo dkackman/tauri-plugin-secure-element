@@ -1,5 +1,12 @@
 {
         "java.configuration.updateBuildConfiguration": "interactive",
+        "files.insertFinalNewline": true,
+        "[json]": {
+                "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[jsonc]": {
+                "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
         "cSpell.words": [
                 "androidx",
                 "clippy",
