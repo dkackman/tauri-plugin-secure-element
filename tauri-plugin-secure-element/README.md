@@ -627,8 +627,9 @@ relying on it for anything where those differences matter.
 - **Android**: keys are scoped to the app's own `AndroidKeyStore` namespace. Another app
   on the same device cannot see or use them.
 - **Windows**: keys are scoped **per-user, not per-app**. `app_id` is only a name prefix
-  (`tauri_se_tpm_{app_id}_{key_name}` for `authMode: "none"`, an analogous scheme for NGC
-  keys), not an OS-enforced boundary. Any other process running as the same Windows user
+  (`tauri_se_tpm_` followed by the escaped form of `{app_id}/{key_name}` for
+  `authMode: "none"`, so `com.example` + `k` is `tauri_se_tpm_com_x2Eexample_x2Fk`; an
+  analogous scheme for NGC keys), not an OS-enforced boundary. Any other process running as the same Windows user
   can open a key by name — there is no equivalent of iOS/macOS keychain access groups or
   Android's per-app keystore on Windows.
   - The app identifier is escaped into that name injectively (`_` doubles to `__`, and
@@ -637,7 +638,8 @@ relying on it for anything where those differences matter.
     character onto `_`, which made `a.b` and `a_b` share one namespace and read, overwrite
     and delete each other's keys. This is a namespacing fix, not a security boundary: key
     names remain derivable from the public app identifier, and on Windows that was never
-    a boundary in the first place.
+    a boundary in the first place. The key name is escaped too, so no two
+    `(app_id, key_name)` pairs collide.
   - **`authMode: "none"` keys can be used silently.** A `none` key requires no user
     presence to sign with, so any same-user process that knows (or guesses) the key name
     can request signatures with no prompt and no way for the user to notice. Prefer
@@ -728,14 +730,20 @@ switch on `e.code` for anything conditional. See [Error handling](#error-handlin
 rejected by Tauri's permission layer.
 
 **Windows key names changed.** The app identifier and key name are now escaped injectively
-into a single TPM key name (see
+into a single key name (see
 [Key isolation](#key-isolation-is-not-the-same-on-every-platform)), so distinct
-`(appId, keyName)` pairs can no longer collide. TPM keys created by earlier betas, and
-Windows Hello keys created under an app identifier containing `.`, `/`, `:` or other
-reserved characters, resolve under the old name and will not be found. They still exist in
-the provider; generate fresh keys after upgrading, and delete the old ones through an
-earlier build if you need to clean up. Only Windows is affected — iOS, macOS and Android
-name keys differently and are unchanged.
+`(appId, keyName)` pairs can no longer collide.
+
+- Upgrading from beta.5 through beta.9: keys created with `authMode: "none"` (Platform
+  Crypto Provider / TPM) are not found by this version and must be regenerated.
+  `pinOrBiometric` (Windows Hello) keys are unaffected.
+- Upgrading from before beta.5: in addition, Windows Hello keys created under an app
+  identifier containing reserved characters (`.`, `/`, `:` and others) are affected, since
+  that change shipped in beta.5.
+
+The old keys still exist in the provider; delete them through an earlier build if you need
+to clean up. Only Windows is affected — iOS, macOS and Android name keys differently and
+are unchanged.
 
 ## Versioning and API stability
 

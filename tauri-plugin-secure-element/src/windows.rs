@@ -1,4 +1,5 @@
 use crate::error_sanitize::sanitize_error;
+use crate::key_probe::{resolve_probe, ProbeOutcome};
 use crate::windows_hello;
 use crate::windows_names::{decode_tpm_key_name, extract_ngc_key_name, ngc_key_name, tpm_key_name};
 use crate::windows_raii::{
@@ -400,8 +401,28 @@ pub fn try_open_key_auto(
     // error (corrupted key, service fault, etc.) is propagated immediately —
     // silently retrying in TPM could return a wrong key or hide the real
     // cause behind a misleading "key not found in TPM" error.
-    match try_open_key(&ngc_provider, &ngc_full_name)? {
-        KeyProbe::Opened(probe) => {
+    let inaccessible = || {
+        crate::Error::platform(
+            crate::ErrorCode::KeyNotAccessible,
+            sanitize_error(
+                &format!("Key '{}' exists but is not accessible", key_name),
+                "Key is not accessible",
+            ),
+        )
+    };
+
+    let ngc_probe = try_open_key(&ngc_provider, &ngc_full_name)?;
+    let ngc_denied = matches!(ngc_probe, KeyProbe::AccessDenied);
+    let ngc_opened = matches!(ngc_probe, KeyProbe::Opened(_));
+    // NTE_PERM is also what the NGC provider returns for a key that was never
+    // created, so enumeration decides: present means it exists but cannot be
+    // touched; absent means fall through to TPM.
+    match resolve_probe(ngc_opened, ngc_denied, || {
+        Ok(enumerate_key_names(&ngc_provider)?
+            .iter()
+            .any(|n| n == &ngc_full_name))
+    })? {
+        ProbeOutcome::Found => {
             // The probe handle was acquired with NCRYPT_SILENT_FLAG, which is
             // sticky: NCrypt marks the whole key context as "must not show UI",
             // so any later operation on it that needs a gesture fails with
@@ -409,38 +430,30 @@ pub fn try_open_key_auto(
             // the Windows Hello prompt, so close the probe and reopen the key
             // without the flag. Opening never prompts on its own — the gesture
             // happens at NCryptSignHash — so provider detection stays silent.
-            drop(probe);
+            drop(ngc_probe);
             let key = open_key_internal(&ngc_provider, &ngc_full_name)?;
             return Ok(Some((key, KeyProviderType::Ngc)));
         }
-        KeyProbe::AccessDenied => {
-            // NTE_PERM is also what the NGC provider returns for a key that was
-            // never created, so enumeration decides: present means it exists
-            // but cannot be touched; absent means fall through to TPM.
-            if enumerate_key_names(&ngc_provider)?
-                .iter()
-                .any(|n| n == &ngc_full_name)
-            {
-                return Err(crate::Error::platform(
-                    crate::ErrorCode::KeyNotAccessible,
-                    sanitize_error(
-                        &format!("Key '{}' exists but is not accessible", key_name),
-                        "Key is not accessible",
-                    ),
-                ));
-            }
-        }
-        KeyProbe::NotFound => {}
+        ProbeOutcome::Inaccessible => return Err(inaccessible()),
+        ProbeOutcome::Absent => {}
     }
 
     // Try TPM provider
     let tpm_full_name = tpm_key_name(app_id, key_name);
     let tpm_provider = open_provider()?;
-    match try_open_key(&tpm_provider, &tpm_full_name)? {
-        KeyProbe::Opened(key) => Ok(Some((key, KeyProviderType::Tpm))),
-        // NTE_PERM on the TPM provider is not an NGC ambiguity; as before, it
-        // reads as absent.
-        KeyProbe::NotFound | KeyProbe::AccessDenied => Ok(None),
+    let tpm_probe = try_open_key(&tpm_provider, &tpm_full_name)?;
+    let tpm_denied = matches!(tpm_probe, KeyProbe::AccessDenied);
+    // Same rule as NGC: NTE_PERM on an existing key is `KeyNotAccessible`, not
+    // absence, so delete and sign do not misreport it.
+    let outcome = resolve_probe(matches!(tpm_probe, KeyProbe::Opened(_)), tpm_denied, || {
+        Ok(enumerate_key_names(&tpm_provider)?
+            .iter()
+            .any(|n| n == &tpm_full_name))
+    })?;
+    match (outcome, tpm_probe) {
+        (ProbeOutcome::Found, KeyProbe::Opened(key)) => Ok(Some((key, KeyProviderType::Tpm))),
+        (ProbeOutcome::Inaccessible, _) => Err(inaccessible()),
+        _ => Ok(None),
     }
 }
 
@@ -588,14 +601,21 @@ fn enumerate_key_names(provider: &ProviderHandle) -> crate::Result<Vec<String>> 
 /// Enumeration settles that one ambiguous case, and it needs no access to the
 /// key itself.
 fn key_present_in_provider(provider: &ProviderHandle, full_name: &str) -> crate::Result<bool> {
-    match try_open_key(provider, full_name)? {
-        // Nothing is done with the key; dropping the guard closes it.
-        KeyProbe::Opened(_) => Ok(true),
-        KeyProbe::NotFound => Ok(false),
-        KeyProbe::AccessDenied => Ok(enumerate_key_names(provider)?
-            .iter()
-            .any(|name| name == full_name)),
-    }
+    let probe = try_open_key(provider, full_name)?;
+    let outcome = resolve_probe(
+        matches!(probe, KeyProbe::Opened(_)),
+        matches!(probe, KeyProbe::AccessDenied),
+        || {
+            Ok(enumerate_key_names(provider)?
+                .iter()
+                .any(|name| name == full_name))
+        },
+    )?;
+    // Dropping the probe closes any handle; an inaccessible key still exists.
+    Ok(matches!(
+        outcome,
+        ProbeOutcome::Found | ProbeOutcome::Inaccessible
+    ))
 }
 
 /// Determines whether `key_name` is already taken in either provider.

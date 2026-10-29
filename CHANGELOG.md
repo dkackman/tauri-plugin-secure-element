@@ -20,16 +20,22 @@ together.
   instead of `userCancelled` for every non-verified result.
 - Windows: a failure of the Windows Hello availability check while creating an
   auth-required key is reported as `internal` instead of `deviceNotSecure`.
+- Windows: failures to resolve the user SID or open the NGC provider while
+  looking up a key now propagate instead of silently skipping Windows Hello
+  keys.
+- Windows: an NGC key that exists but is access-denied (`NTE_PERM`) reports
+  `keyNotAccessible` instead of reading as absent.
+- Windows: an inaccessible `authMode: "none"` key now reports
+  `keyNotAccessible` instead of being treated as absent, so `deleteKey` no
+  longer reports success and `signWithKey` no longer reports `keyNotFound` for
+  a key that exists.
 
 ### Changed
 
-- Windows: TPM key names are now injective in `(appId, keyName)`; the old
-  `{app}_{key}` join let different pairs collide. TPM keys created by earlier
-  betas are not found by this version; generate fresh keys after upgrading.
-- Windows: failures to resolve the user SID or open the NGC provider while
-  looking up a key now propagate instead of silently skipping Windows Hello
-  keys, and an NGC key that exists but is access-denied (`NTE_PERM`) reports
-  `keyNotAccessible` instead of reading as absent.
+- **Breaking (Windows):** key names are now injective in `(appId, keyName)`;
+  the old `{app}_{key}` join let different pairs collide. `authMode: "none"`
+  keys created by earlier betas are not found by this version; generate fresh
+  keys after upgrading.
 
 ## [0.1.0-beta.9] - 2026-08-02
 
