@@ -124,21 +124,29 @@ fn main() {
         // resulting version mismatch fails while parsing the SDK's own .swiftinterface
         // files, which reads as a bug in this crate but is not one.
         let object_file = format!("{}/secure_element.o", out_dir);
-        let swift_status = Command::new("xcrun")
-            .args([
-                "swiftc",
-                "-c",
-                swift_core.to_str().unwrap(),
-                swift_ffi.to_str().unwrap(),
-                "-o",
-                object_file.as_str(),
-                "-target",
-                swift_target,
-                "-sdk",
-                sdk_path.as_str(),
-                "-whole-module-optimization",
-            ])
-            .output();
+        let mut swiftc_args: Vec<&str> = vec![
+            "swiftc",
+            "-c",
+            swift_core.to_str().unwrap(),
+            swift_ffi.to_str().unwrap(),
+            "-o",
+            object_file.as_str(),
+            "-target",
+            swift_target,
+            "-sdk",
+            sdk_path.as_str(),
+            "-whole-module-optimization",
+        ];
+        // Cargo sets PROFILE for build scripts. The Swift error sanitizer keys off
+        // `#if DEBUG`, which swiftc does not define on its own, so without this flag
+        // debug builds got the same generic messages as release.
+        // Swift's DEBUG follows Cargo's PROFILE while the Rust side's error_sanitize
+        // follows debug_assertions; a release profile with debug-assertions = true
+        // therefore gets detailed Rust text but generic Swift text, which leaks nothing.
+        if std::env::var("PROFILE").as_deref() == Ok("debug") {
+            swiftc_args.extend(["-D", "DEBUG"]);
+        }
+        let swift_status = Command::new("xcrun").args(&swiftc_args).output();
 
         match swift_status {
             Ok(output) => {

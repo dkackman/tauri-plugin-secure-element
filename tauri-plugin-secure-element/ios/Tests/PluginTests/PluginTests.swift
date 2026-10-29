@@ -142,3 +142,14 @@ final class SecureEnclaveErrorDescriptionTests: XCTestCase {
         XCTAssertEqual(SecureEnclaveError.failedToQueryKeys(-25300).errorDescription, "Failed to query keys: -25300")
     }
 }
+
+/// Tests for classifying Keychain query failures into wire error codes.
+final class QueryFailureTests: XCTestCase {
+    func testLockedKeychainIsNotAccessible() {
+        XCTAssertEqual(SecureEnclaveCore.queryFailure(errSecInteractionNotAllowed).code, "keyNotAccessible")
+    }
+
+    func testOtherStatusIsInternal() {
+        XCTAssertEqual(SecureEnclaveCore.queryFailure(errSecParam).code, "internal")
+    }
+}
