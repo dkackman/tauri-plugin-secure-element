@@ -80,7 +80,7 @@ together.
   keys created by earlier betas are not found by this version; generate fresh
   keys after upgrading.
 
-## [0.1.0-beta.10] - 2026-08-02
+## [0.1.0-beta.11] - 2026-08-02
 
 ### Added
 
@@ -196,7 +196,7 @@ Initial platform bring-up: Secure Enclave (iOS/macOS), Android Keystore
 `checkSecureElementSupport`), and the test app.
 
 [Unreleased]: https://github.com/dkackman/tauri-plugin-secure-element/compare/v0.1.0-beta.9...HEAD
-[0.1.0-beta.10]: https://github.com/dkackman/tauri-plugin-secure-element/compare/v0.1.0-beta.8...v0.1.0-beta.9
+[0.1.0-beta.11]: https://github.com/dkackman/tauri-plugin-secure-element/compare/v0.1.0-beta.8...v0.1.0-beta.9
 [0.1.0-beta.8]: https://github.com/dkackman/tauri-plugin-secure-element/compare/v0.1.0-beta.5...v0.1.0-beta.8
 [0.1.0-beta.5]: https://github.com/dkackman/tauri-plugin-secure-element/compare/v0.1.0-beta.4...v0.1.0-beta.5
 [0.1.0-beta.4]: https://github.com/dkackman/tauri-plugin-secure-element/compare/v0.1.0-beta.3...v0.1.0-beta.4
