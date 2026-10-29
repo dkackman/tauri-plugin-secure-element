@@ -1,5 +1,7 @@
 use crate::error_sanitize::sanitize_error;
+use crate::key_probe::{resolve_probe, ProbeOutcome};
 use crate::windows_hello;
+use crate::windows_names::{decode_tpm_key_name, extract_ngc_key_name, ngc_key_name, tpm_key_name};
 use crate::windows_raii::{
     EnumStateGuard, HLocalGuard, KeyHandle, KeyNameBufferGuard, ProviderHandle,
 };
@@ -32,10 +34,15 @@ const NTE_NOT_FOUND: HRESULT = HRESULT(0x80090011u32 as i32);
 /// NCrypt error: the key does not exist in this provider (NTE_NO_KEY)
 const NTE_NO_KEY: HRESULT = HRESULT(0x8009000Du32 as i32);
 
+/// NCrypt error: an object with this name already exists (NTE_EXISTS)
+const NTE_EXISTS: HRESULT = HRESULT(0x8009000Fu32 as i32);
+
 /// NCrypt error: access denied (NTE_PERM) - NGC provider returns this for
 /// keys that don't exist when probing without authentication. It is also what
 /// an existing but inaccessible key returns, so the two cases are only
-/// distinguishable by enumeration (see `key_present_in_provider`).
+/// distinguishable by enumeration. `try_open_key` reports it as
+/// `KeyProbe::AccessDenied` rather than folding it into "not found", and
+/// `try_open_key_auto` / `key_present_in_provider` resolve it by enumeration.
 const NTE_PERM: HRESULT = HRESULT(0x80090010u32 as i32);
 
 /// NCrypt status: the enumeration has no further keys (NTE_NO_MORE_ITEMS).
@@ -79,6 +86,7 @@ fn classify_ncrypt_error(e: &windows::core::Error) -> crate::ErrorCode {
         // transient in the sense that authenticating can resolve it, unlike a
         // key that is simply absent.
         NTE_PERM => crate::ErrorCode::KeyNotAccessible,
+        NTE_EXISTS => crate::ErrorCode::KeyAlreadyExists,
         NTE_SILENT_CONTEXT => crate::ErrorCode::AuthFailed,
         _ => crate::ErrorCode::Internal,
     }
@@ -88,87 +96,6 @@ fn classify_ncrypt_error(e: &windows::core::Error) -> crate::ErrorCode {
 /// debug/release message split as the rest of this module.
 fn ncrypt_error(e: &windows::core::Error, detailed: String, generic: &str) -> crate::Error {
     crate::Error::platform(classify_ncrypt_error(e), sanitize_error(&detailed, generic))
-}
-
-/// Key name prefix base for TPM keys without Windows Hello protection
-/// Full format: tauri_se_tpm_{app_id}_{key_name}
-const KEY_PREFIX_TPM_BASE: &str = "tauri_se_tpm_";
-
-/// Domain for NGC keys
-const NGC_DOMAIN: &str = "tauri_se";
-
-/// Characters that cannot appear literally in a key name.
-///
-/// `/` and `\` would break the `{SID}//tauri_se/{app_id}/{key_name}` structure
-/// that `extract_ngc_key_name` parses; the rest are rejected or reserved by the
-/// key storage providers.
-const APP_ID_RESERVED_CHARS: [char; 10] = ['.', '/', '\\', ':', '*', '?', '"', '<', '>', '|'];
-
-/// Encodes an app identifier for use in key names, injectively.
-///
-/// Windows scopes keys per-user, not per-app (see the Security model section of
-/// the README), so the app identifier is only a namespace prefix — but it still
-/// has to be a *faithful* one. The previous encoding mapped all of
-/// [`APP_ID_RESERVED_CHARS`] onto `_`, which is many-to-one: `com.example.app`
-/// and `com_example_app` produced the same namespace, so two different apps
-/// installed by the same user would read and write each other's keys, and
-/// `deleteKey` in one could destroy the other's.
-///
-/// The escape scheme here is a decodable one — `_` doubles to `__`, every other
-/// reserved character becomes `_x{HH}` — so distinct identifiers always produce
-/// distinct namespaces. `__` and `_x` cannot be confused because the escape is
-/// resolved left to right from a `_`. Names stay readable in `certutil -key`
-/// output, which a hash would have cost.
-///
-/// This is deliberately not an attempt at obscurity: key names remain derivable
-/// from the public app identifier, and on Windows that is not a security
-/// boundary in the first place.
-///
-/// **Compatibility:** this changes the key names an app resolves. Keys created
-/// by an earlier beta under an app identifier containing any reserved character
-/// are not found by this version — they still exist in the provider, but under
-/// the old name. Generate fresh keys after upgrading.
-fn sanitize_app_id(app_id: &str) -> String {
-    let mut encoded = String::with_capacity(app_id.len());
-    for c in app_id.chars() {
-        if c == '_' {
-            encoded.push_str("__");
-        } else if APP_ID_RESERVED_CHARS.contains(&c) {
-            // Every reserved character is ASCII, so one byte is the whole char.
-            encoded.push_str(&format!("_x{:02X}", c as u32));
-        } else {
-            encoded.push(c);
-        }
-    }
-    encoded
-}
-
-/// Builds the TPM key prefix including the app identifier
-fn tpm_key_prefix(app_id: &str) -> String {
-    format!("{}{}_", KEY_PREFIX_TPM_BASE, sanitize_app_id(app_id))
-}
-
-/// Builds the full TPM key name
-fn tpm_key_name(app_id: &str, key_name: &str) -> String {
-    format!("{}{}", tpm_key_prefix(app_id), key_name)
-}
-
-/// Builds the NGC key marker for the given app identifier
-/// Format: /tauri_se/{app_id}//
-fn ngc_key_marker(app_id: &str) -> String {
-    format!("/{}/{}/", NGC_DOMAIN, sanitize_app_id(app_id))
-}
-
-/// Builds the full NGC key name
-/// Format: {SID}//tauri_se/{app_id}/{key_name}
-fn ngc_key_name(sid: &str, app_id: &str, key_name: &str) -> String {
-    format!(
-        "{}//{}/{}/{}",
-        sid,
-        NGC_DOMAIN,
-        sanitize_app_id(app_id),
-        key_name
-    )
 }
 
 /// Property to require gesture (biometric/PIN) for each operation.
@@ -456,40 +383,77 @@ pub struct FoundKey {
 /// Every other failure is an `Err`, so callers can tell "not there" apart from
 /// "could not tell" — a distinction that matters for delete, where reporting success
 /// on an unknown failure would tell the caller a key was destroyed when it was not.
+///
+/// That includes failing to resolve the user SID or to open the NGC provider:
+/// those propagate rather than silently skipping NGC, which would let an
+/// existing Windows Hello key read as absent. An NGC key that exists but is
+/// access-denied (`NTE_PERM`, settled by enumeration) is `KeyNotAccessible`.
 pub fn try_open_key_auto(
     app_id: &str,
     key_name: &str,
 ) -> crate::Result<Option<(KeyHandle, KeyProviderType)>> {
     // Try NGC provider first (keys have format {SID}//tauri_se/{app_id}/{key_name})
-    if let Ok(sid) = get_current_user_sid() {
-        let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
-        if let Ok(ngc_provider) = open_ngc_provider() {
-            // NGC provider is available. Use try_open_key so that only a genuine
-            // "key not found" falls through to the TPM path. Any other error
-            // (corrupted key, service fault, etc.) is propagated immediately —
-            // silently retrying in TPM could return a wrong key or hide the real
-            // cause behind a misleading "key not found in TPM" error.
-            if let Some(probe) = try_open_key(&ngc_provider, &ngc_full_name)? {
-                // The probe handle was acquired with NCRYPT_SILENT_FLAG, which is
-                // sticky: NCrypt marks the whole key context as "must not show UI",
-                // so any later operation on it that needs a gesture fails with
-                // NTE_SILENT_CONTEXT (0x80090022). Signing an NGC key always needs
-                // the Windows Hello prompt, so close the probe and reopen the key
-                // without the flag. Opening never prompts on its own — the gesture
-                // happens at NCryptSignHash — so provider detection stays silent.
-                drop(probe);
-                let key = open_key_internal(&ngc_provider, &ngc_full_name)?;
-                return Ok(Some((key, KeyProviderType::Ngc)));
-            }
+    let sid = get_current_user_sid()?;
+    let ngc_full_name = ngc_key_name(&sid, app_id, key_name);
+    let ngc_provider = open_ngc_provider()?;
+
+    // Only a genuine "key not found" falls through to the TPM path. Any other
+    // error (corrupted key, service fault, etc.) is propagated immediately —
+    // silently retrying in TPM could return a wrong key or hide the real
+    // cause behind a misleading "key not found in TPM" error.
+    let inaccessible = || {
+        crate::Error::platform(
+            crate::ErrorCode::KeyNotAccessible,
+            sanitize_error(
+                &format!("Key '{}' exists but is not accessible", key_name),
+                "Key is not accessible",
+            ),
+        )
+    };
+
+    let ngc_probe = try_open_key(&ngc_provider, &ngc_full_name)?;
+    let ngc_denied = matches!(ngc_probe, KeyProbe::AccessDenied);
+    let ngc_opened = matches!(ngc_probe, KeyProbe::Opened(_));
+    // NTE_PERM is also what the NGC provider returns for a key that was never
+    // created, so enumeration decides: present means it exists but cannot be
+    // touched; absent means fall through to TPM.
+    match resolve_probe(ngc_opened, ngc_denied, || {
+        Ok(enumerate_key_names(&ngc_provider)?
+            .iter()
+            .any(|n| n == &ngc_full_name))
+    })? {
+        ProbeOutcome::Found => {
+            // The probe handle was acquired with NCRYPT_SILENT_FLAG, which is
+            // sticky: NCrypt marks the whole key context as "must not show UI",
+            // so any later operation on it that needs a gesture fails with
+            // NTE_SILENT_CONTEXT (0x80090022). Signing an NGC key always needs
+            // the Windows Hello prompt, so close the probe and reopen the key
+            // without the flag. Opening never prompts on its own — the gesture
+            // happens at NCryptSignHash — so provider detection stays silent.
+            drop(ngc_probe);
+            let key = open_key_internal(&ngc_provider, &ngc_full_name)?;
+            return Ok(Some((key, KeyProviderType::Ngc)));
         }
+        ProbeOutcome::Inaccessible => return Err(inaccessible()),
+        ProbeOutcome::Absent => {}
     }
 
     // Try TPM provider
     let tpm_full_name = tpm_key_name(app_id, key_name);
     let tpm_provider = open_provider()?;
-    match try_open_key(&tpm_provider, &tpm_full_name)? {
-        Some(key) => Ok(Some((key, KeyProviderType::Tpm))),
-        None => Ok(None),
+    let tpm_probe = try_open_key(&tpm_provider, &tpm_full_name)?;
+    let tpm_denied = matches!(tpm_probe, KeyProbe::AccessDenied);
+    // Same rule as NGC: NTE_PERM on an existing key is `KeyNotAccessible`, not
+    // absence, so delete and sign do not misreport it.
+    let outcome = resolve_probe(matches!(tpm_probe, KeyProbe::Opened(_)), tpm_denied, || {
+        Ok(enumerate_key_names(&tpm_provider)?
+            .iter()
+            .any(|n| n == &tpm_full_name))
+    })?;
+    match (outcome, tpm_probe) {
+        (ProbeOutcome::Found, KeyProbe::Opened(key)) => Ok(Some((key, KeyProviderType::Tpm))),
+        (ProbeOutcome::Inaccessible, _) => Err(inaccessible()),
+        _ => Ok(None),
     }
 }
 
@@ -527,18 +491,27 @@ fn open_key_internal(provider: &ProviderHandle, full_name: &str) -> crate::Resul
     }
 }
 
-/// Tries to open a key, returning `Ok(None)` specifically when the key does not
-/// exist (NTE_BAD_KEYSET / NTE_NOT_FOUND). Any other provider error is returned
-/// as `Err` so the caller can distinguish "not there" from a real failure.
-fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<Option<KeyHandle>> {
+/// Outcome of silently probing a provider for a key.
+enum KeyProbe {
+    /// The key exists and was opened (with `NCRYPT_SILENT_FLAG`).
+    Opened(KeyHandle),
+    /// The provider reports no such key (NTE_BAD_KEYSET / NTE_NOT_FOUND / NTE_NO_KEY).
+    NotFound,
+    /// `NTE_PERM`. On the NGC provider this means either "never created" or
+    /// "exists but inaccessible"; only enumeration can tell them apart.
+    AccessDenied,
+}
+
+/// Silently probes for a key. Only the codes named in [`KeyProbe`] are folded
+/// into a result; any other provider error is returned as `Err` so the caller
+/// can distinguish "not there" from a real failure.
+fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<KeyProbe> {
     unsafe {
         let mut key_handle = NCRYPT_KEY_HANDLE::default();
         let key_name_h = HSTRING::from(full_name);
 
         // Use NCRYPT_SILENT_FLAG to prevent Windows Hello UI prompts during
-        // provider probing. The NGC provider may return NTE_PERM (access denied)
-        // for keys that simply don't exist; we treat that as "not found" so the
-        // caller can fall through to the next provider.
+        // provider probing.
         match NCryptOpenKey(
             provider.0,
             &mut key_handle,
@@ -546,19 +519,20 @@ fn try_open_key(provider: &ProviderHandle, full_name: &str) -> crate::Result<Opt
             CERT_KEY_SPEC(0),
             NCRYPT_SILENT_FLAG,
         ) {
-            Ok(()) => Ok(Some(KeyHandle(key_handle))),
+            Ok(()) => Ok(KeyProbe::Opened(KeyHandle(key_handle))),
+            Err(e) if e.code() == NTE_PERM => Ok(KeyProbe::AccessDenied),
             Err(e)
                 if e.code() == NTE_BAD_KEYSET
                     || e.code() == NTE_NOT_FOUND
-                    || e.code() == NTE_NO_KEY
-                    || e.code() == NTE_PERM =>
+                    || e.code() == NTE_NO_KEY =>
             {
-                Ok(None)
+                Ok(KeyProbe::NotFound)
             }
-            Err(e) => Err(crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to open key '{}': {}", full_name, e),
+            Err(e) => Err(ncrypt_error(
+                &e,
+                format!("Failed to open key '{}': {}", full_name, e),
                 "Failed to open key",
-            )))),
+            )),
         }
     }
 }
@@ -619,47 +593,29 @@ fn enumerate_key_names(provider: &ProviderHandle) -> crate::Result<Vec<String>> 
 /// Silently determines whether a provider holds a key by this full name,
 /// without leaving a handle open.
 ///
-/// `try_open_key` folds `NTE_PERM` into "not found" because the NGC provider
-/// returns access-denied for keys that were never created. That conflation is
-/// safe for a caller about to fall through to the other provider, but not for
-/// one deciding whether a name is free: an NGC key that exists and is merely
-/// inaccessible would read as absent and its name would be handed to a second
-/// key in the other provider. Enumeration settles that one ambiguous case, and
-/// it needs no access to the key itself.
+/// `KeyProbe::AccessDenied` is ambiguous on the NGC provider, which returns it
+/// for keys that were never created. That is safe for a caller about to fall
+/// through to the other provider, but not for one deciding whether a name is
+/// free: an NGC key that exists and is merely inaccessible would read as absent
+/// and its name would be handed to a second key in the other provider.
+/// Enumeration settles that one ambiguous case, and it needs no access to the
+/// key itself.
 fn key_present_in_provider(provider: &ProviderHandle, full_name: &str) -> crate::Result<bool> {
-    unsafe {
-        let mut key_handle = NCRYPT_KEY_HANDLE::default();
-        let key_name_h = HSTRING::from(full_name);
-
-        match NCryptOpenKey(
-            provider.0,
-            &mut key_handle,
-            PCWSTR(key_name_h.as_ptr()),
-            CERT_KEY_SPEC(0),
-            NCRYPT_SILENT_FLAG,
-        ) {
-            Ok(()) => {
-                // Nothing is done with the key, so hand it straight to the
-                // guard rather than leaking it.
-                drop(KeyHandle(key_handle));
-                Ok(true)
-            }
-            Err(e)
-                if e.code() == NTE_BAD_KEYSET
-                    || e.code() == NTE_NOT_FOUND
-                    || e.code() == NTE_NO_KEY =>
-            {
-                Ok(false)
-            }
-            Err(e) if e.code() == NTE_PERM => Ok(enumerate_key_names(provider)?
+    let probe = try_open_key(provider, full_name)?;
+    let outcome = resolve_probe(
+        matches!(probe, KeyProbe::Opened(_)),
+        matches!(probe, KeyProbe::AccessDenied),
+        || {
+            Ok(enumerate_key_names(provider)?
                 .iter()
-                .any(|name| name == full_name)),
-            Err(e) => Err(crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to check for key '{}': {}", full_name, e),
-                "Failed to check for key",
-            )))),
-        }
-    }
+                .any(|name| name == full_name))
+        },
+    )?;
+    // Dropping the probe closes any handle; an inaccessible key still exists.
+    Ok(matches!(
+        outcome,
+        ProbeOutcome::Found | ProbeOutcome::Inaccessible
+    ))
 }
 
 /// Determines whether `key_name` is already taken in either provider.
@@ -708,7 +664,16 @@ pub fn create_key(
             ))
         }
         crate::models::AuthenticationMode::PinOrBiometric => {
-            if !windows_hello::is_windows_hello_configured() {
+            let configured = windows_hello::is_windows_hello_configured().map_err(|e| {
+                crate::Error::platform(
+                    crate::ErrorCode::Internal,
+                    sanitize_error(
+                        &format!("Could not determine Windows Hello availability: {e}"),
+                        "Could not determine Windows Hello availability",
+                    ),
+                )
+            })?;
+            if !configured {
                 return Err(crate::Error::platform(
                     crate::ErrorCode::DeviceNotSecure,
                     sanitize_error(
@@ -805,10 +770,11 @@ fn create_ngc_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("NCryptCreatePersistedKey failed for '{}': {}", key_name, e),
+            ncrypt_error(
+                &e,
+                format!("NCryptCreatePersistedKey failed for '{}': {}", key_name, e),
                 "Failed to create key",
-            )))
+            )
         })?;
 
         let key = KeyHandle(key_handle);
@@ -910,10 +876,11 @@ fn create_tpm_key(app_id: &str, key_name: &str) -> crate::Result<KeyHandle> {
             NCRYPT_FLAGS(0),
         )
         .map_err(|e| {
-            crate::Error::Io(std::io::Error::other(sanitize_error(
-                &format!("Failed to create TPM key '{}': {}", key_name, e),
+            ncrypt_error(
+                &e,
+                format!("Failed to create TPM key '{}': {}", key_name, e),
                 "Failed to create key",
-            )))
+            )
         })?;
 
         let key = KeyHandle(key_handle);
@@ -1062,8 +1029,11 @@ pub fn sign_hash_with_window(
         // so it is preferred over the generic fallback whenever given.
         let context_property = HSTRING::from(NCRYPT_USE_CONTEXT_PROPERTY);
         let context_message = reason.unwrap_or(DEFAULT_SIGN_PROMPT);
+        // The provider expects a NUL-terminated UTF-16 string, so append the
+        // terminator explicitly.
         let context_bytes: Vec<u8> = context_message
             .encode_utf16()
+            .chain(std::iter::once(0u16))
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
@@ -1154,14 +1124,6 @@ pub fn delete_key(key: KeyHandle) -> crate::Result<bool> {
     }
 }
 
-/// Extracts user key name from NGC format: {SID}//tauri_se/{app_id}/{key_name} -> key_name
-fn extract_ngc_key_name<'a>(full_name: &'a str, app_id: &str) -> Option<&'a str> {
-    let marker = ngc_key_marker(app_id);
-    full_name
-        .find(&marker)
-        .map(|pos| &full_name[pos + marker.len()..])
-}
-
 /// Collects the keys in one provider that belong to this app and pass the filters.
 ///
 /// The two providers differ only in how a caller-facing name is recovered from
@@ -1224,16 +1186,11 @@ pub fn find_keys(
 ) -> crate::Result<Vec<FoundKey>> {
     let mut all_keys = Vec::new();
 
-    let tpm_prefix = tpm_key_prefix(app_id);
     let tpm_provider = open_provider()?;
     all_keys.extend(find_keys_in_provider(
         &tpm_provider,
         KeyProviderType::Tpm,
-        |full_name| {
-            full_name
-                .strip_prefix(tpm_prefix.as_str())
-                .map(str::to_string)
-        },
+        |full_name| decode_tpm_key_name(full_name, app_id),
         filter_key_name,
         filter_public_key,
     )?);
@@ -1345,6 +1302,14 @@ mod error_classification_tests {
     }
 
     #[test]
+    fn name_collision_classifies_as_already_exists() {
+        assert_eq!(
+            classify_ncrypt_error(&error(NTE_EXISTS)),
+            crate::ErrorCode::KeyAlreadyExists
+        );
+    }
+
+    #[test]
     fn missing_key_statuses_classify_as_not_found() {
         for code in [NTE_BAD_KEYSET, NTE_NOT_FOUND, NTE_NO_KEY] {
             assert_eq!(
@@ -1390,125 +1355,6 @@ mod error_classification_tests {
         );
         assert_eq!(err.code(), crate::ErrorCode::UserCancelled);
         assert!(!err.message().is_empty());
-    }
-}
-
-/// Key-name formatting/parsing helpers below are pure string manipulation — no NCrypt
-/// or TPM involved — so unlike the rest of this file they run for real, not just as a
-/// link check.
-#[cfg(test)]
-mod key_naming_tests {
-    use super::*;
-
-    #[test]
-    fn sanitize_app_id_escapes_every_reserved_character() {
-        assert_eq!(
-            sanitize_app_id("com.example.app/v1:test?\"<>|\\"),
-            "com_x2Eexample_x2Eapp_x2Fv1_x3Atest_x3F_x22_x3C_x3E_x7C_x5C"
-        );
-        assert_eq!(sanitize_app_id(""), "");
-    }
-
-    /// The bug this encoding exists to fix: `.` and `_` used to collapse
-    /// together, so two apps installed by the same user shared one key
-    /// namespace and could read, overwrite, or delete each other's keys.
-    #[test]
-    fn identifiers_differing_only_in_separators_do_not_collide() {
-        assert_ne!(
-            sanitize_app_id("com.example.app"),
-            sanitize_app_id("com_example_app")
-        );
-    }
-
-    /// Injectivity is the whole property; spot-check it over identifiers
-    /// specifically chosen to stress the escape prefixes (`__` vs `_x`).
-    #[test]
-    fn distinct_identifiers_produce_distinct_namespaces() {
-        let identifiers = [
-            "com.example.app",
-            "com_example_app",
-            "com.example_app",
-            "com_example.app",
-            "com__example",
-            "com_x2Eexample",
-            "a.b",
-            "a_b",
-            "a__b",
-            "",
-            "_",
-            ".",
-        ];
-        let mut seen = std::collections::HashMap::new();
-        for id in identifiers {
-            let encoded = sanitize_app_id(id);
-            if let Some(previous) = seen.insert(encoded.clone(), id) {
-                panic!("'{}' and '{}' both encode to '{}'", previous, id, encoded);
-            }
-        }
-    }
-
-    /// An identifier that already looks like an escape sequence must survive:
-    /// the literal text `com_x2E` has to stay distinguishable from an encoded
-    /// `com.`, which is exactly what doubling `_` buys.
-    #[test]
-    fn literal_escape_sequences_are_themselves_escaped() {
-        assert_eq!(sanitize_app_id("com_x2E"), "com__x2E");
-        assert_ne!(sanitize_app_id("com_x2E"), sanitize_app_id("com."));
-    }
-
-    #[test]
-    fn tpm_key_prefix_includes_sanitized_app_id() {
-        assert_eq!(
-            tpm_key_prefix("com.example.app"),
-            "tauri_se_tpm_com_x2Eexample_x2Eapp_"
-        );
-    }
-
-    #[test]
-    fn tpm_key_name_appends_key_name_to_prefix() {
-        assert_eq!(
-            tpm_key_name("com.example.app", "my-key"),
-            "tauri_se_tpm_com_x2Eexample_x2Eapp_my-key"
-        );
-    }
-
-    #[test]
-    fn ngc_key_marker_wraps_sanitized_app_id() {
-        assert_eq!(
-            ngc_key_marker("com.example.app"),
-            "/tauri_se/com_x2Eexample_x2Eapp/"
-        );
-    }
-
-    #[test]
-    fn ngc_key_name_builds_full_name() {
-        assert_eq!(
-            ngc_key_name("S-1-5-21-123", "com.example.app", "my-key"),
-            "S-1-5-21-123//tauri_se/com_x2Eexample_x2Eapp/my-key"
-        );
-    }
-
-    #[test]
-    fn extract_ngc_key_name_round_trips_through_ngc_key_name() {
-        let full = ngc_key_name("S-1-5-21-123", "com.example.app", "my-key");
-        assert_eq!(
-            extract_ngc_key_name(&full, "com.example.app"),
-            Some("my-key")
-        );
-    }
-
-    #[test]
-    fn extract_ngc_key_name_returns_none_for_a_different_app() {
-        let full = ngc_key_name("S-1-5-21-123", "com.example.app", "my-key");
-        assert_eq!(extract_ngc_key_name(&full, "com.other.app"), None);
-    }
-
-    #[test]
-    fn extract_ngc_key_name_returns_none_when_marker_absent() {
-        assert_eq!(
-            extract_ngc_key_name("not-an-ngc-name", "com.example.app"),
-            None
-        );
     }
 }
 

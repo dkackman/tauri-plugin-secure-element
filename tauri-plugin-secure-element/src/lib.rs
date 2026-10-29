@@ -20,8 +20,10 @@ mod commands;
 mod der;
 mod error;
 mod error_sanitize;
+mod key_probe;
 mod models;
 mod validation;
+mod windows_names;
 
 pub use error::{Error, ErrorCode, Result};
 
