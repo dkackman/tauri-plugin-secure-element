@@ -216,6 +216,15 @@ public enum SecureEnclaveError: Error, LocalizedError {
 public enum SecureEnclaveCore {
     // MARK: - Helper Functions
 
+    /// Serializes key creation and deletion.
+    ///
+    /// The Rust side calls in from several `spawn_blocking` threads, and
+    /// `kSecAttrApplicationTag` is not part of the keychain primary key, so an
+    /// unserialized check-then-create lets two concurrent callers both create a
+    /// key with the same tag. Never hold this across a call that blocks on the
+    /// user (`authenticateDeviceOwner`).
+    private static let mutationLock = NSLock()
+
     /// Converts authentication mode string to SecAccessControlCreateFlags.
     ///
     /// The Rust enum validates `authMode` before it reaches here, but the
@@ -375,9 +384,17 @@ public enum SecureEnclaveCore {
         #endif
     }
 
-    /// Checks if biometric authentication is available and enrolled on the device
-    /// Returns nil if available, or an error message describing why it's not available
-    public static func checkBiometricAvailability() -> String? {
+    /// Classifies a failed Keychain query status. A locked keychain
+    /// (`errSecInteractionNotAllowed`) is a recoverable access problem rather
+    /// than an internal fault.
+    public static func queryFailure(_ status: OSStatus) -> SecureEnclaveError {
+        status == errSecInteractionNotAllowed ? .keyNotAccessible : .failedToQueryKeys(status)
+    }
+
+    /// Checks if biometric authentication is available and enrolled on the device.
+    /// Returns nil if usable, or the error describing why not. Lockout is an
+    /// authentication failure (recoverable with the passcode), not missing hardware.
+    public static func checkBiometricAvailability() -> SecureEnclaveError? {
         let context = LAContext()
         var error: NSError?
 
@@ -389,17 +406,21 @@ public enum SecureEnclaveCore {
         if let laError = error {
             switch laError.code {
             case LAError.biometryNotAvailable.rawValue:
-                return "Biometric hardware is not available on this device."
+                return .biometricNotAvailable("Biometric hardware is not available on this device.")
             case LAError.biometryNotEnrolled.rawValue:
-                return "No biometric authentication is enrolled. Please set up Face ID or Touch ID in Settings."
+                return .biometricNotAvailable(
+                    "No biometric authentication is enrolled. Please set up Face ID or Touch ID in Settings."
+                )
             case LAError.biometryLockout.rawValue:
-                return "Biometric authentication is locked out due to too many failed attempts."
+                return .authFailed("Biometry is locked out; unlock with the device passcode and retry")
             default:
-                return "Biometric authentication is not available: \(laError.localizedDescription)"
+                return .biometricNotAvailable(
+                    "Biometric authentication is not available: \(laError.localizedDescription)"
+                )
             }
         }
 
-        return "Biometric authentication is not available on this device."
+        return .biometricNotAvailable("Biometric authentication is not available on this device.")
     }
 
     /// Checks whether the device has a passcode set.
@@ -433,17 +454,33 @@ public enum SecureEnclaveCore {
 
     /// Generate a new secure key in the Secure Enclave
     public static func generateSecureKey(keyName: String, authMode: String?) -> Result<GenerateKeyResponse, SecureEnclaveError> {
+        // Resolve the mode first so an invalid or empty authMode always reports
+        // its own error and the existence probe below is never an oracle for
+        // callers without a valid mode.
+        let flags: SecAccessControlCreateFlags
+        switch getAccessControlFlags(authMode: authMode) {
+        case let .success(value):
+            flags = value
+        case let .failure(error):
+            return .failure(error)
+        }
+
         // Check biometric availability if biometricOnly mode is requested
         let mode = authMode ?? "pinOrBiometric"
         if mode == "biometricOnly" {
             if let biometricError = checkBiometricAvailability() {
-                return .failure(.biometricNotAvailable(biometricError))
+                return .failure(biometricError)
             }
         } else if mode == "pinOrBiometric" {
             if let deviceSecureError = checkDeviceSecure() {
                 return .failure(.deviceNotSecure(deviceSecureError))
             }
         }
+
+        // Hold the lock from the existence probe through creation so the
+        // check-then-create is atomic with respect to other generate/delete calls.
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
 
         // Check if key already exists
         let checkQuery = createKeyQuery(keyName: keyName, returnRef: false)
@@ -453,17 +490,9 @@ public enum SecureEnclaveCore {
         if checkStatus == errSecSuccess {
             return .failure(.keyAlreadyExists(keyName))
         } else if checkStatus != errSecItemNotFound {
-            return .failure(.failedToQueryKeys(checkStatus))
+            return .failure(queryFailure(checkStatus))
         }
 
-        // Create access control
-        let flags: SecAccessControlCreateFlags
-        switch getAccessControlFlags(authMode: authMode) {
-        case let .success(value):
-            flags = value
-        case let .failure(error):
-            return .failure(error)
-        }
         var accessError: Unmanaged<CFError>?
         guard let accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
@@ -529,12 +558,8 @@ public enum SecureEnclaveCore {
                 // Only surface keys this plugin created, identified by their tag
                 // namespace. The user-facing name is the tag minus the prefix.
                 guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
-                      let foundKeyName = decodeKeyName(fromTag: tagData)
-                else {
-                    continue
-                }
-
-                guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                      let foundKeyName = decodeKeyName(fromTag: tagData),
+                      let keyRef = item[kSecValueRef as String] as CFTypeRef?,
                       CFGetTypeID(keyRef) == SecKeyGetTypeID()
                 else {
                     continue
@@ -566,7 +591,7 @@ public enum SecureEnclaveCore {
                 ))
             }
         } else if status != errSecItemNotFound {
-            return .failure(.failedToQueryKeys(status))
+            return .failure(queryFailure(status))
         }
 
         return .success(ListKeysResponse(keys: keys))
@@ -702,6 +727,11 @@ public enum SecureEnclaveCore {
             }
         }
 
+        // Authentication above blocks on the user, so the lock is taken only
+        // for the lookup and delete.
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
         // If keyName is provided, delete by name (fast path)
         if let keyName {
             let query = createKeyQuery(keyName: keyName, returnRef: false)
@@ -731,6 +761,9 @@ public enum SecureEnclaveCore {
     /// Idempotent in the same way `deleteKey` is: finding no match is success,
     /// not an error, because the caller's goal — that key no longer exists — is
     /// already satisfied.
+    ///
+    /// Must be called with `mutationLock` held; it does not lock itself because
+    /// `NSLock` is not recursive.
     private static func deleteKeyMatchingPublicKey(_ targetPublicKey: String) -> Result<Bool, SecureEnclaveError> {
         // Query for all keys
         let query: [String: Any] = [
@@ -747,18 +780,14 @@ public enum SecureEnclaveCore {
 
         guard status == errSecSuccess, let items = result as? [[String: Any]] else {
             // No keys at all is success (idempotent); anything else is a fault.
-            return status == errSecItemNotFound ? .success(true) : .failure(.failedToQueryKeys(status))
+            return status == errSecItemNotFound ? .success(true) : .failure(queryFailure(status))
         }
 
         for item in items {
             // Only consider keys this plugin created.
             guard let tagData = item[kSecAttrApplicationTag as String] as? Data,
-                  let foundKeyName = decodeKeyName(fromTag: tagData)
-            else {
-                continue
-            }
-
-            guard let keyRef = item[kSecValueRef as String] as CFTypeRef?,
+                  decodeKeyName(fromTag: tagData) != nil,
+                  let keyRef = item[kSecValueRef as String] as CFTypeRef?,
                   CFGetTypeID(keyRef) == SecKeyGetTypeID()
             else {
                 continue
@@ -770,10 +799,21 @@ public enum SecureEnclaveCore {
             if case let .success(publicKeyBase64) = exportPublicKeyBase64(privateKey: privateKey),
                publicKeyBase64 == targetPublicKey
             {
-                let deleteQuery = createKeyQuery(keyName: foundKeyName, returnRef: false)
+                // Delete the matched item by reference; a name query would also
+                // remove any other item sharing the tag. The token ID routes the
+                // delete to the same keychain domain as the lookup that found it.
+                let deleteQuery: [String: Any] = [
+                    kSecClass as String: kSecClassKey,
+                    kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+                    kSecValueRef as String: privateKey,
+                ]
                 let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
 
-                if deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound {
+                // Unlike the delete-by-name path, errSecItemNotFound is a failure
+                // here: mutationLock rules out a concurrent in-process delete and
+                // the public key was just confirmed to match, so a not-found means
+                // the delete hit nothing and the key may still exist.
+                if deleteStatus == errSecSuccess {
                     return .success(true)
                 } else {
                     return .failure(.failedToDeleteKey("Status: \(deleteStatus)"))
@@ -788,6 +828,17 @@ public enum SecureEnclaveCore {
     // Detects the type of secure element on macOS (Apple Silicon vs T2 vs none)
     #if os(macOS)
         private static func detectMacSecureElementType() -> (discrete: Bool, integrated: Bool) {
+            // An x86_64 process under Rosetta 2 runs on Apple Silicon, so the
+            // compile-time arch says Intel while the hardware has an integrated
+            // Secure Enclave. The key is absent (non-zero return) on real Intel Macs.
+            var translated: Int32 = 0
+            var translatedSize = MemoryLayout<Int32>.size
+            if sysctlbyname("sysctl.proc_translated", &translated, &translatedSize, nil, 0) == 0,
+               translated == 1
+            {
+                return (discrete: false, integrated: true)
+            }
+
             // Check if running on Apple Silicon (arm64)
             // Apple Silicon Macs have an integrated Secure Enclave on the SoC
             #if arch(arm64)

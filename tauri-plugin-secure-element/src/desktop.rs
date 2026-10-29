@@ -756,4 +756,19 @@ mod ffi_link_tests {
             assert!(!symbol.is_null());
         }
     }
+
+    /// An empty authentication reason is rejected by the Swift FFI before any Keychain
+    /// access, so this exercises the real exported symbol without needing entitlements.
+    #[test]
+    fn delete_key_ffi_rejects_empty_auth_reason_without_touching_keychain() {
+        let raw = unsafe {
+            super::secure_element_delete_key(c"x".as_ptr(), std::ptr::null(), c"".as_ptr())
+        };
+        let json =
+            unsafe { super::ffi_helpers::ffi_string_to_owned(raw) }.expect("FFI returned a string");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("FFI returned JSON");
+
+        assert_eq!(value["code"], "validation");
+        assert!(value["error"].is_string());
+    }
 }
