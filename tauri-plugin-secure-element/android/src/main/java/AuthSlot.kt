@@ -11,6 +11,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * receive the first prompt's result, including its `CryptoObject`, and could sign
  * the wrong data with the wrong key. Callers take the slot before building a
  * prompt and give it back exactly once when that prompt's request settles.
+ *
+ * The host app must not show its own `BiometricPrompt` on the same FragmentActivity
+ * while a plugin prompt is pending: androidx would replace the plugin's callback,
+ * so the plugin's request would never settle and the slot would stay held until
+ * the process restarts.
  */
 internal class AuthSlot {
     private val held = AtomicBoolean(false)

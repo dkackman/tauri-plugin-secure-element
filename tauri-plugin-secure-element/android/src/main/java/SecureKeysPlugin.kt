@@ -85,6 +85,11 @@ class SecureKeysPlugin(
     companion object {
         private const val TAG = "SecureKeysPlugin"
 
+        // Deletion always accepts either a strong biometric or the device credential.
+        private const val ANY_AUTHENTICATOR =
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
+
         /**
          * Wire values for `SecureElementBacking`. These strings cross the JS bridge
          * verbatim and must match the Rust `SecureElementBacking` serde representation
@@ -269,9 +274,10 @@ class SecureKeysPlugin(
          * Authenticators a prompt should offer for a key whose `KeyInfo` reports
          * [userAuthenticationType]. A biometric-only key can never be unlocked by a
          * PIN, so offering the credential option would let the user authenticate and
-         * then fail at the cryptographic step. `null` (unknown, e.g. API 30) offers
+         * then fail at the cryptographic step. `null` (a failed lookup) offers
          * both; the key still enforces its own requirement.
          */
+
         internal fun allowedAuthenticatorsFor(userAuthenticationType: Int?): Int =
             if (userAuthenticationType == KeyProperties.AUTH_BIOMETRIC_STRONG) {
                 BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -529,22 +535,24 @@ class SecureKeysPlugin(
     }
 
     /**
-     * The `KeyProperties.AUTH_*` mask the key was generated with, or null when it
-     * cannot be read (API 30, where `userAuthenticationType` does not exist, or a
-     * failed lookup). Same `KeyInfo` lookup as [backingOf]; see the note there on why
+     * The `KeyProperties.AUTH_*` mask the key was generated with
+     * (`KeyInfo.getUserAuthenticationType`, available since API 30), or null when
+     * the lookup fails. Same `KeyInfo` lookup as [backingOf]; see the note there on why
      * the key must not be narrowed to `ECPrivateKey`.
      */
-    private fun userAuthenticationTypeOf(entry: KeyStore.PrivateKeyEntry): Int? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
-        return try {
+    private fun userAuthenticationTypeOf(entry: KeyStore.PrivateKeyEntry): Int? =
+        try {
             val privateKey = entry.privateKey
             val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
             keyFactory.getKeySpec(privateKey, KeyInfo::class.java).userAuthenticationType
         } catch (e: Exception) {
-            Log.d(TAG, "Could not read the key's authentication type; offering all authenticators", e)
+            logWarn(
+                "Could not read the key's authentication type; offering all authenticators",
+                "Could not read the key's authentication type; offering all authenticators: ${e.message}",
+                e,
+            )
             null
         }
-    }
 
     private fun buildKeyGenParameterSpec(
         alias: String,
@@ -1094,21 +1102,22 @@ class SecureKeysPlugin(
         // unlocks it. On some older/vendor-specific Android versions it may throw instead,
         // so we handle that explicitly rather than letting the exception escape and
         // double-reject via the outer catch in signWithKey.
-        val signature =
-            try {
-                Signature.getInstance("SHA256withECDSA").apply { initSign(entry.privateKey) }
-            } catch (e: Exception) {
-                val detailedMessage = "Failed to initialize signature for authentication: ${e.message}"
-                val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
-                logError(
-                    "signWithBiometricPrompt failed",
-                    "signWithBiometricPrompt: $detailedMessage",
-                    e,
-                )
-                takePending()?.reject(errorMessage, classifyKeyUseException(e))
-                return
-            }
-        val cryptoObject = BiometricPrompt.CryptoObject(signature)
+        val signature: Signature
+        val cryptoObject: BiometricPrompt.CryptoObject
+        try {
+            signature = Signature.getInstance("SHA256withECDSA").apply { initSign(entry.privateKey) }
+            cryptoObject = BiometricPrompt.CryptoObject(signature)
+        } catch (e: Exception) {
+            val detailedMessage = "Failed to initialize signature for authentication: ${e.message}"
+            val errorMessage = sanitizeError(detailedMessage, "Failed to sign")
+            logError(
+                "signWithBiometricPrompt failed",
+                "signWithBiometricPrompt: $detailedMessage",
+                e,
+            )
+            takePending()?.reject(errorMessage, classifyKeyUseException(e))
+            return
+        }
 
         val callback =
             object : BiometricPrompt.AuthenticationCallback() {
@@ -1165,10 +1174,6 @@ class SecureKeysPlugin(
                 }
             }
 
-        // Build prompt info
-        // A caller-supplied reason is the only thing that tells the user *what*
-        // they are approving — the bytes being signed are never displayed — so
-        // it takes precedence over the generic key-name subtitle.
         // Building, constructing and showing the prompt can each throw synchronously
         // instead of going through the callback (PromptInfo.Builder.build() throws
         // IllegalArgumentException for an unsupported authenticator combination), so
@@ -1188,6 +1193,9 @@ class SecureKeysPlugin(
                 )
                 return
             }
+            // A caller-supplied reason is the only thing that tells the user *what*
+            // they are approving — the bytes being signed are never displayed — so
+            // it takes precedence over the generic key-name subtitle.
             val promptInfo =
                 buildPromptInfo(
                     reason ?: "Sign with key: $keyName",
@@ -1379,7 +1387,7 @@ class SecureKeysPlugin(
                 )
                 return
             }
-            BiometricPrompt(fragmentActivity, executor, callback).authenticate(buildPromptInfo(reason, allowedAuthenticatorsFor(null)))
+            BiometricPrompt(fragmentActivity, executor, callback).authenticate(buildPromptInfo(reason, ANY_AUTHENTICATOR))
         } catch (e: Exception) {
             val detailedMessage = "Failed to show authentication prompt: ${e.message}"
             val errorMessage = sanitizeError(detailedMessage, "Failed to delete key")

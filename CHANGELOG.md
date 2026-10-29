@@ -13,9 +13,7 @@ together.
 ### Fixed
 
 - Android: the authentication prompt for a biometric-only key no longer offers
-  the device-PIN option (which authenticated and then failed at signing), and a
-  failure while building the prompt is now reported instead of leaving the
-  authentication slot held.
+  the device-PIN option (which authenticated and then failed at signing).
 - Android: only one authentication prompt runs at a time. A `signWithKey` or
   authenticated `deleteKey` issued while a prompt is showing is now rejected with
   `internal` instead of superseding the prompt, which could sign the new request's
