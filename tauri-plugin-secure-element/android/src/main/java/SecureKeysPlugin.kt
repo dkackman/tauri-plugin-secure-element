@@ -9,6 +9,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
 import android.util.Base64
 import android.util.Log
 import androidx.biometric.BiometricManager
@@ -278,6 +279,54 @@ class SecureKeysPlugin(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or
                     BiometricManager.Authenticators.DEVICE_CREDENTIAL
             }
+
+        /**
+         * Pure decision behind [backingOf]: maps what `KeyInfo` reported to a backing tier.
+         *
+         * `KeyInfo.getSecurityLevel()` only exists from API 31, but this library's minSdk
+         * is 30. On API 30 the only signal is `isInsideSecureHardware`, which cannot tell
+         * StrongBox from the TEE, so the tier is derived from whether StrongBox was the
+         * requested (and successfully used) backing: a StrongBox key inside secure
+         * hardware is discrete, any other key inside secure hardware is integrated.
+         * On API 31+ the reported `securityLevel` is authoritative.
+         */
+        internal fun backingFromKeyInfo(
+            sdkInt: Int,
+            securityLevel: Int?,
+            insideSecureHardware: Boolean,
+            usedStrongBox: Boolean,
+        ): String =
+            if (sdkInt >= Build.VERSION_CODES.S && securityLevel != null) {
+                when (securityLevel) {
+                    KeyProperties.SECURITY_LEVEL_STRONGBOX -> BACKING_DISCRETE
+
+                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
+                    KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
+                    -> BACKING_INTEGRATED
+
+                    else -> BACKING_SOFTWARE
+                }
+            } else if (insideSecureHardware) {
+                if (usedStrongBox) BACKING_DISCRETE else BACKING_INTEGRATED
+            } else {
+                BACKING_SOFTWARE
+            }
+
+        /**
+         * True when [e] is, or is caused by, a [StrongBoxUnavailableException]. Key
+         * generation surfaces it wrapped in a `ProviderException`, so the cause chain
+         * is walked. Only this failure justifies falling back from StrongBox to the TEE.
+         */
+        internal fun isStrongBoxUnavailable(e: Throwable): Boolean {
+            var current: Throwable? = e
+            var depth = 0
+            while (current != null && depth < 10) {
+                if (current is StrongBoxUnavailableException) return true
+                current = current.cause
+                depth++
+            }
+            return false
+        }
 
         /**
          * Classifies a `BiometricPrompt` authentication error.
@@ -575,7 +624,7 @@ class SecureKeysPlugin(
             keyPairGenerator.initialize(keyGenParameterSpec)
             keyPairGenerator.generateKeyPair()
 
-            val backing = backingOf(testAlias)
+            val backing = backingOf(testAlias, usedStrongBox = false)
             Log.i(TAG, "TEE check: probe key backing=$backing")
             return backing == BACKING_INTEGRATED || backing == BACKING_DISCRETE
         } catch (e: Exception) {
@@ -599,7 +648,10 @@ class SecureKeysPlugin(
      * backing is a claim this plugin should only make when it can prove it, and
      * over-reporting would let a caller believe a key is protected when it isn't.
      */
-    private fun backingOf(alias: String): String {
+    private fun backingOf(
+        alias: String,
+        usedStrongBox: Boolean,
+    ): String {
         // KeyInfo is available from API 23, well below this library's minSdk of 30, so
         // the backing is always inspectable in principle.
         val entry = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
@@ -617,21 +669,15 @@ class SecureKeysPlugin(
         return try {
             val keyFactory = KeyFactory.getInstance(privateKey.algorithm, "AndroidKeyStore")
             val keyInfo = keyFactory.getKeySpec(privateKey, KeyInfo::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                // getSecurityLevel() replaces the deprecated isInsideSecureHardware on API 31+
-                when (keyInfo.securityLevel) {
-                    KeyProperties.SECURITY_LEVEL_STRONGBOX -> BACKING_DISCRETE
-
-                    KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
-                    KeyProperties.SECURITY_LEVEL_UNKNOWN_SECURE,
-                    -> BACKING_INTEGRATED
-
-                    else -> BACKING_SOFTWARE
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                if (keyInfo.isInsideSecureHardware) BACKING_INTEGRATED else BACKING_SOFTWARE
-            }
+            val sdkInt = Build.VERSION.SDK_INT
+            @Suppress("DEPRECATION")
+            backingFromKeyInfo(
+                sdkInt = sdkInt,
+                // getSecurityLevel() exists from API 31 only; never touch it below that.
+                securityLevel = if (sdkInt >= Build.VERSION_CODES.S) keyInfo.securityLevel else null,
+                insideSecureHardware = keyInfo.isInsideSecureHardware,
+                usedStrongBox = usedStrongBox,
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Backing check: failed to read KeyInfo for '$alias', assuming software", e)
             BACKING_SOFTWARE
@@ -830,38 +876,36 @@ class SecureKeysPlugin(
                     Log.i(TAG, "generateSecureKey: Key created with StrongBox backing")
                 }
             } catch (e: Exception) {
-                // If Secure Element was requested but failed, fall back to regular hardware-backed storage
-                if (useSecureElement) {
-                    Log.w(
-                        TAG,
-                        "generateSecureKey: StrongBox key creation failed, falling back to TEE. " +
-                            "Reason: ${e.message ?: e.javaClass.simpleName}",
+                // Only a StrongBox-unavailable failure justifies the TEE fallback; anything
+                // else (bad spec, keystore failure) is a real error and must surface.
+                if (!useSecureElement || !isStrongBoxUnavailable(e)) throw e
+                // StrongBox was requested but is unavailable: fall back to regular hardware-backed storage
+                Log.w(
+                    TAG,
+                    "generateSecureKey: StrongBox key creation failed, falling back to TEE. " +
+                        "Reason: ${e.message ?: e.javaClass.simpleName}",
+                )
+
+                // Clean up any partial key entry left by the failed StrongBox attempt
+                try {
+                    keyStore.deleteEntry(alias)
+                } catch (deleteEx: Exception) {
+                    Log.w(TAG, "generateSecureKey: Failed to clean up partial StrongBox key", deleteEx)
+                }
+
+                // Create a new KeyPairGenerator instance since it can't be reinitialized
+                keyPairGenerator =
+                    KeyPairGenerator.getInstance(
+                        KeyProperties.KEY_ALGORITHM_EC,
+                        "AndroidKeyStore",
                     )
 
-                    // Clean up any partial key entry left by the failed StrongBox attempt
-                    try {
-                        keyStore.deleteEntry(alias)
-                    } catch (deleteEx: Exception) {
-                        Log.w(TAG, "generateSecureKey: Failed to clean up partial StrongBox key", deleteEx)
-                    }
+                keyGenParameterSpec = buildKeyGenParameterSpec(alias, authMode, false)
 
-                    // Create a new KeyPairGenerator instance since it can't be reinitialized
-                    keyPairGenerator =
-                        KeyPairGenerator.getInstance(
-                            KeyProperties.KEY_ALGORITHM_EC,
-                            "AndroidKeyStore",
-                        )
-
-                    keyGenParameterSpec = buildKeyGenParameterSpec(alias, authMode, false)
-
-                    keyPairGenerator.initialize(keyGenParameterSpec)
-                    keyPairGenerator.generateKeyPair()
-                    usedStrongBox = false
-                    Log.i(TAG, "generateSecureKey: Key created with TEE backing (StrongBox fallback)")
-                } else {
-                    // Re-throw if StrongBox wasn't expected
-                    throw e
-                }
+                keyPairGenerator.initialize(keyGenParameterSpec)
+                keyPairGenerator.generateKeyPair()
+                usedStrongBox = false
+                Log.i(TAG, "generateSecureKey: Key created with TEE backing (StrongBox fallback)")
             }
 
             // Get the public key
@@ -877,7 +921,7 @@ class SecureKeysPlugin(
             // itself. `usedStrongBox` only records what was requested and whether the
             // StrongBox attempt threw — it cannot tell TEE from software, so trusting
             // it would label a software key "integrated".
-            val backing = backingOf(alias)
+            val backing = backingOf(alias, usedStrongBox)
             if (usedStrongBox && backing != BACKING_DISCRETE) {
                 Log.w(TAG, "generateSecureKey: StrongBox requested but key reports backing=$backing")
             }

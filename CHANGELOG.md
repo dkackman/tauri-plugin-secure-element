@@ -25,6 +25,10 @@ together.
   in the foreground (saved fragment state, or a finishing or destroyed activity)
   is now rejected with `userCancelled` instead of silently never calling back and
   holding the authentication slot.
+- Android: on API 30 a key created in StrongBox is now reported as `discrete`
+  rather than `integrated` (`KeyInfo.getSecurityLevel` only exists from API 31),
+  and key generation falls back from StrongBox to the TEE only when StrongBox is
+  actually unavailable; other failures are reported instead of being retried.
 
 ## [0.1.0-beta.9] - 2026-08-02
 

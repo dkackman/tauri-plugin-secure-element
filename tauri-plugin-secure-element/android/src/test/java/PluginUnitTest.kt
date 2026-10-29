@@ -2,11 +2,13 @@ package net.kackman.secureelement
 
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import org.junit.Assert.*
 import org.junit.Test
 import java.math.BigInteger
+import java.security.ProviderException
 
 /**
  * Host-JVM unit tests for pure logic in SecureKeysPlugin.
@@ -470,5 +472,38 @@ class PluginUnitTest {
     @Test
     fun promptCanBeShown_falseWhenDestroyed() {
         assertFalse(SecureKeysPlugin.promptCanBeShown(isStateSaved = false, isFinishing = false, isDestroyed = true))
+    }
+
+    @Test
+    fun `api 30 strongbox key inside secure hardware is discrete`() {
+        assertEquals("discrete", SecureKeysPlugin.backingFromKeyInfo(30, null, true, true))
+    }
+
+    @Test
+    fun `api 30 non-strongbox key inside secure hardware is integrated`() {
+        assertEquals("integrated", SecureKeysPlugin.backingFromKeyInfo(30, null, true, false))
+    }
+
+    @Test
+    fun `api 30 key outside secure hardware is software`() {
+        assertEquals("software", SecureKeysPlugin.backingFromKeyInfo(30, null, false, true))
+    }
+
+    @Test
+    fun `api 31 strongbox security level is discrete`() {
+        assertEquals(
+            "discrete",
+            SecureKeysPlugin.backingFromKeyInfo(31, KeyProperties.SECURITY_LEVEL_STRONGBOX, true, false),
+        )
+    }
+
+    @Test
+    fun `a wrapped StrongBoxUnavailableException is recognised`() {
+        assertTrue(SecureKeysPlugin.isStrongBoxUnavailable(ProviderException("x", StrongBoxUnavailableException())))
+    }
+
+    @Test
+    fun `an unrelated exception is not StrongBox unavailability`() {
+        assertFalse(SecureKeysPlugin.isStrongBoxUnavailable(IllegalStateException()))
     }
 }
